@@ -1,0 +1,145 @@
+# API - Lavoro Esterno
+
+Tutte le rotte applicative sono servite sotto il prefisso `/api/v1/`
+dall'API FastAPI e sono raggiungibili in produzione tramite il reverse
+proxy nginx (`http(s)://<host>/api/v1/...`).
+
+> **Documentazione interattiva**: la lista completa ed esatta di ogni
+> endpoint (schema richiesta/risposta, codici di errore, esempi) è
+> generata automaticamente da FastAPI ed è disponibile su `/docs`
+> (Swagger UI) e `/openapi.json` (schema OpenAPI grezzo). Questo
+> documento descrive le **aree funzionali** e lo scopo di ciascun gruppo
+> di rotte, da usare come mappa di orientamento; per i dettagli tecnici
+> fare sempre riferimento a `/docs`.
+
+## Area `auth` - autenticazione e sessione
+
+| Metodo | Path | Scopo |
+|---|---|---|
+| POST | `/api/v1/auth/login` | Prima fase: verifica email + password. Se l'utente NON ha 2FA attiva emette subito `access_token`/`refresh_token`/`user` con `status: "authenticated"`; se ce l'ha, risponde `status: "mfa_required"` e un `mfa_token` effimero (nessun token di accesso). |
+| POST | `/api/v1/auth/login-2fa` | Seconda fase (solo utenti con 2FA attiva): scambia `mfa_token` + codice TOTP a 6 cifre (o un backup code) con `access_token`/`refresh_token`/`user`. |
+| POST | `/api/v1/auth/refresh` | Scambia un refresh token valido con una nuova coppia access/refresh token. |
+| GET | `/api/v1/auth/me` | Restituisce profilo, ruolo (Admin/Operator/Viewer) e stato 2FA dell'utente autenticato (richiede `Authorization: Bearer`). |
+| POST | `/api/v1/auth/setup-2fa` | Avvia l'attivazione della 2FA per l'utente corrente: genera segreto TOTP, QR code (base64) e i backup codes monouso, mostrati una sola volta. |
+| POST | `/api/v1/auth/verify-2fa` | Conferma l'attivazione 2FA fornendo un primo codice TOTP valido generato dall'app authenticator; solo dopo questa chiamata `totp_enabled` diventa `true`. |
+| POST | `/api/v1/auth/logout` | Logout lato server: registra l'evento in `audit_log` e risponde `204`. I JWT restano stateless (nessuna vera revoca del token, vedi nota sotto). |
+
+I JWT sono stateless a scadenza breve (access) / media (refresh):
+`POST /auth/logout` non revoca davvero il token già emesso, si limita a
+tracciare l'evento — vedi `docs/SICUREZZA.md` per la nota sulla
+revoca/blacklist dei refresh token, ancora da implementare.
+
+## Area `dashboard` - viste aggregate per la home
+
+| Metodo | Path | Scopo |
+|---|---|---|
+| GET | `/api/v1/dashboard/kpis` | KPI aggregati (totale record, fonti attive, nuovi record oggi, errori di scraping, export attivi), con delta/percentuali calcolati per confronto tra finestre temporali adiacenti (nessuno storico snapshot dedicato: vedi commenti in `app/api/v1/dashboard.py`). |
+| GET | `/api/v1/dashboard/scraping-activity` | Run di scraping più recenti (`scrape_runs`) joinati con la fonte. |
+| GET | `/api/v1/dashboard/source-health` | Conteggio fonti per stato, rimappato sul vocabolario `healthy`/`rateLimited`/`error` (vedi `app/services/source_health.py`). |
+| GET | `/api/v1/dashboard/activity` | Attività recente, derivata da `audit_log` (copre solo le azioni esplicitamente audit-loggate, non ogni evento di sistema). |
+
+### Esempio di flusso login + 2FA
+
+1. `POST /api/v1/auth/login` con `{ "email": ..., "password": ... }`.
+2. Se l'utente ha la 2FA attiva, la risposta ha `status: "mfa_required"` e un
+   campo `mfa_token` (token effimero, non utilizzabile come access token).
+3. Il client chiede all'utente il codice a 6 cifre dell'app authenticator e
+   chiama `POST /api/v1/auth/login-2fa` con
+   `{ "mfa_token": ..., "code": "123456" }` (accetta anche un backup code
+   monouso al posto del codice TOTP).
+4. In caso di successo la risposta contiene `status: "authenticated"`,
+   `access_token` (breve durata, vedi `JWT_ACCESS_TTL_MINUTES`),
+   `refresh_token` (durata più lunga, vedi `JWT_REFRESH_TTL_DAYS`) e
+   `user` (id/email/name/role/mfa_enabled/status), da usare rispettivamente
+   come `Authorization: Bearer <access_token>` e per il rinnovo su
+   `/api/v1/auth/refresh`. Nota: `user.name` e `user.status` sono derivati
+   (email/`is_active`), non hanno colonne dedicate — vedi `UserPublic` in
+   `backend/app/schemas/auth.py`.
+
+## Area `search` - ricerca e consultazione
+
+| Metodo | Path | Scopo |
+|---|---|---|
+| GET | `/api/v1/search` | Ricerca full-text/filtrata sui record consolidati (per città, età, fonte, intervallo date, presenza media, ecc.). |
+| GET | `/api/v1/search/phone` | Ricerca diretta per numero di telefono (calcola l'HMAC lato server e cerca sull'indice, non richiede il numero in chiaro nel DB). |
+| GET | `/api/v1/search/suggestions` | Suggerimenti/autocomplete su città, fonti, tag ricorrenti. |
+
+## Area `records` - record consolidati e storico
+
+| Metodo | Path | Scopo |
+|---|---|---|
+| GET | `/api/v1/records/search` | Ricerca paginata di record con filtri combinabili (`phone`, `source`, `status`, `date_from`, `date_to`, `page`, `page_size`). Il filtro `phone` cerca per hash esatto solo se il valore digitato sembra un numero completo (vedi `app/services/record_search.py`: non esiste ricerca a prefisso su un dato cifrato/hashato). |
+| POST | `/api/v1/records/search` | Legacy: lookup esatto di un record dato un numero di telefono completo (hash di lookup). Non usato dal frontend attuale, mantenuto per compatibilità. |
+| GET | `/api/v1/records/{record_id}` | Overview di un record per la UI: titolo/descrizione dell'annuncio canonico, confidence, conteggio fonti/occorrenze, status. |
+| GET | `/api/v1/records/{record_id}/occurrences` | Tutti gli annunci (`advertisement`) collegati al record, con flag `isCanonical`. |
+| GET | `/api/v1/records/{record_id}/media` | Media associati agli annunci del record, con classificazione (media non ancora classificato è trattato come "explicit" per default fail-safe). |
+| GET | `/api/v1/records/{record_id}/history` | Storico unificato: unione di `canonical_history`, `media_classification_history` e `audit_log` filtrati per il record, ordinati per data. |
+| GET | `/api/v1/records/{record_id}/ai-summary` | Ultima versione del riepilogo AI (`summary_versions`); risponde `204` se non è mai stato generato. |
+| POST | `/api/v1/records/{record_id}/ai-summary/regenerate` | Rigenera il riepilogo AI tramite `app/services/summary_generator.py` (placeholder, nessun LLM reale) e salva una nuova `SummaryVersion`. Riservato ad Admin/Operator. |
+
+## Area `sources` - gestione fonti scrapate
+
+| Metodo | Path | Scopo |
+|---|---|---|
+| GET | `/api/v1/sources` | Elenco delle fonti configurate (es. escort_advisor, bakeca_incontri, ...): `code` (slug), `status`, `lastRunAt`, `itemsLast24h`, `errorRate` calcolati da `scrape_runs` per fonte (query N+1 accettata per il numero di fonti atteso, vedi commento in `app/api/v1/sources.py`); `country` è un placeholder fisso (`"N/D"`), nessuna colonna dedicata nel modello. |
+| GET | `/api/v1/sources/summary` | Conteggio fonti per stato (`total`/`active`/`degraded`/`offline`). |
+| POST | `/api/v1/sources` | Registra una nuova fonte (solo Admin). |
+| PATCH | `/api/v1/sources/{source_id}` | Aggiorna configurazione di una fonte (rate limit, attiva/disattiva, pianificazione). |
+| POST | `/api/v1/sources/{source_id}/pause` | Mette in pausa una fonte (`enabled=false`, status di salute invariato). Riservato ad Admin/Operator. |
+| POST | `/api/v1/sources/{source_id}/disable` | Disabilita definitivamente una fonte (`enabled=false`, `status="offline"`). Riservato ad Admin/Operator. |
+| GET | `/api/v1/sources/{source_id}/runs` | Storico dei run di scraping (`scrape_runs`) per la fonte, con esiti ed errori (`scrape_errors`). |
+| POST | `/api/v1/sources/{source_id}/runs` | Avvia manualmente un run di scraping per la fonte (accoda un task sulla coda `scraping`). |
+| POST | `/api/v1/sources/{source_id}/scan` | Accoda un task di scraping on-demand per la fonte (implementato: usa Celery). |
+
+## Area `media` - gestione media e classificazione
+
+| Metodo | Path | Scopo |
+|---|---|---|
+| GET | `/api/v1/media/{media_id}` | Metadati di un media (tipo, dimensioni, stato classificazione). |
+| GET | `/api/v1/media/{media_id}/download` | URL firmato/temporaneo (o proxy) per scaricare il media originale da MinIO. |
+| GET | `/api/v1/media/{media_id}/thumbnail` | Anteprima/thumbnail generata. |
+| POST | `/api/v1/media/{media_id}/reclassify` | Forza una nuova classificazione del media (accoda un task sulla coda `media`), storicizzata in `media_classification_history`. |
+
+## Area `exports` - esportazione dati
+
+| Metodo | Path | Scopo |
+|---|---|---|
+| POST | `/api/v1/exports` | Crea un job di esportazione (`type` + `record_ids` e/o `filters`) -> record in `export_jobs`, stato iniziale `pending`. Riservato ad Admin/Operator. |
+| GET | `/api/v1/exports` | Storico dei job di esportazione (i più recenti), con `requestedBy`/`progressPct`/`recordCount`/`downloadUrl` calcolati. Riservato ad Admin/Operator. |
+| POST | `/api/v1/exports/{job_id}/retry` | Reimposta un job `failed` a `pending`. |
+| GET | `/api/v1/exports/{job_id}/download` | URL di download del pacchetto. **TODO**: la generazione reale del pacchetto (worker + upload MinIO) non è implementata; risponde `409` finché `object_key` non è valorizzato, altrimenti un URL placeholder verso l'endpoint MinIO configurato (non ancora un presigned URL vero). |
+
+### Esempio di flusso export
+
+1. `POST /api/v1/exports` con i criteri di ricerca (stessi filtri di
+   `/api/v1/search`) e il formato desiderato (es. CSV + media, o solo
+   JSON). Risposta: `{ "job_id": "...", "status": "pending" }`.
+2. Il job viene eseguito in background (worker, coda dedicata o `media`
+   a seconda dell'implementazione finale, vedi `PROGETTO.md`).
+3. Il client fa polling su `GET /api/v1/exports/{job_id}` finché
+   `status` non è `completed` (o `failed`, con dettaglio errore).
+4. A completamento, `GET /api/v1/exports/{job_id}/download` restituisce
+   il pacchetto zip (contenente manifest con provenienza dei dati e
+   media inclusi) da uno storage temporaneo su MinIO, con scadenza.
+
+## Area `admin` - amministrazione
+
+| Metodo | Path | Scopo |
+|---|---|---|
+| GET | `/api/v1/admin/users` | Elenco utenti (solo Admin). `name`/`lastLoginAt` sono approssimati (nessuna colonna dedicata nel modello `User`, vedi `app/schemas/admin.py:AdminUserRead`). |
+| POST | `/api/v1/admin/users` | Creazione utente con ruolo (Admin/Operator/Viewer). Richiede Admin con 2FA attiva. |
+| PATCH | `/api/v1/admin/users/{user_id}` | Modifica il ruolo di un utente. Richiede Admin con 2FA attiva. |
+| POST | `/api/v1/admin/users/{user_id}/suspend` | Sospende un utente (`is_active=false`), impedendo nuovi login. Richiede Admin con 2FA attiva. |
+| GET | `/api/v1/admin/audit-log` | Consultazione dell'audit log (azioni sensibili: login/logout, export, modifiche utenti/fonti, rigenerazione riepilogo AI...). Solo Admin. |
+| GET | `/api/v1/admin/system/health` | Stato aggregato dei componenti (DB, Redis, MinIO, ultimo run scheduler). *(Non ancora implementato.)* |
+
+## Convenzioni generali
+
+- Autenticazione via header `Authorization: Bearer <access_token>` su
+  tutte le rotte tranne `auth/login` e i primi due passi della 2FA.
+- Autorizzazione RBAC a 3 livelli (Admin/Operator/Viewer): il dettaglio
+  dei permessi per ruolo è descritto in `docs/SICUREZZA.md`.
+- Paginazione basata su `limit`/`offset` (o cursore, da confermare in
+  fase di implementazione) sugli endpoint che restituiscono liste.
+- Tutte le risposte di errore seguono lo schema standard di FastAPI
+  (`detail`), consultabile nello schema OpenAPI su `/docs`.

@@ -1,0 +1,181 @@
+"""Schemi Pydantic per Record, Advertisement e riepiloghi (SummaryVersion)."""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from app.schemas.common import CamelModel
+
+
+class AdvertisementRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    source_id: uuid.UUID
+    source_url: str
+    title: str | None
+    description: str | None
+    first_seen_at: datetime
+    last_seen_at: datetime
+    scraped_at: datetime
+    confidence: float
+    status: str
+
+
+class RecordRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    canonical_ad_id: uuid.UUID | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class RecordDetail(RecordRead):
+    advertisements: list[AdvertisementRead] = Field(default_factory=list)
+
+
+class RecordSearchRequest(BaseModel):
+    """Ricerca di un Record a partire da un numero di telefono.
+
+    Il numero viene normalizzato e trasformato in hash di lookup lato
+    server (mai confrontato in chiaro con quanto salvato su DB): vedi
+    app/services/phone_crypto.py.
+    """
+
+    phone: str = Field(description="Numero di telefono in un formato qualsiasi (verrà normalizzato).")
+
+
+class SummaryPayloadSchema(BaseModel):
+    """Rispecchia la struttura salvata in `summary_versions.summary_json`
+    (vedi app/services/summary_generator.py:SummaryPayload)."""
+
+    summary: str
+    advertisement_information: list[dict[str, Any]] = Field(default_factory=list)
+    forum_information: list[dict[str, Any]] = Field(default_factory=list)
+    unverified_claims: list[str] = Field(default_factory=list)
+    sources: list[str] = Field(default_factory=list)
+
+
+class SummaryVersionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    record_id: uuid.UUID
+    version: int
+    summary_json: SummaryPayloadSchema
+    model_name: str
+    created_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Schemi "view" per gli endpoint consumati direttamente da
+# frontend/src/api/records.ts (nessun mapping snake->camel lato client: vedi
+# app/schemas/common.py:CamelModel). Sono volutamente distinti da
+# RecordRead/RecordDetail sopra, che rispecchiano invece 1:1 le colonne del
+# modello ORM `Record` e sono usati da endpoint più "grezzi"
+# (GET/POST /records/search legacy).
+# ---------------------------------------------------------------------------
+
+
+class RecordSearchResultRead(CamelModel):
+    """Una riga dei risultati di `GET /records/search` (ricerca paginata).
+
+    Rispecchia `frontend/src/types/index.ts:RecordSearchResult`.
+    """
+
+    id: uuid.UUID
+    phone: str
+    canonical_title: str
+    sources_count: int
+    occurrences_count: int
+    first_seen_at: datetime
+    last_seen_at: datetime
+    status: str
+
+
+class RecordSearchResponseRead(CamelModel):
+    """Busta di paginazione per `GET /records/search`, rispecchia
+    `frontend/src/types/index.ts:RecordSearchResponse`."""
+
+    results: list[RecordSearchResultRead]
+    total: int
+    page: int
+    page_size: int
+
+
+class RecordOverviewRead(CamelModel):
+    """Dettaglio di un Record per la tab "Overview" della UI, rispecchia
+    `frontend/src/types/index.ts:RecordOverview`."""
+
+    id: uuid.UUID
+    phone: str
+    canonical_title: str
+    canonical_description: str
+    confidence_score: float
+    sources_count: int
+    occurrences_count: int
+    first_seen_at: datetime
+    last_seen_at: datetime
+    status: str
+    tags: list[str] = Field(default_factory=list)
+
+
+class RecordOccurrenceRead(CamelModel):
+    """Un singolo annuncio (`Advertisement`) collegato al record, per la tab
+    "Occurrences" della UI. Rispecchia `RecordOccurrence`."""
+
+    id: uuid.UUID
+    source_name: str
+    source_code: str
+    title: str
+    url: str
+    scraped_at: datetime
+    is_canonical: bool
+    match_confidence: float
+
+
+class RecordMediaRead(CamelModel):
+    """Un media collegato (tramite gli annunci) al record. Rispecchia
+    `RecordMedia`."""
+
+    id: uuid.UUID
+    url: str
+    thumbnail_url: str
+    type: str
+    sensitivity: str
+    source_name: str
+    added_at: datetime
+
+
+class RecordHistoryEventRead(CamelModel):
+    """Evento di storico "unificato" (canonical_history +
+    media_classification_history + audit_log). Rispecchia
+    `RecordHistoryEvent`."""
+
+    id: str
+    actor: str
+    actor_label: str
+    action: str
+    detail: str
+    occurred_at: datetime
+
+
+class SourceUsedRead(CamelModel):
+    name: str
+    url: str
+
+
+class RecordAiSummaryRead(CamelModel):
+    """Ultima versione del riepilogo AI di un record. Rispecchia
+    `RecordAiSummary`."""
+
+    generated_at: datetime | None
+    executive_synthesis: str
+    unverified_claims: list[str] = Field(default_factory=list)
+    forum_chatter: list[str] = Field(default_factory=list)
+    sources_used: list[SourceUsedRead] = Field(default_factory=list)
