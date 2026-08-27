@@ -32,21 +32,37 @@ depends_on: Sequence[str] | str | None = None
 
 def upgrade() -> None:
     # --- Enum nativi Postgres ------------------------------------------------
-    user_role = postgresql.ENUM("admin", "operator", "viewer", name="user_role")
-    source_priority = postgresql.ENUM("high", "medium", "low", name="source_priority")
-    source_status = postgresql.ENUM("healthy", "degraded", "offline", name="source_status")
+    # `create_type=False` su ogni istanza: il tipo viene creato UNA SOLA
+    # VOLTA esplicitamente nel loop sotto (`enum_type.create(...)`). Senza
+    # questo flag, SQLAlchemy tenta di ri-creare lo stesso tipo enum una
+    # seconda volta come effetto collaterale di `op.create_table` (l'evento
+    # DDL "before create" associato alla colonna enum spara comunque un
+    # `CREATE TYPE`), il che con Postgres genera `DuplicateObjectError`
+    # anche se l'enum esiste già (bug osservato e corretto durante il primo
+    # avvio reale dello stack con `docker compose up`).
+    user_role = postgresql.ENUM(
+        "admin", "operator", "viewer", name="user_role", create_type=False
+    )
+    source_priority = postgresql.ENUM(
+        "high", "medium", "low", name="source_priority", create_type=False
+    )
+    source_status = postgresql.ENUM(
+        "healthy", "degraded", "offline", name="source_status", create_type=False
+    )
     advertisement_status = postgresql.ENUM(
-        "active", "removed", "invalid", name="advertisement_status"
+        "active", "removed", "invalid", name="advertisement_status", create_type=False
     )
     media_classification = postgresql.ENUM(
-        "explicit", "safe", "unclassified", name="media_classification"
+        "explicit", "safe", "unclassified", name="media_classification", create_type=False
     )
-    scrape_run_status = postgresql.ENUM("running", "completed", "failed", name="scrape_run_status")
+    scrape_run_status = postgresql.ENUM(
+        "running", "completed", "failed", name="scrape_run_status", create_type=False
+    )
     export_type = postgresql.ENUM(
-        "text_only", "complete_media", "safe_complete", name="export_type"
+        "text_only", "complete_media", "safe_complete", name="export_type", create_type=False
     )
     export_status = postgresql.ENUM(
-        "pending", "processing", "ready", "failed", name="export_status"
+        "pending", "processing", "ready", "failed", name="export_status", create_type=False
     )
 
     bind = op.get_bind()

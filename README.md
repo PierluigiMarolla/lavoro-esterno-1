@@ -43,10 +43,18 @@ openssl rand -base64 32   # PHONE_HMAC_SECRET
 openssl rand -base64 64   # JWT_SECRET_KEY
 
 docker compose up --build
+
+# Il DB parte vuoto: applicare le migrazioni...
+docker compose exec api alembic upgrade head
+
+# ...e creare il primo utente Admin (nessun endpoint API può farlo)
+docker compose exec api python -m app.scripts.create_admin \
+    --email admin@lavoro.internal --password "una-password-forte"
 ```
 
 Applicazione raggiungibile su `http://localhost/` (reverse proxy nginx),
-documentazione API interattiva su `http://localhost/docs`.
+documentazione API interattiva su `http://localhost/docs`. Sequenza
+verificata su un ambiente Docker reale in questa sessione di sviluppo.
 
 Per il dettaglio di ogni comando (migrazioni Alembic, test, sviluppo
 frontend con hot reload) vedi [`docs/SVILUPPO.md`](docs/SVILUPPO.md).

@@ -47,3 +47,8 @@ limits_config:
 compactor:
   working_directory: /loki/compactor
   retention_enabled: true
+  # Richiesto dalle versioni recenti di Loki quando retention_enabled=true:
+  # deve puntare a un object store valido per salvare le "delete request"
+  # generate dal retention job. Usiamo lo stesso filesystem locale già
+  # configurato sopra (nessun backend esterno in questo scaffold).
+  delete_request_store: filesystem

@@ -72,7 +72,7 @@ def _to_export_job_out(job: ExportJob, requested_by_email: str) -> ExportJobOut:
     )
 
 
-@router.post("/", response_model=ExportJobOut, status_code=201)
+@router.post("", response_model=ExportJobOut, status_code=201)
 async def create_export(
     payload: ExportJobCreate,
     db: AsyncSession = Depends(get_db),
@@ -118,7 +118,7 @@ async def create_export(
     return _to_export_job_out(job, requested_by_email=user.email)
 
 
-@router.get("/", response_model=list[ExportJobOut])
+@router.get("", response_model=list[ExportJobOut])
 async def list_exports(
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(require_role("admin", "operator")),

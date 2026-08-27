@@ -2,7 +2,6 @@
 name = "lavoro-esterno-backend"
 version = "0.1.0"
 description = "Backend per Lavoro Esterno: raccolta e deduplicazione di annunci per numero di telefono, con gestione media e AI."
-readme = "README.md"
 requires-python = ">=3.13,<3.14"
 license = { text = "Proprietary" }
 

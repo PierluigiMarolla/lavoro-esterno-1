@@ -284,12 +284,82 @@ scrivere test con fixture HTML salvate, validare rate limiting.
     resta un placeholder fisso `"N/D"`.
   Entrambe le correzioni sono state verificate con `python -m py_compile`,
   import completo di `app.main` (41 route registrate) e l'intera suite
-  pytest (54/54 passati). Non è stata invece condotta una verifica
-  end-to-end reale con database Postgres/servizi Docker avviati: resta il
-  rischio che altri dettagli di forma (es. campi opzionali, edge case sui
-  filtri di `/records/search`) emergano solo a runtime. Prima di
-  considerare il contratto API definitivamente stabile, va fatto un giro
-  di test manuale con `docker compose up --build` e la UI reale.
+  pytest (54/54 passati).
+
+## 12. Verifica end-to-end reale (`docker compose up --build`) e bug trovati
+
+A differenza delle verifiche precedenti (solo statiche: compilazione, test
+unitari), in questa sessione lo stack è stato **davvero avviato** con
+Docker Desktop e testato dal vivo. Sono emersi e sono stati corretti
+diversi bug che nessuna verifica statica poteva intercettare:
+
+- **`npm install` falliva** (`ERESOLVE`): `eslint-plugin-react-hooks@^4.6.2`
+  non supporta ESLint 9. Aggiornato a `^5.0.0` in `frontend/package.json`.
+- **`npm run build` falliva** (errori TypeScript): mancava
+  `frontend/src/vite-env.d.ts` (necessario per i tipi di `import.meta.env`),
+  `tsconfig.node.json` non aveva `"types": ["node"]`/`@types/node` come
+  dipendenza (necessario per `node:url` in `vite.config.ts`), e un import
+  `Badge` inutilizzato in `RecordOccurrencesTab.tsx`. Tutti corretti;
+  `npm run build` e `npm run lint` sono ora puliti (0 errori).
+- **`eslint.config.js` segnalava decine di falsi `no-undef`** su tipi DOM
+  ambientali TypeScript (`HTMLDivElement`, `RequestInit`, ecc., che non
+  sono globals runtime): `no-undef` disabilitato per i file TS/TSX (tsc
+  già copre questo caso con piena informazione di tipo).
+- **`pip install -e .` falliva nel Dockerfile del backend**: `pyproject.toml`
+  dichiarava `readme = "README.md"` ma quel file non esiste in
+  `backend/`. Rimosso il campo (non obbligatorio).
+- **Le migrazioni Alembic fallivano** con `DuplicateObjectError: type
+  "user_role" already exists` al primo `alembic upgrade head` su un DB
+  vuoto: gli enum Postgres venivano creati esplicitamente
+  (`enum_type.create(bind, checkfirst=True)`) E ricreati implicitamente
+  da `op.create_table` (l'oggetto `postgresql.ENUM` senza
+  `create_type=False` spara un secondo `CREATE TYPE` come effetto
+  collaterale della creazione della tabella). Corretto aggiungendo
+  `create_type=False` a tutti gli 8 enum in
+  `backend/migrations/versions/20260827120000_initial_schema.py`.
+  Verificato: `docker compose exec api alembic upgrade head` crea ora
+  tutte le 12 tabelle correttamente su un Postgres reale.
+- **Nessun modo di creare il primo utente Admin**: `POST /admin/users`
+  richiede già un Admin autenticato con 2FA attiva (corretto come modello
+  di sicurezza, ma è un problema di bootstrap). Aggiunto
+  `backend/app/scripts/create_admin.py`, script one-shot da eseguire con
+  `docker compose exec api python -m app.scripts.create_admin --email
+  ... --password ...`, documentato in `README.md` e `docs/SVILUPPO.md`.
+- **`GET /api/v1/sources` e `GET /api/v1/exports` rispondevano 307**
+  (redirect a `.../sources/`, `.../exports/`) quando chiamati senza
+  slash finale, come fa il frontend: FastAPI genera un redirect quando la
+  route è registrata come `@router.get("/")` sotto un prefisso. Corretto
+  cambiando la route in `@router.get("")` in `sources.py`, `exports.py`
+  (get e post) e, per coerenza, `search.py`.
+- `docs/SVILUPPO.md` conteneva istruzioni non allineate al codice reale
+  (nomi metodi scraper inventati, campi `sources` inesistenti come
+  `rate_limit_config`/`robots_txt_checked_at`, endpoint `POST
+  /sources/{id}/runs` mai esistito, variabili JWT vecchie): corretto per
+  riflettere l'interfaccia `Scraper` reale (`discover`/`scrape_ad`/
+  `download_media`/`normalize`) e gli endpoint effettivamente presenti.
+- **`loki` in crash-loop**: `infra/loki/loki-config.yml` aveva
+  `compactor.retention_enabled: true` senza `delete_request_store`,
+  richiesto dalle versioni recenti di Loki quando la retention è attiva.
+  Aggiunto `delete_request_store: filesystem` (coerente con lo storage
+  filesystem locale già configurato). Verificato: il container resta
+  stabile ("Loki started") invece di riavviarsi in loop.
+
+**Verificato con successo dal vivo** (Docker Desktop, `docker compose up
+--build` con tutti i 13 servizi): build di tutte le 6 immagini custom,
+avvio di tutti i container, `alembic upgrade head` con creazione delle 12
+tabelle, bootstrap del primo Admin, `POST /api/v1/auth/login` con risposta
+esatta attesa dal frontend (`status`/`access_token`/`refresh_token`/
+`user`), `GET /auth/me`, `GET /sources`, `GET /sources/summary`, `GET
+/exports`, `GET /dashboard/kpis`, `GET /admin/users` tutti raggiungibili
+tramite il reverse proxy nginx su `http://localhost/` con risposta 200 e
+forma corretta. Il bundle frontend è stato verificato contenere l'URL API
+corretto (`http://localhost/api/v1`, iniettato da `VITE_API_URL` come
+build-arg).
+
+**Non ancora verificato**: navigazione manuale dell'interfaccia in un
+browser reale (solo l'API è stata esercitata via `curl`), flusso 2FA
+completo (setup QR code + verifica + login con TOTP), scraper reali,
+generazione export reale, dashboard Grafana.
 
 Resta da fare un giro di verifica **eseguendo davvero** `docker compose up
 --build` end-to-end (non ancora testato in questo ambiente per assenza di

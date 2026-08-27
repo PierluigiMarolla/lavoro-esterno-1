@@ -21,7 +21,7 @@ from app.services.source_health import summarize_sources_by_status
 router = APIRouter()
 
 
-@router.get("/", response_model=list[SourceRead])
+@router.get("", response_model=list[SourceRead])
 async def list_sources(
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),

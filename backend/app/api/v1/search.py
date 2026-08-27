@@ -17,7 +17,7 @@ from app.services.phone_crypto import phone_lookup_hash
 router = APIRouter()
 
 
-@router.post("/", response_model=list[PhoneSearchResult])
+@router.post("", response_model=list[PhoneSearchResult])
 async def search_by_phone(
     payload: PhoneSearchRequest,
     db: AsyncSession = Depends(get_db),

@@ -39,6 +39,13 @@ export default [
       "react/react-in-jsx-scope": "off",
       "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
       "@typescript-eslint/no-unused-vars": ["warn", { argsIgnorePattern: "^_" }],
+      // "no-undef" only knows the small `globals` list above; it has no
+      // notion of TypeScript's ambient DOM lib types (HTMLDivElement,
+      // RequestInit, Response, ...), so it misfires on every type
+      // annotation that references one. tsc already catches genuine
+      // undefined-identifier errors with full type information, so this
+      // rule is redundant (and actively wrong) for TS/TSX files.
+      "no-undef": "off",
     },
   },
 ];

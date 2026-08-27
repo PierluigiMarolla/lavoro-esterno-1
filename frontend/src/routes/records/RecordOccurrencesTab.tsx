@@ -1,7 +1,6 @@
 import { useParams } from "react-router-dom";
 import { useRecordOccurrences } from "@/hooks/useRecords";
 import Icon from "@/components/ui/Icon";
-import Badge from "@/components/ui/Badge";
 import ProgressBar from "@/components/ui/ProgressBar";
 import { EmptyRow, ErrorRow, LoadingRow, Table, TBody, Td, Th, THead, Tr } from "@/components/ui/Table";
 

@@ -172,34 +172,76 @@ manuali (dettagliati anche in `PROGETTO.md`):
    completo di `app.main` (41 route registrate), suite pytest completa
    (54/54 passati).
 
-## Cosa NON è stato verificato (limite di questa sessione)
+## Aggiornamento: build reale eseguita e bug corretti (stesso giorno)
 
-- **Nessuna esecuzione reale di `docker compose up --build`**: in questo
-  ambiente Docker non era disponibile, quindi l'intero stack non è mai
-  stato avviato end-to-end con Postgres/Redis/MinIO reali.
-- **Nessun `npm install`/`npm run build` eseguito**: non esiste ancora un
-  `package-lock.json` nel frontend (va generato eseguendo `npm install`
-  in locale prima del primo commit "vero", altrimenti la CI fallisce su
-  `npm ci`).
-- **Nessun `uv sync`/`uv.lock` generato** per il backend, per lo stesso
-  motivo.
-- Possibili altri micro-disallineamenti di contratto API oltre ai 2 trovati
-  al giro 3 potrebbero emergere solo a runtime (es. edge case sui filtri di
-  `/records/search`, forme di risposta non ancora esercitate da test).
-- Nessuna validazione legale/GDPR è stata fatta (il PDF stesso la richiede
-  come passo separato, vedi `docs/SICUREZZA.md` e `PROGETTO.md`).
+In una seconda parte della sessione l'utente ha eseguito `docker compose
+up --build` sulla sua macchina e ha incontrato un errore (`npm install`
+falliva con `ERESOLVE`). Da lì è partito un giro di verifica **end-to-end
+reale** (Docker disponibile in quell'ambiente), che ha trovato e corretto
+diversi bug non rilevabili da compilazione/test statici:
+
+- `eslint-plugin-react-hooks` incompatibile con ESLint 9 → aggiornato a
+  `^5.0.0`.
+- `npm run build` falliva (TS): mancava `frontend/src/vite-env.d.ts`,
+  `tsconfig.node.json` senza `@types/node`, un import inutilizzato.
+- `eslint.config.js` disabilitava erroneamente `no-undef` sui tipi DOM
+  ambientali TS.
+- `backend/pyproject.toml` dichiarava un `readme = "README.md"`
+  inesistente → `pip install -e .` falliva nel Dockerfile. Rimosso.
+- **Migrazione Alembic rotta**: gli enum Postgres venivano creati due
+  volte (`DuplicateObjectError`) per mancanza di `create_type=False`.
+  Corretto in `backend/migrations/versions/20260827120000_initial_schema.py`.
+- **Bootstrap impossibile**: nessun modo di creare il primo utente Admin
+  (l'unico endpoint di creazione utenti richiede già un Admin con 2FA).
+  Aggiunto `backend/app/scripts/create_admin.py`.
+- `GET /sources` e `GET /exports` rispondevano 307 (redirect per slash
+  finale mancante) quando chiamati come fa il frontend → route corrette
+  da `@router.get("/")` a `@router.get("")`.
+- `docs/SVILUPPO.md` conteneva istruzioni inventate/non allineate al
+  codice reale (metodi scraper, campi `sources`, endpoint inesistenti) →
+  riscritto per riflettere il codice reale.
+- **`loki` in crash-loop** (`CONFIG ERROR: compactor.delete-request-store
+  should be configured when retention is enabled`): corretto aggiungendo
+  `delete_request_store: filesystem` in `infra/loki/loki-config.yml`.
+
+**Tutto questo è stato verificato dal vivo**, non solo in teoria: build
+di tutte le immagini Docker, avvio dei 13 servizi, migrazioni applicate
+su Postgres reale, creazione di un utente Admin, login riuscito con la
+forma di risposta esatta attesa dal frontend, ed endpoint chiave
+(`/auth/me`, `/sources`, `/sources/summary`, `/exports`, `/dashboard/
+kpis`, `/admin/users`) tutti raggiungibili con 200 tramite il reverse
+proxy nginx. Dettagli completi in `PROGETTO.md`, sezione 12.
+
+## Cosa NON è ancora stato verificato
+
+- **Navigazione manuale della UI in un browser reale**: solo l'API è
+  stata esercitata via `curl`, non l'interfaccia React nel browser.
+- **Flusso 2FA completo** (setup QR code, verifica, login con codice
+  TOTP): il login testato è stato quello senza 2FA attiva.
+- **`package-lock.json`/`uv.lock`**: il primo è stato generato durante
+  questa sessione (`npm install` eseguito con successo); `uv.lock` per il
+  backend NON è ancora stato generato (il backend è stato verificato con
+  `pip install` dentro Docker, non con `uv`).
+- Possibili altri micro-disallineamenti di contratto API potrebbero
+  emergere solo navigando pagine non ancora esercitate manualmente (es.
+  tab dettaglio record, pagina export con job reali).
+- Nessuna validazione legale/GDPR, nessuno scraper reale, nessun
+  classificatore AI reale, nessuna dashboard Grafana configurata.
 
 ## Prossimi passi consigliati (in ordine)
 
-1. In locale: `cd backend && uv sync` e `cd frontend && npm install`,
-   committare i lock file generati.
-2. Avviare `docker compose up --build` con un `.env` reale (copiato da
-   `.env.example` e con chiavi generate via `openssl rand -base64 ...`,
-   vedi `README.md`) e verificare che tutti i servizi partano.
-3. Test manuale end-to-end: creare un utente Admin (via seed/script da
-   scrivere, non ancora presente), abilitare 2FA, fare login, navigare
-   tutte le pagine e confrontarle visivamente con `desing/*/screen.png`.
-4. Consultare `PROGETTO.md` per la checklist completa di lavoro rimanente
+1. `docker compose up --build` (ora funziona), poi `docker compose exec
+   api alembic upgrade head`, poi creare l'Admin con
+   `docker compose exec api python -m app.scripts.create_admin --email
+   ... --password ...` (vedi `README.md` per i dettagli).
+2. Login nel browser su `http://localhost/`, navigare tutte le pagine e
+   confrontarle visivamente con `desing/*/screen.png`.
+3. Abilitare la 2FA sull'utente Admin appena creato e verificare il
+   flusso completo (mai testato finora).
+4. Generare `backend/uv.lock` eseguendo `uv sync` in locale (il backend
+   finora è stato verificato solo con `pip`, coerente con le dipendenze
+   in `pyproject.toml` ma non ancora con `uv` in prima persona).
+5. Consultare `PROGETTO.md` per la checklist completa di lavoro rimanente
    (scraper reali, classificatore AI reale, generazione export reale,
    dashboard Grafana, deploy produzione).
 
