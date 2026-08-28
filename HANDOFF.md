@@ -4,6 +4,13 @@ Questo file riassume cosa è stato fatto in questa conversazione, per poter
 proseguire il lavoro in una conversazione/sessione diversa senza perdere
 contesto. Data sessione: 27 agosto 2026.
 
+> **Nota**: esiste una sessione successiva (28 agosto 2026) che ha
+> completato la sezione "1. Autenticazione / 2FA" di `PROGETTO.md` per
+> intero. Il suo riassunto è in fondo a questo file, sezione
+> **"Sessione 2 — 28 agosto 2026"**: chi riprende il lavoro dovrebbe
+> leggere prima quella (più recente), poi tornare qui per il contesto
+> originale del progetto se necessario.
+
 ## Richiesta originale
 
 L'utente ha fornito un PDF (`lavoro-esterno-1-stack-tecnico.pdf`, in root)
@@ -256,3 +263,212 @@ proxy nginx. Dettagli completi in `PROGETTO.md`, sezione 12.
   contratto fonti, appena corretto.
 - `frontend/src/types/index.ts` — fonte di verità per la forma dei dati
   attesi da tutto il frontend.
+
+---
+
+# Sessione 2 — 28 agosto 2026
+
+## Richiesta
+
+Partendo da `PROGETTO.md` (checklist creata nella sessione 1), l'utente ha
+chiesto di:
+1. Esaminare l'intero progetto e spuntare in `PROGETTO.md` le task già
+   completate (fatto: solo "migrazioni Alembic iniziali" in sezione 2 era
+   effettivamente completo, tutto il resto ancora da fare).
+2. Completare **per intero** la sezione "1. Autenticazione / 2FA" di
+   `PROGETTO.md` (6 task), garantendo che tutto funzioni al 100%, con
+   verifica reale (non solo teorica).
+
+Sessione partita in **plan mode**; piano approvato salvato (fuori dal
+repo) in `C:\Users\playn\.claude\plans\ora-sempre-tenendo-in-elegant-stream.md`.
+
+## Decisioni prodotto prese con l'utente (via AskUserQuestion)
+
+- **MFA per il ruolo Operator: obbligatoria da subito** (stesso livello
+  di Admin, nessun periodo di grazia).
+- **Password policy: solo complessità minima, nessuna scadenza forzata.**
+- Recovery account: dato che non esiste alcun servizio email nel
+  progetto, si è scelto un meccanismo **admin-driven** (reset 2FA da
+  parte di un Admin), non un flusso self-service via email.
+
+## Cosa è stato implementato (tutte e 6 le task di § 1)
+
+### Backend (Python/FastAPI)
+
+- **`backend/app/models/users.py`**: nuova colonna `security_stamp_at`
+  (timestamptz, `server_default=now()`). Nuova migrazione Alembic
+  `backend/migrations/versions/20260828090000_users_security_stamp.py`.
+- **`backend/app/security/jwt.py`**: ogni access/refresh token porta ora
+  due claim nuovi: `jti` (id univoco, per blacklist puntuale) e `sst`
+  (snapshot di `security_stamp_at` all'emissione, per revoca in blocco).
+  Nuova utility `remaining_ttl_seconds`.
+- **`backend/app/security/redis_client.py`** (nuovo): blacklist `jti` +
+  contatori di rate limiting/lockout, tutto su Redis (già disponibile nel
+  compose per Celery), chiavi con prefisso `auth:`.
+- **`backend/app/security/deps.py`**: `get_current_user` ora (a) rifiuta
+  token con `jti` in blacklist o `sst` non corrispondente, (b) blocca con
+  403 (`error_code: mfa_setup_required`) i ruoli admin/operator privi di
+  2FA attiva. Nuova `get_current_user_allow_unenrolled` per gli endpoint
+  di setup stesso (`/me`, `/logout`, `/setup-2fa`, `/verify-2fa`,
+  `/2fa/backup-codes/regenerate`, `/change-password`). Nessuna modifica
+  necessaria negli altri router (sources/records/media/dashboard/search):
+  ereditano l'enforcement automaticamente.
+- **`backend/app/security/totp.py`**: nuovo `regenerate_backup_codes()`.
+- **`backend/app/security/password.py`**: nuovo
+  `validate_password_strength()` + `WeakPasswordError` (lunghezza minima,
+  varietà classi di caratteri, denylist password comuni, non deve
+  contenere l'email).
+- **`backend/app/config.py`** + **`.env.example`**: nuovi settings
+  `LOGIN_MAX_ATTEMPTS`, `LOGIN_LOCKOUT_MINUTES`, `MFA_MAX_ATTEMPTS`,
+  `MFA_LOCKOUT_MINUTES`, `PASSWORD_MIN_LENGTH`.
+- **`backend/app/api/v1/auth.py`** (riscritto): rate limiting su
+  `/login`/`/login-2fa`/`/verify-2fa`; `/login` restituisce
+  `status="mfa_setup_required"` per admin/operator senza 2FA; auto-rigenerazione
+  backup codes sull'ultimo consumato (`new_backup_codes` in risposta);
+  `/logout` blacklista i `jti` (access + refresh se inviato); `/refresh`
+  verifica blacklist/`sst`; nuovi endpoint `POST /auth/2fa/backup-codes/
+  regenerate` e `POST /auth/change-password` (quest'ultimo aggiorna
+  `security_stamp_at`, revocando tutte le sessioni precedenti).
+- **`backend/app/api/v1/admin.py`**: nuovo `POST /admin/users/{id}/
+  reset-2fa` (recovery account, admin-driven).
+- **`backend/app/schemas/auth.py`** e **`schemas/admin.py`**: nuovi schemi
+  di richiesta/risposta; `UserCreate` ora valida la password con
+  `validate_password_strength` via `model_validator`.
+- **`backend/app/scripts/create_admin.py`**: valida anch'esso la password.
+- Nuovi test: `backend/tests/test_password_policy.py`,
+  `backend/tests/test_backup_codes.py` (65/65 pytest totali passano).
+
+### Frontend (React/TS)
+
+- **`frontend/src/types/index.ts`**: `UserRole` corretto da
+  `"admin"|"analyst"|"viewer"` (bug pre-esistente, non combaciava mai con
+  l'enum backend `"admin"|"operator"|"viewer"`) a
+  `"admin"|"operator"|"viewer"`; `LoginResult` esteso con la variante
+  `mfa_setup_required`. **`frontend/src/routes/AdminPage.tsx`** aggiornato
+  di conseguenza (`ROLE_LABEL`).
+- **`frontend/src/api/client.ts`**: emette l'evento
+  `lavoro-esterno:mfa-setup-required` su 403 con quell'`error_code`.
+- **`frontend/src/api/auth.ts`**: nuove funzioni `setupTwoFactor`,
+  `verifyTwoFactorSetup`, `regenerateBackupCodes`, `changePassword`;
+  `logout()` ora invia il refresh token nel body.
+- **`frontend/src/context/AuthContext.tsx`**: nuovo
+  `requiresTwoFactorSetup` (derivato da `user.role`+`mfaEnabled`), nuovo
+  `completeTwoFactorSetup`.
+- **`frontend/src/routes/ProtectedRoute.tsx`**: reindirizza a
+  `/2fa-setup` quando `requiresTwoFactorSetup` è vero.
+- **`frontend/src/routes/TwoFactorSetupPage.tsx`** (nuova pagina): QR
+  code + secret + backup codes + verifica codice. Nessun mockup esiste
+  per questa schermata (flusso nuovo, non nei `desing/` originali).
+- **`frontend/src/routes/LoginPage.tsx`**: step MFA ora accetta anche
+  backup code alfanumerici (non solo 6 cifre), redirect a
+  `/2fa-setup` su `mfa_setup_required`, modale bloccante per mostrare
+  `new_backup_codes` quando rigenerati automaticamente.
+- **`frontend/src/App.tsx`**: nuova route `/2fa-setup`.
+- `npm run build` e `npm run lint` puliti (0 errori; 1 warning
+  pre-esistente identico in `AuthContext.tsx`, non introdotto ora).
+
+## Due bug pre-esistenti trovati e corretti (bloccavano la verifica)
+
+1. **`.env.example`**: `PHONE_ENCRYPTION_KEY=change-me-32-byte-base64-key-000000=`
+   non era base64 valido → crash (`binascii.Error`) al primo utilizzo
+   reale (setup 2FA, cifratura telefono). Sostituito con un placeholder
+   di sviluppo valido (`MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=`),
+   con commento che spiega perché deve restare base64 valido a 32 byte.
+2. **Bug latente FastAPI/Pydantic**: endpoint con `-> None` e
+   `status_code=204` (in questo ambiente/versioni: fastapi 0.115.6,
+   pydantic 2.11.x, Python 3.13) falliscono la registrazione della route
+   con `AssertionError: Status code 204 must not have a response body`,
+   perché la risoluzione dell'annotazione `None` (con
+   `from __future__ import annotations`) produce `NoneType` (truthy)
+   invece del singleton `None`. Riguardava sia i miei nuovi endpoint
+   (`/auth/logout`, `/auth/change-password`) sia due endpoint
+   preesistenti mai esercitati a fondo (`POST /sources/{id}/pause` e
+   `/disable`). **Corretto aggiungendo `response_model=None` esplicito**
+   a tutti e 4. Da tenere a mente se si aggiungono altri endpoint 204 in
+   futuro.
+
+## Verifica end-to-end reale (Docker disponibile in questo ambiente)
+
+`docker compose up --build` (13 servizi), `alembic upgrade head`
+(applica anche la nuova migrazione `security_stamp_at`),
+`create_admin.py` per il bootstrap. Poi uno script bash dedicato
+(non committato, era in una cartella scratchpad temporanea) ha
+verificato dal vivo, con richieste HTTP reali attraverso nginx, TUTTI e
+6 i comportamenti:
+
+1. Login Admin senza 2FA → `mfa_setup_required`; `GET /dashboard/kpis`
+   → 403 prima del setup, → 200 dopo `setup-2fa`+`verify-2fa`.
+2. 6 login falliti su un'email inesistente → lockout dopo la soglia,
+   429 con `retry_after_seconds` persistente sui tentativi successivi.
+3. Creato un utente Operator, completato il suo setup 2FA, consumati
+   tutti e 10 i backup code via `login-2fa`: sul decimo,
+   `new_backup_codes` è arrivato popolato con 10 codici nuovi; il primo
+   codice (ormai consumato) è stato correttamente rifiutato (401) se
+   riusato.
+4. `POST /admin/users/{id}/reset-2fa` sull'Operator → al login
+   successivo, di nuovo `mfa_setup_required` (recovery funzionante).
+5. `POST /auth/change-password`: password debole → 422; password valida
+   → 204; il refresh token emesso PRIMA del cambio password è stato
+   rifiutato (401) da `POST /auth/refresh` DOPO il cambio.
+6. `POST /auth/logout` con un refresh token nel body → 204; quello
+   stesso refresh token non funziona più su `POST /auth/refresh` (401).
+
+Anche verificato: il bundle frontend servito da Docker (nginx) contiene
+davvero le nuove route (`grep 2fa-setup` sui bundle JS), e le pagine
+`/` e `/login` rispondono 200 attraverso nginx. **Non verificato
+manualmente in un browser reale** (solo via curl/script), stessa
+limitazione già presente nella sessione 1.
+
+## Stato attuale dell'ambiente Docker
+
+Lo stack è stato lasciato **in esecuzione** al termine della sessione
+(non fermato). Nel DB di sviluppo esistono ora, come residuo dei test:
+- Un utente Admin: `admin@lavoro.internal` (2FA attiva).
+- Un utente Operator: `operator@lavoro.internal` (2FA disattivata di
+  nuovo a seguito del test di reset/recovery, password cambiata durante
+  i test in `NewStr0ngPw!456`).
+- Un lockout Redis su `bruteforce-target@lavoro.internal` (email
+  inesistente, TTL ~15 minuti, si esaurisce da solo).
+
+Se si riparte in un ambiente Docker diverso/pulito, questi dati non ci
+saranno: rieseguire `alembic upgrade head` + `create_admin.py` come da
+`README.md`.
+
+## PROGETTO.md aggiornato
+
+- Sezione "1. Autenticazione / 2FA": tutte e 6 le checkbox spuntate
+  `[x]`, con una nota implementativa per ciascuna.
+- `docs/SICUREZZA.md`: sezioni 1 ("Autenticazione JWT") e 2 ("2FA TOTP")
+  riscritte per riflettere l'implementazione reale (nomi endpoint
+  corretti, meccanismo di revoca `jti`/`sst`, rate limiting, policy
+  Operator, rotazione backup codes, recovery admin-driven). Tabella RBAC
+  (sezione 3) aggiornata per la policy 2FA di Operator.
+
+## Prossimi passi consigliati
+
+1. Se si vuole proseguire con `PROGETTO.md`, la prossima sezione logica
+   è "2. Database / migrazioni" (indici, retention, backup, partitioning,
+   seed dati di sviluppo — solo le migrazioni iniziali erano già fatte)
+   oppure "9. Observability" (nessuna dashboard Grafana, nessun endpoint
+   `/metrics`, nessun log verso Loki: tutto ancora da fare).
+2. Non è mai stata fatta una **navigazione manuale in un browser reale**
+   del flusso 2FA (login → setup obbligatorio → dashboard): consigliato
+   prima di considerare la sezione 1 definitivamente chiusa lato UX, non
+   solo lato contratto API.
+3. Valutare se estendere il rate limiting anche per IP (oggi è solo per
+   email/utente) se il rischio di brute-force distribuito è rilevante.
+4. `backend/uv.lock` non è ancora stato generato (stessa nota aperta
+   della sessione 1).
+
+## File chiave da leggere per ripartire (sessione 2)
+
+- `PROGETTO.md` sezione 1 — cosa è stato deciso e implementato.
+- `backend/app/security/deps.py` — enforcement 2FA obbligatoria e revoca
+  token, il cuore di questa sessione.
+- `backend/app/api/v1/auth.py` — tutti gli endpoint di autenticazione.
+- `backend/app/security/redis_client.py` — blacklist e rate limiting.
+- `frontend/src/context/AuthContext.tsx` e
+  `frontend/src/routes/TwoFactorSetupPage.tsx` — lato frontend del
+  flusso di enrollment obbligatorio.
+- `docs/SICUREZZA.md` — documentazione aggiornata del modello di
+  sicurezza.
