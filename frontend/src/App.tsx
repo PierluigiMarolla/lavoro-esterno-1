@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import AppShell from "@/layout/AppShell";
 import ProtectedRoute from "@/routes/ProtectedRoute";
 import LoginPage from "@/routes/LoginPage";
+import TwoFactorSetupPage from "@/routes/TwoFactorSetupPage";
 import DashboardPage from "@/routes/DashboardPage";
 import SearchPage from "@/routes/SearchPage";
 import SourcesPage from "@/routes/SourcesPage";
@@ -21,6 +22,10 @@ export default function App() {
 
       {/* Everything below requires an authenticated session */}
       <Route element={<ProtectedRoute />}>
+        {/* Standalone (no sidebar): mandatory for Admin/Operator accounts
+            without 2FA enrolled yet — ProtectedRoute redirects here from
+            every other route until setup is completed. */}
+        <Route path="/2fa-setup" element={<TwoFactorSetupPage />} />
         <Route element={<AppShell />}>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<DashboardPage />} />

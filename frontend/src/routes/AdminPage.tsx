@@ -25,7 +25,7 @@ const TABS: { key: AdminTab; label: string }[] = [
 
 const ROLE_LABEL: Record<UserRole, string> = {
   admin: "Admin",
-  analyst: "Analyst",
+  operator: "Operator",
   viewer: "Viewer",
 };
 

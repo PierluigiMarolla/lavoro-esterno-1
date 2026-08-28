@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import datetime as dt
+
 import sqlalchemy as sa
-from sqlalchemy import Boolean, String
+from sqlalchemy import Boolean, DateTime, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -36,3 +38,13 @@ class User(UUIDPKMixin, TimestampMixin, Base):
     backup_codes_hash: Mapped[list | None] = mapped_column(JSONB, nullable=True)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Timestamp di "validità minima" dei token: ogni access/refresh JWT porta
+    # con sé il claim `sst` (security stamp), preso da questo campo al momento
+    # dell'emissione. Aggiornarlo a `now()` invalida in blocco TUTTI i token
+    # già emessi per l'utente (confrontato in app/security/deps.py), senza
+    # dover tracciare ogni singolo jti mai emesso: usato su logout, cambio
+    # password e reset/disattivazione 2FA (anche da parte di un Admin).
+    security_stamp_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )

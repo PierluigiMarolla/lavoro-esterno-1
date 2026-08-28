@@ -111,10 +111,24 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     } catch {
       parsedBody = undefined;
     }
+
+    // `detail` is usually a plain string, but some endpoints (rate-limit
+    // lockouts, mandatory-2FA enforcement) return a structured object like
+    // `{ error_code, message, retry_after_seconds? }` — extract a readable
+    // string either way instead of stringifying the whole object.
+    const detail = (parsedBody as { detail?: unknown } | undefined)?.detail;
+    const errorCode =
+      detail && typeof detail === "object" ? (detail as { error_code?: string }).error_code : undefined;
     const message =
-      (parsedBody as { detail?: string; message?: string } | undefined)?.detail ??
+      (typeof detail === "string" ? detail : undefined) ??
+      (detail && typeof detail === "object" ? (detail as { message?: string }).message : undefined) ??
       (parsedBody as { message?: string } | undefined)?.message ??
       res.statusText;
+
+    if (errorCode === "mfa_setup_required") {
+      window.dispatchEvent(new Event("lavoro-esterno:mfa-setup-required"));
+    }
+
     throw new ApiError(res.status, message, parsedBody);
   }
 

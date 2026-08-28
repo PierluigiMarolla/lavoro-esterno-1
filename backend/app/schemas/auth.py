@@ -61,9 +61,16 @@ class LoginResponse(BaseModel):
     sono assenti: il client deve chiamare `POST /auth/login-2fa` con lo
     stesso `mfa_token` e un codice TOTP (o backup code) per completare
     l'accesso.
+
+    Se `status == "mfa_setup_required"`, l'utente ha un ruolo (admin/
+    operator) per cui la 2FA è obbligatoria ma non l'ha ancora attivata:
+    `access_token`/`refresh_token`/`user` sono presenti (servono per
+    chiamare `POST /auth/setup-2fa` e `POST /auth/verify-2fa`), ma
+    `get_current_user` (vedi app/security/deps.py) rifiuterà con 403
+    qualunque altro endpoint finché il setup non è completato.
     """
 
-    status: str  # "authenticated" | "mfa_required"
+    status: str  # "authenticated" | "mfa_required" | "mfa_setup_required"
     mfa_token: str | None = None
     access_token: str | None = None
     refresh_token: str | None = None
@@ -90,6 +97,14 @@ class TokenPairResponse(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
     user: UserPublic | None = None
+    new_backup_codes: list[str] | None = Field(
+        default=None,
+        description=(
+            "Presente SOLO se il login ha appena consumato l'ultimo backup code "
+            "rimasto: contiene i 10 nuovi codici generati automaticamente, da "
+            "mostrare UNA SOLA VOLTA all'utente prima di procedere."
+        ),
+    )
 
 
 class RefreshRequest(BaseModel):
@@ -112,3 +127,35 @@ class TOTPVerifyRequest(BaseModel):
     valido prima che `totp_enabled` venga impostato a True."""
 
     code: str = Field(min_length=6, max_length=6)
+
+
+class LogoutRequest(BaseModel):
+    """Body opzionale del logout: se il client invia anche il refresh
+    token, viene messo in blacklist insieme all'access token corrente
+    (altrimenti solo l'access token viene revocato)."""
+
+    refresh_token: str | None = None
+
+
+class BackupCodesRegenerateRequest(BaseModel):
+    """Rigenerazione manuale dei backup codes: richiede di ri-dimostrare il
+    possesso del dispositivo TOTP (stesso principio di `verify-2fa`), non
+    basta un access token valido da solo."""
+
+    code: str = Field(min_length=6, max_length=6)
+
+
+class BackupCodesRegenerateResponse(BaseModel):
+    backup_codes: list[str]
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class TwoFactorResetResponse(BaseModel):
+    """Esito del reset 2FA amministrativo (recovery account)."""
+
+    id: uuid.UUID
+    mfa_enabled: bool

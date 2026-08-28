@@ -6,9 +6,10 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr, model_validator
 
 from app.schemas.common import CamelModel
+from app.security.password import WeakPasswordError, validate_password_strength
 
 
 class UserRead(BaseModel):
@@ -27,6 +28,14 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str
     role: str = "viewer"
+
+    @model_validator(mode="after")
+    def _validate_password_strength(self) -> UserCreate:
+        try:
+            validate_password_strength(self.password, email=self.email)
+        except WeakPasswordError as exc:
+            raise ValueError(str(exc)) from exc
+        return self
 
 
 class AdminUserRead(CamelModel):

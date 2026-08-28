@@ -104,7 +104,7 @@ async def _get_source_or_404(db: AsyncSession, source_id: uuid.UUID) -> Source:
     return source
 
 
-@router.post("/{source_id}/pause", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/{source_id}/pause", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def pause_source(
     source_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -127,7 +127,7 @@ async def pause_source(
     await db.commit()
 
 
-@router.post("/{source_id}/disable", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/{source_id}/disable", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def disable_source(
     source_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),

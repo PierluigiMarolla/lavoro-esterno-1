@@ -13,6 +13,7 @@ permessi di un altro utente.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -30,6 +31,7 @@ from app.schemas.admin import (
     display_name_from_email,
     status_from_is_active,
 )
+from app.schemas.auth import TwoFactorResetResponse
 from app.security.deps import require_admin_with_2fa, require_role
 from app.security.password import hash_password
 from app.services.audit import log_action
@@ -163,6 +165,41 @@ async def suspend_user(
     await db.refresh(target)
 
     return _to_admin_user_read(target)
+
+
+@router.post("/users/{user_id}/reset-2fa", response_model=TwoFactorResetResponse)
+async def reset_user_2fa(
+    user_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin_with_2fa),
+) -> TwoFactorResetResponse:
+    """Procedura di recovery account: disattiva la 2FA di un utente che ha
+    perso sia il dispositivo TOTP sia i backup codes, senza alcun
+    meccanismo di reset via email (non esiste un servizio email nel
+    progetto). Dopo il reset l'utente rifà il setup 2FA obbligatorio al
+    prossimo login (stesso enforcement di `get_current_user`, vedi
+    app/security/deps.py), quindi non è mai realmente "senza 2FA" per più
+    di una sessione di login.
+
+    Aggiorna anche `security_stamp_at`, revocando in blocco ogni token
+    residuo dell'utente colpito: se l'account è stato compromesso insieme
+    alla perdita dei fattori 2FA, un eventuale token ancora valido non deve
+    restare utilizzabile dopo il reset.
+    """
+    target = await _get_user_or_404(db, user_id)
+    target.totp_secret_encrypted = None
+    target.totp_enabled = False
+    target.backup_codes_hash = None
+    target.security_stamp_at = datetime.now(UTC)
+    db.add(target)
+
+    await log_action(
+        db, user_id=admin.id, action="reset_2fa", entity_type="user", entity_id=str(user_id)
+    )
+    await db.commit()
+    await db.refresh(target)
+
+    return TwoFactorResetResponse(id=target.id, mfa_enabled=target.totp_enabled)
 
 
 @router.get("/audit-log", response_model=list[AuditLogEntryRead])

@@ -68,6 +68,27 @@ class Settings(BaseSettings):
         default=14, description="Durata di validità del token di refresh, in giorni."
     )
 
+    # --- Rate limiting / lockout login e 2FA (protezione brute-force) ----
+    LOGIN_MAX_ATTEMPTS: int = Field(
+        default=5, description="Tentativi di login (password) falliti prima del lockout account."
+    )
+    LOGIN_LOCKOUT_MINUTES: int = Field(
+        default=15, description="Durata del lockout dopo LOGIN_MAX_ATTEMPTS tentativi falliti."
+    )
+    MFA_MAX_ATTEMPTS: int = Field(
+        default=5,
+        description="Tentativi di verifica 2FA (TOTP/backup code) falliti prima del lockout.",
+    )
+    MFA_LOCKOUT_MINUTES: int = Field(
+        default=15, description="Durata del lockout dopo MFA_MAX_ATTEMPTS tentativi 2FA falliti."
+    )
+
+    # --- Policy password ---------------------------------------------------
+    # Solo complessità minima, nessuna scadenza forzata (decisione di prodotto).
+    PASSWORD_MIN_LENGTH: int = Field(
+        default=12, description="Lunghezza minima richiesta per le password (creazione/cambio)."
+    )
+
     # --- Cifratura telefono (privacy / GDPR) ----------------------------
     # Chiave AES-256 (32 byte) codificata base64, usata per cifrare a riposo
     # il numero di telefono. Deve essere diversa da PHONE_HMAC_SECRET: la prima

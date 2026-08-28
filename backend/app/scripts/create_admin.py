@@ -13,10 +13,12 @@ Uso (dentro il container `api`, con lo stack già avviato):
     docker compose exec api python -m app.scripts.create_admin \\
         --email admin@lavoro.internal --password "una-password-forte"
 
-L'utente creato ha `totp_enabled=False`: al primo login (senza 2FA)
-riceverà subito i token, e dovrebbe attivare la 2FA con
-`POST /auth/setup-2fa` + `POST /auth/verify-2fa` prima di poter usare le
-operazioni admin più sensibili (protette da `require_admin_with_2fa`).
+L'utente creato ha `totp_enabled=False`: la 2FA è obbligatoria dal login
+per il ruolo admin, quindi al primo login riceverà `status=
+"mfa_setup_required"` e dovrà attivarla con `POST /auth/setup-2fa` +
+`POST /auth/verify-2fa` (vedi `app/security/deps.py:get_current_user`)
+prima di poter usare qualunque altro endpoint, incluse le operazioni admin
+più sensibili (protette anche da `require_admin_with_2fa`).
 """
 
 from __future__ import annotations
@@ -29,7 +31,7 @@ from sqlalchemy import select
 
 from app.db import AsyncSessionLocal
 from app.models.users import User
-from app.security.password import hash_password
+from app.security.password import WeakPasswordError, hash_password, validate_password_strength
 
 
 async def create_admin(email: str, password: str) -> None:
@@ -37,6 +39,12 @@ async def create_admin(email: str, password: str) -> None:
         existing = (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
         if existing is not None:
             print(f"Utente '{email}' già esistente (id={existing.id}, role={existing.role}).")
+            sys.exit(1)
+
+        try:
+            validate_password_strength(password, email=email)
+        except WeakPasswordError as exc:
+            print(f"Password non valida: {exc}")
             sys.exit(1)
 
         user = User(

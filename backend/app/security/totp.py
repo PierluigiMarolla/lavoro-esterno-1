@@ -104,3 +104,21 @@ def verify_and_consume_backup_code(code: str, hashed_codes: list[str]) -> list[s
         except Exception:
             continue
     return None
+
+
+def regenerate_backup_codes() -> tuple[list[str], list[str]]:
+    """Genera un nuovo set di `BACKUP_CODES_COUNT` backup codes, invalidando
+    implicitamente quelli precedenti (il chiamante deve sovrascrivere
+    `users.backup_codes_hash` con il secondo elemento della tupla ritornata).
+
+    Usata sia dalla rigenerazione manuale (`POST /auth/2fa/backup-codes/
+    regenerate`) sia da quella automatica quando l'utente consuma l'ultimo
+    codice rimasto durante il login (`POST /auth/login-2fa`), per non
+    duplicare la logica tra i due punti di chiamata.
+
+    Ritorna `(codici_in_chiaro, hash_da_persistere)`: i codici in chiaro
+    vanno mostrati all'utente UNA SOLA VOLTA nella risposta, mai loggati né
+    ripresentati in seguito.
+    """
+    codes = generate_backup_codes()
+    return codes, hash_backup_codes(codes)

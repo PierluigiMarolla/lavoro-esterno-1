@@ -7,31 +7,80 @@ checkbox man mano che gli elementi vengono completati.
 
 ## 1. Autenticazione / 2FA
 
-- [ ] Decidere e implementare la policy MFA per il ruolo **Operator**
+Tutti i punti sottostanti sono stati implementati e verificati dal vivo
+(`docker compose up --build`, non solo test statici): login Admin/Operator
+senza 2FA → `mfa_setup_required` con blocco 403 di ogni altro endpoint,
+setup+verify 2FA, consumo di tutti e 10 i backup code con auto-rigenerazione
+sull'ultimo, riuso di un codice consumato rifiutato, recovery via reset
+admin, `change-password` con validazione debole/forte e revoca del refresh
+token precedente, `logout` con blacklist del refresh token. Dettagli
+implementativi in `docs/SICUREZZA.md`.
+
+- [x] Decidere e implementare la policy MFA per il ruolo **Operator**
       (oggi solo "raccomandata"): obbligatoria da subito, obbligatoria
       dopo N giorni di grazia, o solo Admin — decisione di prodotto.
-- [ ] Implementare la procedura di **recovery account** quando un utente
+      **Deciso con l'utente: obbligatoria da subito**, stesso livello di
+      Admin. `app/security/deps.py:get_current_user` blocca con 403
+      (`error_code: mfa_setup_required`) ogni endpoint applicativo per i
+      ruoli admin/operator privi di 2FA attiva, eccetto gli endpoint di
+      setup stesso (`get_current_user_allow_unenrolled`). Lato frontend,
+      `ProtectedRoute`/`AuthContext` reindirizzano automaticamente a una
+      nuova pagina `/2fa-setup` (`TwoFactorSetupPage.tsx`) finché il setup
+      non è completato.
+- [x] Implementare la procedura di **recovery account** quando un utente
       perde sia il dispositivo TOTP sia i backup codes (oggi previsto
       solo "reset da Admin" a livello di design, manca l'endpoint/flow
       completo e la relativa voce di audit log).
-- [ ] Definire e implementare la **rotazione/scadenza dei backup codes**
+      Nuovo `POST /admin/users/{id}/reset-2fa` (`require_admin_with_2fa`):
+      azzera `totp_secret_encrypted`/`totp_enabled`/`backup_codes_hash`,
+      aggiorna `security_stamp_at` (revoca ogni token residuo dell'utente),
+      audit log `reset_2fa`. Nessun servizio email nel progetto: la
+      recovery è admin-driven, l'utente rifà il setup obbligatorio al
+      prossimo login (stesso enforcement del punto precedente).
+- [x] Definire e implementare la **rotazione/scadenza dei backup codes**
       (quanti codici generare, se rigenerarli automaticamente dopo
       l'uso dell'ultimo).
-- [ ] Implementare **rate limiting sui tentativi di login e di verifica
+      Restano 10 codici monouso. Nuovo `POST /auth/2fa/backup-codes/
+      regenerate` (rigenerazione manuale, richiede ri-verifica TOTP).
+      Rigenerazione **automatica** quando l'utente consuma l'ultimo codice
+      rimasto durante `POST /auth/login-2fa`: i nuovi codici sono
+      restituiti una sola volta in `new_backup_codes` e mostrati
+      dal frontend in un modale bloccante prima di proseguire.
+- [x] Implementare **rate limiting sui tentativi di login e di verifica
       TOTP** (protezione da brute force), con blocco temporaneo account.
-- [ ] Definire policy di **complessità/scadenza password** (se richiesta
+      Contatori in Redis (`app/security/redis_client.py`, prefisso `auth:`,
+      nessuna nuova infrastruttura). Soglie configurabili
+      (`LOGIN_MAX_ATTEMPTS`/`LOGIN_LOCKOUT_MINUTES`,
+      `MFA_MAX_ATTEMPTS`/`MFA_LOCKOUT_MINUTES`, default 5 tentativi/15
+      minuti), applicate a `/auth/login`, `/auth/login-2fa`,
+      `/auth/verify-2fa`. Lockout → 429 con `retry_after_seconds`.
+- [x] Definire policy di **complessità/scadenza password** (se richiesta
       da requisiti di conformità del cliente).
-- [ ] Implementare **revoca/blacklist dei refresh token** su logout e su
+      **Deciso con l'utente: solo complessità minima, nessuna scadenza.**
+      `app/security/password.py:validate_password_strength` (lunghezza
+      minima configurabile, varietà di classi di caratteri, denylist
+      password comuni, non deve contenere l'email), applicata alla
+      creazione utente (`UserCreate`) e al nuovo `POST /auth/
+      change-password`.
+- [x] Implementare **revoca/blacklist dei refresh token** su logout e su
       cambio password/reset 2FA (richiede storage lato server, es. Redis
       o tabella dedicata).
+      Due meccanismi complementari: (1) blacklist Redis del `jti` per
+      revoca puntuale su `POST /auth/logout` (access token corrente +
+      refresh token se inviato nel body); (2) nuova colonna
+      `users.security_stamp_at` (claim `sst` nei JWT, confrontato in
+      `get_current_user`/`POST /auth/refresh`) per revoca in blocco di
+      *tutti* i token precedenti su cambio password e reset 2FA, senza
+      dover tracciare ogni singolo `jti` mai emesso.
 
 ## 2. Database / migrazioni
 
-- [ ] Scrivere le migrazioni Alembic iniziali per tutte le tabelle
+- [x] Scrivere le migrazioni Alembic iniziali per tutte le tabelle
       descritte in `docs/DATABASE.md` (record, advertisement, media,
       sources, canonical_history, scrape_runs, scrape_errors,
       media_classification_history, summary_versions, export_jobs,
-      audit_log, users).
+      audit_log, users). — fatto e verificato dal vivo (`alembic upgrade
+      head` crea le 12 tabelle su Postgres reale, vedi sezione 12).
 - [ ] Definire e creare gli **indici** definitivi oltre a quelli minimi
       già identificati (es. indici compositi per i filtri di ricerca più
       usati: città + data, fonte + stato, full-text su descrizione).

@@ -1,7 +1,10 @@
 // Shared domain types used across api/, hooks/ and routes/.
 // Kept intentionally close to the backend Pydantic schemas so the two stay easy to reconcile.
 
-export type UserRole = "admin" | "analyst" | "viewer";
+// Matches the Postgres enum `user_role` in the backend exactly
+// (backend/app/models/users.py) — "operator" here previously read "analyst",
+// a naming mismatch that silently broke any frontend logic keyed on role.
+export type UserRole = "admin" | "operator" | "viewer";
 
 export interface User {
   id: string;
@@ -17,11 +20,13 @@ export interface AuthTokens {
   refreshToken: string;
 }
 
-// Login can either succeed outright or require a second factor; the caller
-// discriminates on `status` before deciding whether to show the OTP step.
+// Login can succeed outright, require a second factor, or (for roles where
+// 2FA is mandatory) require completing 2FA enrollment before anything else
+// works — the caller discriminates on `status` to decide which step to show.
 export type LoginResult =
-  | { status: "authenticated"; tokens: AuthTokens; user: User }
-  | { status: "mfa_required"; mfaToken: string };
+  | { status: "authenticated"; tokens: AuthTokens; user: User; newBackupCodes?: string[] }
+  | { status: "mfa_required"; mfaToken: string }
+  | { status: "mfa_setup_required"; tokens: AuthTokens; user: User };
 
 export type SourceStatus = "healthy" | "degraded" | "offline";
 

@@ -7,57 +7,99 @@ registrazione pubblica, tutti gli utenti sono creati da un Admin.
 
 ## 1. Autenticazione JWT
 
-- Login con email + password (`/api/v1/auth/login`); password salvate
-  con hash forte (es. bcrypt/argon2 lato backend, mai in chiaro né con
-  hash reversibili).
+- Login con email + password (`POST /api/v1/auth/login`); password
+  salvate con hash Argon2id (`app/security/password.py`), mai in chiaro
+  né con hash reversibili. Policy di complessità minima (nessuna
+  scadenza forzata, decisione di prodotto): lunghezza minima
+  (`PASSWORD_MIN_LENGTH`, default 12), almeno 3 classi di caratteri su 4,
+  non deve contenere l'email dell'utente né essere tra le password più
+  comuni note (`validate_password_strength`), applicata alla creazione
+  utente e a `POST /api/v1/auth/change-password`.
 - Alla riuscita del login vengono emessi:
   - **access token** JWT, vita breve (`JWT_ACCESS_TTL_MINUTES`,
     default 15 minuti), usato in `Authorization: Bearer` su ogni
     richiesta API.
   - **refresh token** JWT, vita lunga (`JWT_REFRESH_TTL_DAYS`,
-    default 14 giorni), usato solo su `/api/v1/auth/refresh` per ottenere
-    una nuova coppia di token senza richiedere nuovamente la password.
+    default 14 giorni), usato solo su `POST /api/v1/auth/refresh` per
+    ottenere una nuova coppia di token senza richiedere nuovamente la
+    password.
 - Access e refresh token sono firmati con la stessa chiave simmetrica
   (`JWT_SECRET_KEY`) ma sono distinguibili tramite un claim `type` nel
   payload (`access`/`refresh`), verificato lato backend prima di onorare
   ciascuna richiesta: un access token non può essere usato su
-  `/api/v1/auth/refresh` e viceversa.
-- Logout (`/api/v1/auth/logout`) revoca il refresh token lato server
-  (richiede tracciamento/blacklist dei refresh token attivi o rotazione
-  con storicizzazione, da confermare in fase di implementazione backend).
+  `/api/v1/auth/refresh` e viceversa. Ogni token porta inoltre due claim
+  aggiuntivi usati per la revoca (`app/security/jwt.py`,
+  `app/security/deps.py`):
+  - `jti`: identificatore univoco del singolo token, usato per la
+    **blacklist puntuale** (Redis, `app/security/redis_client.py`) su
+    `POST /api/v1/auth/logout` — revoca l'access token corrente e, se
+    inviato nel body, il refresh token della stessa sessione.
+  - `sst` ("security stamp"): snapshot di `users.security_stamp_at` al
+    momento dell'emissione. Aggiornare questa colonna (cambio password,
+    reset 2FA amministrativo) invalida **in blocco** tutti i token
+    precedentemente emessi per l'utente, senza dover tracciare ogni
+    singolo `jti` mai emesso — un token con `sst` non più corrispondente
+    viene rifiutato sia da `get_current_user` sia da
+    `POST /api/v1/auth/refresh`.
+- **Rate limiting / lockout** (protezione brute-force, contatori Redis
+  con prefisso `auth:`): `LOGIN_MAX_ATTEMPTS`/`LOGIN_LOCKOUT_MINUTES`
+  (default 5 tentativi / 15 minuti) su `POST /auth/login`,
+  `MFA_MAX_ATTEMPTS`/`MFA_LOCKOUT_MINUTES` sulla verifica del codice 2FA
+  (`POST /auth/login-2fa`, `POST /auth/verify-2fa`). Oltre soglia, risposta
+  `429` con `{"error_code": "too_many_attempts", "retry_after_seconds": N}`.
 
 ## 2. 2FA TOTP
 
-- **Obbligatoria per il ruolo Admin**, fortemente raccomandata per
-  Operator (la policy esatta per Operator è da rivedere, vedi
-  `PROGETTO.md`).
-- Setup (`/api/v1/auth/2fa/setup` -> `/api/v1/auth/2fa/confirm`):
+- **Obbligatoria dal login per i ruoli Admin e Operator** (decisione di
+  prodotto: nessun periodo di grazia). Un account con questi ruoli ma
+  privo di 2FA riceve token validi solo per completare il setup: qualunque
+  altro endpoint applicativo risponde `403`
+  (`{"error_code": "mfa_setup_required"}`, enforcement in
+  `app/security/deps.py:get_current_user`) finché non viene attivata.
+  Lato frontend, `ProtectedRoute`/`AuthContext` reindirizzano
+  automaticamente a `/2fa-setup` (`TwoFactorSetupPage.tsx`) in questo
+  stato.
+- Setup (`POST /api/v1/auth/setup-2fa` -> `POST /api/v1/auth/verify-2fa`):
   1. Il server genera un segreto TOTP casuale e lo cifra a riposo
-     (`users.totp_secret`).
+     (`users.totp_secret_encrypted`, stesso schema AES-256-GCM del
+     numero di telefono).
   2. Viene restituito un QR code (URI standard `otpauth://totp/...`) da
-     inquadrare con un'app authenticator (Google Authenticator, Authy,
-     ecc.).
+     inquadrare con un'app authenticator (Google Authenticator, Microsoft
+     Authenticator, ecc.).
   3. L'utente conferma inserendo un codice a 6 cifre valido; solo a
      questo punto la 2FA viene attivata (`totp_enabled = true`).
-  4. Il server genera un set di **backup codes monouso**, mostrati una
-     sola volta all'utente e salvati solo come hash (`backup_codes_
-     hash`): permettono l'accesso in caso di perdita del dispositivo
-     authenticator.
+  4. Il server genera un set di 10 **backup codes monouso**, mostrati una
+     sola volta all'utente e salvati solo come hash Argon2
+     (`backup_codes_hash`): permettono l'accesso in caso di perdita del
+     dispositivo authenticator.
 - Login con 2FA attiva: dopo email+password, il client deve completare
-  `/api/v1/auth/2fa/verify` con un codice TOTP (o un backup code) prima
-  di ricevere i token definitivi (vedi flusso in `docs/API.md`).
+  `POST /api/v1/auth/login-2fa` con un codice TOTP (o un backup code)
+  prima di ricevere i token definitivi (vedi flusso in `docs/API.md`).
+- **Rotazione backup codes**: rigenerazione manuale via
+  `POST /api/v1/auth/2fa/backup-codes/regenerate` (richiede ri-verifica
+  di un codice TOTP corrente). Rigenerazione **automatica** quando
+  l'utente consuma l'ultimo backup code rimasto durante il login: i 10
+  nuovi codici sono restituiti una sola volta in `new_backup_codes` sulla
+  risposta di `login-2fa`, mostrati dal frontend in un modale bloccante
+  prima di proseguire — l'utente non resta mai silenziosamente senza via
+  di recovery.
 - **Recovery account**: se un utente perde sia il dispositivo TOTP sia i
   backup codes, solo un Admin può resettare la 2FA dell'account
-  (`PATCH /api/v1/admin/users/{user_id}` con azione di reset 2FA),
-  operazione che va registrata in `audit_log`.
+  (`POST /api/v1/admin/users/{user_id}/reset-2fa`, richiede
+  `require_admin_with_2fa`), operazione registrata in `audit_log`
+  (azione `reset_2fa`) che aggiorna anche `security_stamp_at` (revoca di
+  ogni token residuo dell'utente). Non esiste un servizio email nel
+  progetto: la recovery è deliberatamente admin-driven, non self-service.
+  Dopo il reset l'utente rifà il setup obbligatorio al prossimo login
+  (stesso enforcement del punto precedente).
 
 ## 3. RBAC - 3 ruoli
 
 | Ruolo | Permessi |
 |---|---|
-| **Admin** | Accesso completo: gestione utenti, gestione fonti (`sources`), configurazione, consultazione audit log, tutte le operazioni di Operator/Viewer. 2FA obbligatoria. |
-| **Operator** | Ricerca/consultazione record, avvio manuale di run di scraping, richiesta export, riclassificazione media/riepiloghi. Nessun accesso a gestione utenti o configurazione di sistema. |
-| **Viewer** | Solo lettura: ricerca e consultazione record/media/riepiloghi. Nessun avvio di operazioni (scraping, export, riclassificazione). |
+| **Admin** | Accesso completo: gestione utenti, gestione fonti (`sources`), configurazione, consultazione audit log, tutte le operazioni di Operator/Viewer. 2FA obbligatoria dal login. |
+| **Operator** | Ricerca/consultazione record, avvio manuale di run di scraping, richiesta export, riclassificazione media/riepiloghi. Nessun accesso a gestione utenti o configurazione di sistema. 2FA obbligatoria dal login (stessa policy di Admin). |
+| **Viewer** | Solo lettura: ricerca e consultazione record/media/riepiloghi. Nessun avvio di operazioni (scraping, export, riclassificazione). 2FA facoltativa. |
 
 L'applicazione dei permessi avviene lato backend (dependency FastAPI che
 verifica `role` dal JWT ad ogni richiesta), mai solo lato frontend

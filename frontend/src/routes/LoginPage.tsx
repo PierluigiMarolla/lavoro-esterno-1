@@ -9,7 +9,7 @@ import Icon from "@/components/ui/Icon";
 // steps: email+password, then (if the backend reports mfa_required) a
 // 6-digit code step — the mfaToken from step 1 is threaded through state.
 export default function LoginPage() {
-  const { login, verifyTwoFactor, user } = useAuth();
+  const { login, verifyTwoFactor, user, requiresTwoFactorSetup } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -17,13 +17,21 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
+  const [useBackupCode, setUseBackupCode] = useState(false);
   const [mfaToken, setMfaToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // Shown once, blocking, when the last backup code was just consumed and
+  // the backend auto-regenerated a fresh set: never let these be lost
+  // silently, they're the user's only account-recovery fallback.
+  const [newBackupCodes, setNewBackupCodes] = useState<string[] | null>(null);
+  const [pendingRedirect, setPendingRedirect] = useState<string | null>(null);
 
   // If a session already exists (e.g. user navigated back to /login), skip the form.
   if (user) {
-    const redirectTo = (location.state as { from?: Location })?.from?.pathname ?? "/dashboard";
+    const redirectTo = requiresTwoFactorSetup
+      ? "/2fa-setup"
+      : ((location.state as { from?: Location })?.from?.pathname ?? "/dashboard");
     return <Navigate to={redirectTo} replace />;
   }
 
@@ -36,6 +44,8 @@ export default function LoginPage() {
       if (result.status === "mfa_required") {
         setMfaToken(result.mfaToken);
         setStep("mfa");
+      } else if (result.status === "mfa_setup_required") {
+        navigate("/2fa-setup", { replace: true });
       } else {
         navigate("/dashboard", { replace: true });
       }
@@ -52,14 +62,48 @@ export default function LoginPage() {
     setError(null);
     setSubmitting(true);
     try {
-      await verifyTwoFactor(mfaToken, code);
-      navigate("/dashboard", { replace: true });
+      const regeneratedCodes = await verifyTwoFactor(mfaToken, code);
+      if (regeneratedCodes && regeneratedCodes.length > 0) {
+        setNewBackupCodes(regeneratedCodes);
+        setPendingRedirect("/dashboard");
+      } else {
+        navigate("/dashboard", { replace: true });
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Invalid verification code.");
     } finally {
       setSubmitting(false);
     }
   };
+
+  if (newBackupCodes) {
+    return (
+      <div className="bg-background text-on-background min-h-screen flex items-center justify-center p-margin-page">
+        <div className="w-full max-w-[420px] bg-surface-container-lowest border border-border rounded-lg shadow-[0_4px_24px_rgba(0,0,0,0.04)] overflow-hidden flex flex-col p-8 gap-4">
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-warning">warning</span>
+            <h2 className="text-headline-sm text-on-surface">New backup codes generated</h2>
+          </div>
+          <p className="text-body-md text-on-surface-variant">
+            You just used your last backup code, so a new set was generated automatically. Save
+            these now — they will not be shown again:
+          </p>
+          <div className="grid grid-cols-2 gap-2 font-mono text-mono-data bg-surface border border-outline-variant rounded p-3">
+            {newBackupCodes.map((c) => (
+              <span key={c}>{c}</span>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate(pendingRedirect ?? "/dashboard", { replace: true })}
+            className="w-full py-2.5 px-4 rounded shadow-sm text-label-sm text-on-primary bg-primary hover:bg-primary-container transition-colors"
+          >
+            I&apos;ve saved my new backup codes
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-background text-on-background min-h-screen flex items-center justify-center p-margin-page">
@@ -133,32 +177,49 @@ export default function LoginPage() {
               <div className="text-center space-y-1">
                 <Icon name="verified_user" className="text-primary" size={28} />
                 <p className="text-body-md text-on-surface-variant">
-                  Enter the 6-digit code from your authenticator app.
+                  {useBackupCode
+                    ? "Enter one of your 10-character backup codes."
+                    : "Enter the 6-digit code from your authenticator app."}
                 </p>
               </div>
               <div className="space-y-1.5">
                 <label className="block text-label-sm text-on-surface" htmlFor="mfa-code">
                   Verification Code
                 </label>
-                <input
-                  id="mfa-code"
-                  name="code"
-                  type="text"
-                  inputMode="numeric"
-                  pattern="\d{6}"
-                  maxLength={6}
-                  required
-                  autoFocus
-                  value={code}
-                  onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                  placeholder="000000"
-                  className="block w-full text-center tracking-[0.5em] py-2 px-3 border border-outline-variant rounded bg-surface focus:ring-2 focus:ring-primary-container focus:border-primary-container font-mono text-headline-sm text-on-surface placeholder-outline-variant transition-colors outline-none"
-                />
+                {useBackupCode ? (
+                  <input
+                    id="mfa-code"
+                    name="code"
+                    type="text"
+                    maxLength={12}
+                    required
+                    autoFocus
+                    value={code}
+                    onChange={(e) => setCode(e.target.value.toUpperCase().slice(0, 12))}
+                    placeholder="A1B2C3D4E5"
+                    className="block w-full text-center tracking-[0.2em] py-2 px-3 border border-outline-variant rounded bg-surface focus:ring-2 focus:ring-primary-container focus:border-primary-container font-mono text-headline-sm text-on-surface placeholder-outline-variant transition-colors outline-none"
+                  />
+                ) : (
+                  <input
+                    id="mfa-code"
+                    name="code"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="\d{6}"
+                    maxLength={6}
+                    required
+                    autoFocus
+                    value={code}
+                    onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                    placeholder="000000"
+                    className="block w-full text-center tracking-[0.5em] py-2 px-3 border border-outline-variant rounded bg-surface focus:ring-2 focus:ring-primary-container focus:border-primary-container font-mono text-headline-sm text-on-surface placeholder-outline-variant transition-colors outline-none"
+                  />
+                )}
               </div>
               <div className="pt-2">
                 <button
                   type="submit"
-                  disabled={submitting || code.length !== 6}
+                  disabled={submitting || (useBackupCode ? code.length < 6 : code.length !== 6)}
                   className="w-full flex justify-center py-2.5 px-4 rounded shadow-sm text-label-sm text-on-primary bg-primary hover:bg-primary-container focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary transition-colors disabled:opacity-60"
                 >
                   {submitting ? "Verifying…" : "Verify"}
@@ -167,8 +228,19 @@ export default function LoginPage() {
               <button
                 type="button"
                 onClick={() => {
+                  setUseBackupCode((v) => !v);
+                  setCode("");
+                }}
+                className="w-full text-center text-label-sm text-on-surface-variant hover:text-primary transition-colors"
+              >
+                {useBackupCode ? "Use authenticator code instead" : "Use a backup code instead"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
                   setStep("credentials");
                   setCode("");
+                  setUseBackupCode(false);
                 }}
                 className="w-full text-center text-label-sm text-on-surface-variant hover:text-primary transition-colors"
               >
