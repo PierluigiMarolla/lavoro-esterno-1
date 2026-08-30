@@ -47,9 +47,12 @@ docker compose up --build
 # Il DB parte vuoto: applicare le migrazioni...
 docker compose exec api alembic upgrade head
 
-# ...e creare il primo utente Admin (nessun endpoint API può farlo)
+# ...creare il primo utente Admin (nessun endpoint API può farlo)
 docker compose exec api python -m app.scripts.create_admin \
     --email admin@lavoro.internal --password "una-password-forte"
+
+# ...e creare le fonti da scrapare via API/UI (form "Add Source" nella
+# pagina Sources, o POST /sources) — vedi docs/SVILUPPO.md § 5
 ```
 
 Applicazione raggiungibile su `http://localhost/` (reverse proxy nginx),
@@ -76,7 +79,8 @@ frontend con hot reload) vedi [`docs/SVILUPPO.md`](docs/SVILUPPO.md).
 │   ├── nginx/nginx.conf
 │   ├── prometheus/prometheus.yml
 │   ├── grafana/provisioning/
-│   └── loki/loki-config.yml
+│   ├── loki/loki-config.yml
+│   └── backup/                # Script backup/restore Postgres + MinIO
 ├── .github/workflows/ci.yml   # Pipeline CI (lint, test, build immagini)
 ├── backend/                   # API FastAPI, worker Celery, migrazioni Alembic
 └── frontend/                  # SPA React + Vite + TypeScript

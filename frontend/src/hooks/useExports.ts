@@ -1,12 +1,27 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type Query } from "@tanstack/react-query";
 import * as exportsApi from "@/api/exports";
-import type { ExportType } from "@/types";
+import type { ExportJob, ExportType } from "@/types";
 
 const jobsKey = ["exports", "jobs"] as const;
 
+const ACTIVE_POLL_INTERVAL_MS = 3000;
+
 export function useExportJobs() {
-  // Poll while any job might still be processing; harmless if all are settled.
-  return useQuery({ queryKey: jobsKey, queryFn: exportsApi.fetchExportJobs, refetchInterval: 10000 });
+  // Poll frequently while any job is still pending/processing so status
+  // updates (e.g. completion, failure) show up without a manual refresh;
+  // stop polling entirely once every job has settled to avoid idle traffic.
+  return useQuery({
+    queryKey: jobsKey,
+    queryFn: exportsApi.fetchExportJobs,
+    refetchInterval: (query: Query<ExportJob[]>) => {
+      // ExportStatus is currently "ready" | "processing" | "failed" (no
+      // separate "pending" state in the API today); "processing" is the
+      // only non-terminal status, so that's what keeps polling alive.
+      const jobs = query.state.data;
+      const hasActiveJob = jobs?.some((job) => job.status === "processing");
+      return hasActiveJob ? ACTIVE_POLL_INTERVAL_MS : false;
+    },
+  });
 }
 
 export function useCreateExportJob() {

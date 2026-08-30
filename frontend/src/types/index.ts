@@ -29,6 +29,8 @@ export type LoginResult =
   | { status: "mfa_setup_required"; tokens: AuthTokens; user: User };
 
 export type SourceStatus = "healthy" | "degraded" | "offline";
+export type SourcePriority = "high" | "medium" | "low";
+export type ScrapeFetchMode = "http" | "dynamic" | "stealth";
 
 export interface Source {
   id: string;
@@ -36,9 +38,56 @@ export interface Source {
   name: string;
   country: string;
   status: SourceStatus;
+  // Priorità reale della fonte (bug corretto: prima l'API non la
+  // esponeva affatto, la colonna "Priority" della tabella fabbricava
+  // un'etichetta High/Medium/Low da errorRate — mostrava il tasso di
+  // errore travestito da priorità).
+  priority: SourcePriority;
   lastRunAt: string | null;
   itemsLast24h: number;
   errorRate: number;
+  consecutiveFailures: number;
+  hasScrapeConfig: boolean;
+}
+
+export interface ScrapeFieldConfig {
+  selector: string;
+  attribute: string;
+  multiple: boolean;
+}
+
+export interface ScrapeConfig {
+  startUrls: string[];
+  adLinkSelector: string;
+  nextPageSelector: string | null;
+  maxPages: number;
+  maxAdsPerRun: number;
+  rateLimitSeconds: number;
+  fetchMode?: ScrapeFetchMode;
+  renderJs: boolean;
+  userAgent?: string | null;
+  solveCloudflare?: boolean;
+  blockWebrtc?: boolean;
+  hideCanvas?: boolean;
+  realChrome?: boolean;
+  blockAds?: boolean;
+  proxy?: string | null;
+  waitSelector?: string | null;
+  waitMs?: number | null;
+  fields: Record<string, ScrapeFieldConfig>;
+}
+
+export interface RobotsCheckResult {
+  allowed: boolean;
+  robotsTxtFound: boolean;
+  checkedUrl: string;
+}
+
+export interface TestConfigResult {
+  adUrlsFound: number;
+  sampleUrl: string | null;
+  extractedFields: Record<string, unknown> | null;
+  error: string | null;
 }
 
 export type ScrapingRunStatus =
@@ -168,6 +217,32 @@ export interface RecordAiSummary {
   unverifiedClaims: string[];
   forumChatter: string[];
   sourcesUsed: { name: string; url: string }[];
+}
+
+// A single entry in the full version history (GET /records/{id}/ai-summary/versions),
+// as opposed to RecordAiSummary which is only ever the latest one.
+export interface RecordAiSummaryVersion extends RecordAiSummary {
+  version: number;
+}
+
+export interface ScrapeError {
+  id: string;
+  url: string;
+  errorMessage: string;
+  createdAt: string;
+}
+
+export type ScrapeRunStatus = "running" | "completed" | "failed";
+
+export interface ScrapeRun {
+  id: string;
+  startedAt: string;
+  finishedAt: string | null;
+  status: ScrapeRunStatus;
+  itemsFound: number;
+  itemsNew: number;
+  errorsCount: number;
+  errors: ScrapeError[];
 }
 
 export type ExportType = "text_only" | "complete_media" | "safe_complete";

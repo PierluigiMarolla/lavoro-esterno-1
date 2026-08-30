@@ -6,22 +6,10 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, model_validator
+from pydantic import BaseModel, EmailStr, model_validator
 
 from app.schemas.common import CamelModel
 from app.security.password import WeakPasswordError, validate_password_strength
-
-
-class UserRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: uuid.UUID
-    email: EmailStr
-    role: str
-    totp_enabled: bool
-    is_active: bool
-    created_at: datetime
-    updated_at: datetime
 
 
 class UserCreate(BaseModel):

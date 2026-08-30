@@ -40,7 +40,7 @@ export default function RecordDetailLayout() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-margin-page pt-margin-page pb-0 bg-white border-b border-border">
+      <div className="px-margin-page pt-margin-page pb-0 bg-surface-container-lowest border-b border-border">
         {overview.isLoading && <div className="h-20 mb-6 animate-pulse bg-surface-container-low rounded" />}
         {overview.isError && (
           <div className="mb-6 text-body-md text-error">Failed to load record header.</div>

@@ -22,6 +22,11 @@ COPY alembic.ini ./alembic.ini
 
 RUN pip install --no-cache-dir -e .
 
+# Chromium headless per Scrapling DynamicFetcher/StealthyFetcher.
+# DynamicFetcher usa Playwright; StealthyFetcher usa Patchright.
+RUN playwright install --with-deps chromium \
+    && patchright install chromium
+
 EXPOSE 8000
 
 # I worker Celery (scraping/media/ai) e Celery Beat riusano questa stessa immagine

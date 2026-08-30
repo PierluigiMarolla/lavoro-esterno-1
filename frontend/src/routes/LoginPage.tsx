@@ -1,8 +1,19 @@
 import { useState, type FormEvent } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-import { ApiError } from "@/api/client";
 import Icon from "@/components/ui/Icon";
+import { describeError } from "@/lib/errors";
+import { useCountdown } from "@/hooks/useCountdown";
+
+// Local shape for the banner state: either a plain error message, or a
+// rate-limit lockout with a live countdown (see describeError in
+// src/lib/errors.ts, which reads `retry_after_seconds` off the 429/403 body
+// the backend returns for /auth/login, /auth/login-2fa, /auth/verify-2fa).
+interface FormError {
+  title: string;
+  description: string;
+  retryAfterSeconds?: number;
+}
 
 // Replicates desing/login_lavoro_esterno/code.html: a centered card with a
 // header, form body and a "Restricted Access" footer. The form has two
@@ -19,8 +30,10 @@ export default function LoginPage() {
   const [code, setCode] = useState("");
   const [useBackupCode, setUseBackupCode] = useState(false);
   const [mfaToken, setMfaToken] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FormError | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const lockoutRemaining = useCountdown(error?.retryAfterSeconds);
+  const isLockedOut = Boolean(lockoutRemaining && lockoutRemaining > 0);
   // Shown once, blocking, when the last backup code was just consumed and
   // the backend auto-regenerated a fresh set: never let these be lost
   // silently, they're the user's only account-recovery fallback.
@@ -50,7 +63,8 @@ export default function LoginPage() {
         navigate("/dashboard", { replace: true });
       }
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Unable to sign in. Please try again.");
+      const { title, description, retryAfterSeconds } = describeError(err);
+      setError({ title, description, retryAfterSeconds });
     } finally {
       setSubmitting(false);
     }
@@ -70,7 +84,8 @@ export default function LoginPage() {
         navigate("/dashboard", { replace: true });
       }
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Invalid verification code.");
+      const { title, description, retryAfterSeconds } = describeError(err);
+      setError({ title, description, retryAfterSeconds });
     } finally {
       setSubmitting(false);
     }
@@ -115,7 +130,11 @@ export default function LoginPage() {
 
         <div className="p-8 pt-6 flex-1 flex flex-col justify-center">
           {error && (
-            <div className="mb-4 px-3 py-2 rounded bg-error-container/40 text-error text-body-md">{error}</div>
+            <div className="mb-4 px-3 py-2 rounded bg-error-container/40 text-error text-body-md">
+              <p className="font-semibold">{error.title}</p>
+              <p>{error.description}</p>
+              {isLockedOut && <p className="mt-1 font-mono text-mono-data">Retry in {lockoutRemaining}s</p>}
+            </div>
           )}
 
           {step === "credentials" ? (
@@ -165,10 +184,10 @@ export default function LoginPage() {
               <div className="pt-4">
                 <button
                   type="submit"
-                  disabled={submitting}
+                  disabled={submitting || isLockedOut}
                   className="w-full flex justify-center py-2.5 px-4 rounded shadow-sm text-label-sm text-on-primary bg-primary hover:bg-primary-container focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary transition-colors disabled:opacity-60"
                 >
-                  {submitting ? "Signing in…" : "Sign in"}
+                  {isLockedOut ? `Retry in ${lockoutRemaining}s` : submitting ? "Signing in…" : "Sign in"}
                 </button>
               </div>
             </form>
@@ -219,10 +238,12 @@ export default function LoginPage() {
               <div className="pt-2">
                 <button
                   type="submit"
-                  disabled={submitting || (useBackupCode ? code.length < 6 : code.length !== 6)}
+                  disabled={
+                    submitting || isLockedOut || (useBackupCode ? code.length < 6 : code.length !== 6)
+                  }
                   className="w-full flex justify-center py-2.5 px-4 rounded shadow-sm text-label-sm text-on-primary bg-primary hover:bg-primary-container focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary transition-colors disabled:opacity-60"
                 >
-                  {submitting ? "Verifying…" : "Verify"}
+                  {isLockedOut ? `Retry in ${lockoutRemaining}s` : submitting ? "Verifying…" : "Verify"}
                 </button>
               </div>
               <button

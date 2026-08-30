@@ -3,3 +3,8 @@ dist
 .env
 .env.local
 *.log
+*.tsbuildinfo
+test-results
+playwright-report
+blob-report
+playwright/.cache

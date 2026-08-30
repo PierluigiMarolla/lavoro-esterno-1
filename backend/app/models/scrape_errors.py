@@ -19,4 +19,7 @@ class ScrapeError(UUIDPKMixin, Base):
     )
     url: Mapped[str] = mapped_column(Text, nullable=False)
     error_message: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # Indicizzato: query di retention (app.workers.tasks_maintenance.cleanup_expired_data).
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )

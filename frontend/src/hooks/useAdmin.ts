@@ -24,6 +24,22 @@ export function useSuspendAdminUser() {
   });
 }
 
+export function useCreateAdminUser() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: adminApi.createAdminUser,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: usersKey }),
+  });
+}
+
+export function useResetAdminUserTwoFactor() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: adminApi.resetAdminUserTwoFactor,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: usersKey }),
+  });
+}
+
 export function useAuditLog() {
   return useQuery({ queryKey: ["admin", "audit-log"], queryFn: adminApi.fetchAuditLog });
 }

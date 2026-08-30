@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
-from sqlalchemy import DateTime, Float, ForeignKey, String, Text
+from sqlalchemy import DateTime, Float, ForeignKey, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, UUIDPKMixin, utcnow
@@ -25,6 +25,14 @@ class Advertisement(UUIDPKMixin, Base):
     """Annuncio raccolto da una fonte esterna, associato a un `Record`."""
 
     __tablename__ = "advertisements"
+    __table_args__ = (
+        # Filtro "annunci attivi di una fonte" (selezione canonica, dashboard).
+        # L'indice full-text GIN su title/description (ix_advertisements_fulltext)
+        # è un'espressione funzionale, non dichiarabile qui come Index ORM
+        # "portabile": vive solo nella migrazione dedicata (vedi
+        # migrations/versions/20260829091500_additional_indexes.py).
+        Index("ix_advertisements_source_id_status", "source_id", "status"),
+    )
 
     record_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("records.id", ondelete="CASCADE"), nullable=False, index=True

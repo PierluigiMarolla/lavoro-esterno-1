@@ -2,6 +2,7 @@ import { useDashboardKpis, useRecentActivity, useScrapingActivity, useSourceHeal
 import Icon from "@/components/ui/Icon";
 import Badge, { type BadgeTone } from "@/components/ui/Badge";
 import ProgressBar from "@/components/ui/ProgressBar";
+import ErrorState from "@/components/ui/ErrorState";
 import { EmptyRow, ErrorRow, LoadingRow, Table, TBody, Td, Th, THead, Tr } from "@/components/ui/Table";
 import type { ScrapingRunStatus } from "@/types";
 
@@ -106,7 +107,7 @@ export default function DashboardPage() {
           <p className="text-body-md text-on-surface-variant mt-1">Real-time telemetry and extraction metrics.</p>
         </div>
         <div className="flex gap-2">
-          <button className="flex items-center gap-1 px-3 py-1.5 border border-border rounded text-label-sm text-on-surface-variant hover:bg-surface-container-lowest transition-colors bg-white">
+          <button className="flex items-center gap-1 px-3 py-1.5 border border-border rounded text-label-sm text-on-surface-variant hover:bg-surface-container-low transition-colors bg-surface-container-lowest">
             <Icon name="calendar_today" size={16} />
             Last 24 Hours
           </button>
@@ -129,17 +130,17 @@ export default function DashboardPage() {
       <div className="col-span-12 grid grid-cols-5 gap-gutter mb-2">
         {kpis.isLoading &&
           Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="bg-white border border-border rounded-lg p-4 h-[104px] animate-pulse" />
+            <div key={i} className="bg-surface-container-lowest border border-border rounded-lg p-4 h-[104px] animate-pulse" />
           ))}
         {kpis.isError && (
-          <div className="col-span-5 bg-error-container/20 border border-error/20 rounded-lg p-4 text-error text-body-md">
-            Failed to load dashboard KPIs.
+          <div className="col-span-5 bg-surface-container-lowest border border-border rounded-lg">
+            <ErrorState error={kpis.error} onRetry={() => kpis.refetch()} />
           </div>
         )}
         {cards?.map((card) => (
           <div
             key={card.key}
-            className="bg-white border border-border rounded-lg p-4 flex flex-col justify-between shadow-[0_1px_2px_rgba(0,0,0,0.02)] relative overflow-hidden"
+            className="bg-surface-container-lowest border border-border rounded-lg p-4 flex flex-col justify-between shadow-[0_1px_2px_rgba(0,0,0,0.02)] relative overflow-hidden"
           >
             <div className={`absolute top-0 left-0 w-full h-1 opacity-80 ${card.accent.split(" ")[0]}`} />
             <div className="flex justify-between items-start mb-2">
@@ -161,7 +162,7 @@ export default function DashboardPage() {
 
       {/* Scraping Activity */}
       <div className="col-span-8 flex flex-col gap-gutter">
-        <div className="bg-white border border-border rounded-lg shadow-[0_1px_2px_rgba(0,0,0,0.02)] flex flex-col h-[500px]">
+        <div className="bg-surface-container-lowest border border-border rounded-lg shadow-[0_1px_2px_rgba(0,0,0,0.02)] flex flex-col h-[500px]">
           <div className="px-5 py-4 border-b border-border flex justify-between items-center bg-surface-container-lowest">
             <h3 className="text-headline-sm text-on-surface flex items-center gap-2">
               <Icon name="data_usage" className="text-primary" />
@@ -181,7 +182,7 @@ export default function DashboardPage() {
             </THead>
             <TBody>
               {activity.isLoading && <LoadingRow colSpan={6} />}
-              {activity.isError && <ErrorRow colSpan={6} message="Failed to load scraping activity." />}
+              {activity.isError && <ErrorRow colSpan={6} error={activity.error} onRetry={() => activity.refetch()} />}
               {activity.data && activity.data.length === 0 && <EmptyRow colSpan={6} message="No scraping runs yet." />}
               {activity.data?.map((run) => (
                 <Tr key={run.id}>
@@ -207,13 +208,13 @@ export default function DashboardPage() {
 
       {/* Right column */}
       <div className="col-span-4 flex flex-col gap-gutter">
-        <div className="bg-white border border-border rounded-lg shadow-[0_1px_2px_rgba(0,0,0,0.02)] p-5">
+        <div className="bg-surface-container-lowest border border-border rounded-lg shadow-[0_1px_2px_rgba(0,0,0,0.02)] p-5">
           <h3 className="text-headline-sm text-on-surface mb-4 flex items-center gap-2">
             <Icon name="monitor_heart" className="text-info" />
             Source Health
           </h3>
           {health.isLoading && <p className="text-body-md text-on-surface-variant">Loading…</p>}
-          {health.isError && <p className="text-body-md text-error">Failed to load source health.</p>}
+          {health.isError && <ErrorState error={health.error} onRetry={() => health.refetch()} className="py-4" />}
           {health.data && (
             <div className="space-y-4">
               <HealthRow label="Healthy" value={health.data.healthy} total={health.data.total} tone="success" />
@@ -227,7 +228,7 @@ export default function DashboardPage() {
           </button>
         </div>
 
-        <div className="bg-white border border-border rounded-lg shadow-[0_1px_2px_rgba(0,0,0,0.02)] flex-1 flex flex-col min-h-[300px]">
+        <div className="bg-surface-container-lowest border border-border rounded-lg shadow-[0_1px_2px_rgba(0,0,0,0.02)] flex-1 flex flex-col min-h-[300px]">
           <div className="px-5 py-4 border-b border-border bg-surface-container-lowest">
             <h3 className="text-headline-sm text-on-surface flex items-center gap-2">
               <Icon name="history" className="text-outline" />
@@ -236,7 +237,7 @@ export default function DashboardPage() {
           </div>
           <div className="p-5 overflow-y-auto flex-1 space-y-5">
             {recent.isLoading && <p className="text-body-md text-on-surface-variant">Loading…</p>}
-            {recent.isError && <p className="text-body-md text-error">Failed to load activity feed.</p>}
+            {recent.isError && <ErrorState error={recent.error} onRetry={() => recent.refetch()} className="py-4" />}
             {recent.data && recent.data.length === 0 && (
               <p className="text-body-md text-on-surface-variant">No recent activity.</p>
             )}

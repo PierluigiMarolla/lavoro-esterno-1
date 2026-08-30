@@ -75,21 +75,74 @@ revoca/blacklist dei refresh token, ancora da implementare.
 | GET | `/api/v1/records/{record_id}/media` | Media associati agli annunci del record, con classificazione (media non ancora classificato è trattato come "explicit" per default fail-safe). |
 | GET | `/api/v1/records/{record_id}/history` | Storico unificato: unione di `canonical_history`, `media_classification_history` e `audit_log` filtrati per il record, ordinati per data. |
 | GET | `/api/v1/records/{record_id}/ai-summary` | Ultima versione del riepilogo AI (`summary_versions`); risponde `204` se non è mai stato generato. |
+| GET | `/api/v1/records/{record_id}/ai-summary/versions` | Storico COMPLETO delle versioni (non solo l'ultima), più recente prima — per il selettore storico in `RecordAiSummaryTab.tsx`. |
 | POST | `/api/v1/records/{record_id}/ai-summary/regenerate` | Rigenera il riepilogo AI tramite `app/services/summary_generator.py` (placeholder, nessun LLM reale) e salva una nuova `SummaryVersion`. Riservato ad Admin/Operator. |
 
 ## Area `sources` - gestione fonti scrapate
 
 | Metodo | Path | Scopo |
 |---|---|---|
-| GET | `/api/v1/sources` | Elenco delle fonti configurate (es. escort_advisor, bakeca_incontri, ...): `code` (slug), `status`, `lastRunAt`, `itemsLast24h`, `errorRate` calcolati da `scrape_runs` per fonte (query N+1 accettata per il numero di fonti atteso, vedi commento in `app/api/v1/sources.py`); `country` è un placeholder fisso (`"N/D"`), nessuna colonna dedicata nel modello. |
+| GET | `/api/v1/sources` | Elenco delle fonti configurate: `code` (slug), `status`, `priority`, `lastRunAt`, `itemsLast24h`, `errorRate`, `consecutiveFailures`, `hasScrapeConfig` calcolati/letti da `scrape_runs`/`Source` (query N+1 accettata per il numero di fonti atteso, vedi commento in `app/api/v1/sources.py`); `country` è un placeholder fisso (`"N/D"`), nessuna colonna dedicata nel modello. |
 | GET | `/api/v1/sources/summary` | Conteggio fonti per stato (`total`/`active`/`degraded`/`offline`). |
-| POST | `/api/v1/sources` | Registra una nuova fonte (solo Admin). |
-| PATCH | `/api/v1/sources/{source_id}` | Aggiorna configurazione di una fonte (rate limit, attiva/disattiva, pianificazione). |
+| GET | `/api/v1/sources/{source_id}` | Dettaglio di una fonte, incluso `scrapeConfig` completo (assente da `GET /sources`, che espone solo il booleano `hasScrapeConfig`) — usato per precompilare il form "Edit configuration". |
+| POST | `/api/v1/sources` | Crea una nuova fonte (solo Admin). `scrapeConfig` opzionale: se presente, la fonte è immediatamente scrapabile dal motore generico (`app/scrapers/generic.py`). Vedi § "Motore di scraping generico" sotto per la struttura di `scrapeConfig`. |
+| PATCH | `/api/v1/sources/{source_id}` | Modifica `name`/`baseUrl`/`priority`/`scrapeConfig` di una fonte esistente (solo Admin). Non permette di cambiare `slug`. |
+| DELETE | `/api/v1/sources/{source_id}` | Rimuove una fonte (solo Admin). 409 se esistono `advertisement` collegati (storico preservato). |
+| POST | `/api/v1/sources/{source_id}/check-robots` | Verifica live il `robots.txt` pubblico della fonte usando lo stesso User-Agent configurato per lo scan — nessun altro contenuto scaricato. Nessuna restrizione di ruolo oltre l'autenticazione. |
+| POST | `/api/v1/sources/{source_id}/test-config` | Prova `scrapeConfig` su UN solo annuncio reale (non salvato su DB): utile per verificare i selettori prima di un run reale. Richiede Admin/Operator (esegue richieste HTTP reali verso la fonte). |
+| GET | `/api/v1/sources/{source_id}/runs` | Storico dei run di scraping (`scrape_runs`) per la fonte, con gli errori di ciascun run annidati (`scrape_errors`) — drill-down per la pagina Sources. Sola lettura, nessuna restrizione di ruolo. |
 | POST | `/api/v1/sources/{source_id}/pause` | Mette in pausa una fonte (`enabled=false`, status di salute invariato). Riservato ad Admin/Operator. |
 | POST | `/api/v1/sources/{source_id}/disable` | Disabilita definitivamente una fonte (`enabled=false`, `status="offline"`). Riservato ad Admin/Operator. |
-| GET | `/api/v1/sources/{source_id}/runs` | Storico dei run di scraping (`scrape_runs`) per la fonte, con esiti ed errori (`scrape_errors`). |
-| POST | `/api/v1/sources/{source_id}/runs` | Avvia manualmente un run di scraping per la fonte (accoda un task sulla coda `scraping`). |
-| POST | `/api/v1/sources/{source_id}/scan` | Accoda un task di scraping on-demand per la fonte (implementato: usa Celery). |
+| POST | `/api/v1/sources/{source_id}/scan` | Accoda un task di scraping on-demand per la fonte (Celery). Se `scrapeConfig` è impostato, esegue DAVVERO lo scraping (motore generico); altrimenti nessuna azione reale (fonte registrata come classe Python stub, vedi `app/scrapers/registry.py`). |
+
+### Motore di scraping generico (`scrapeConfig`)
+
+Vedi `PROGETTO.md` § 4 e `docs/DATABASE.md` § "Motore di scraping
+generico" per il razionale completo. Struttura di `scrapeConfig` (sia in
+`POST`/`PATCH /sources` sia nella risposta di `GET /sources/{id}`):
+
+```json
+{
+  "startUrls": ["https://example.com/listing"],
+  "adLinkSelector": "a.ad-card",
+  "nextPageSelector": "a.pagination-next",
+  "maxPages": 5,
+  "maxAdsPerRun": 200,
+  "rateLimitSeconds": 2,
+  "fetchMode": "http",
+  "userAgent": "CustomScraper/2.0",
+  "solveCloudflare": false,
+  "blockWebrtc": false,
+  "hideCanvas": false,
+  "realChrome": false,
+  "blockAds": false,
+  "proxy": null,
+  "waitSelector": null,
+  "waitMs": null,
+  "fields": {
+    "phone": { "selector": ".ad-phone", "attribute": "text" },
+    "title": { "selector": "h1.ad-title", "attribute": "text" },
+    "images": { "selector": ".gallery img", "attribute": "src", "multiple": true }
+  }
+}
+```
+
+Vincoli validati lato server, non aggirabili: il campo `phone` è
+obbligatorio in `fields` (senza telefono un annuncio non può essere
+collegato a nessun Record); `rateLimitSeconds` ha un minimo di 1 secondo;
+`maxPages`/`maxAdsPerRun` hanno un tetto massimo. Il motore usa Scrapling
+con `fetchMode: "http"` di default; `"dynamic"` abilita il browser headless
+per contenuti generati via JavaScript, `"stealth"` abilita le opzioni
+anti-bot di Scrapling configurate sulla fonte. `renderJs` resta accettato
+per compatibilità e, se `fetchMode` manca, equivale a `"dynamic"`. Il
+motore rispetta sempre `robots.txt`. `userAgent` è opzionale e, se assente,
+usa il default `app/scrapers/base.py:Scraper.user_agent`.
+
+Una fonte può essere creata senza `scrapeConfig` (`POST /sources` con solo
+`name`/`slug`/`baseUrl`) e configurata in un secondo momento via `PATCH
+/sources/{id}` quando si decide di attivarne lo scraping reale (previa
+verifica ToS/robots.txt per quella fonte specifica) — finché resta senza
+configurazione, ogni tentativo di scan fallisce esplicitamente.
 
 ## Area `media` - gestione media e classificazione
 
@@ -127,9 +180,10 @@ revoca/blacklist dei refresh token, ancora da implementare.
 | Metodo | Path | Scopo |
 |---|---|---|
 | GET | `/api/v1/admin/users` | Elenco utenti (solo Admin). `name`/`lastLoginAt` sono approssimati (nessuna colonna dedicata nel modello `User`, vedi `app/schemas/admin.py:AdminUserRead`). |
-| POST | `/api/v1/admin/users` | Creazione utente con ruolo (Admin/Operator/Viewer). Richiede Admin con 2FA attiva. |
+| POST | `/api/v1/admin/users` | Creazione utente con ruolo (Admin/Operator/Viewer). Richiede Admin con 2FA attiva. Risponde con `AdminUserRead` (camelCase, coerente col resto dell'area — bug corretto: prima rispondeva con `UserRead` snake_case, forma diversa da `GET`/`PATCH`/`.../suspend`). |
 | PATCH | `/api/v1/admin/users/{user_id}` | Modifica il ruolo di un utente. Richiede Admin con 2FA attiva. |
 | POST | `/api/v1/admin/users/{user_id}/suspend` | Sospende un utente (`is_active=false`), impedendo nuovi login. Richiede Admin con 2FA attiva. |
+| POST | `/api/v1/admin/users/{user_id}/reset-2fa` | Recovery account: disattiva la 2FA dell'utente (nessun servizio email nel progetto per un reset self-service), che dovrà rifare il setup obbligatorio al prossimo login. Risponde `{ id, mfa_enabled }` (snake_case, NON CamelModel — mappato esplicitamente in `frontend/src/api/admin.ts:resetAdminUserTwoFactor`, stesso stile di `auth.ts`). Richiede Admin con 2FA attiva. |
 | GET | `/api/v1/admin/audit-log` | Consultazione dell'audit log (azioni sensibili: login/logout, export, modifiche utenti/fonti, rigenerazione riepilogo AI...). Solo Admin. |
 | GET | `/api/v1/admin/system/health` | Stato aggregato dei componenti (DB, Redis, MinIO, ultimo run scheduler). *(Non ancora implementato.)* |
 

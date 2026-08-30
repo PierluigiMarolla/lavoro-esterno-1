@@ -75,87 +75,262 @@ implementativi in `docs/SICUREZZA.md`.
 
 ## 2. Database / migrazioni
 
+Tutti i punti sottostanti sono stati completati (o esplicitamente valutati
+per iscritto, dove la richiesta era "valutare", non "implementare") e
+verificati dal vivo (`docker compose up --build`, non solo test statici):
+4 migrazioni applicate in sequenza su Postgres reale (12 tabelle + indici
+aggiuntivi + `expires_at`), seed delle 9 fonti (idempotente, ri-eseguito
+due volte), task `cleanup_expired_data` eseguito manualmente contro righe
+di test con date forzate nel passato (cancellazione selettiva confermata:
+solo le righe scadute sparite, quelle recenti intatte; oggetto MinIO di un
+export scaduto correttamente "tentato" e l'assenza del bucket gestita senza
+crash), backup Postgres forzato e **ripristinato con successo sullo stesso
+database popolato** (`pg_dump --clean --if-exists` + `psql`, dati e indici
+intatti dopo il restore), backup MinIO forzato (comportamento corretto in
+assenza del bucket, mai creato perché l'upload media reale è un TODO
+separato). Nel farlo è stato trovato e corretto un bug pre-esistente non
+di questa sezione ma scoperto qui: `GET /sources` restituiva
+`itemsLast24H` (H maiuscola) invece di `itemsLast24h` per un difetto di
+`pydantic.alias_generators.to_camel` sui confini cifra/lettera — non era
+mai emerso prima perché la lista fonti era sempre stata vuota nei test
+precedenti. Corretto con un alias esplicito in
+`backend/app/schemas/sources.py`. Dettagli implementativi/motivazioni in
+`docs/DATABASE.md`.
+
 - [x] Scrivere le migrazioni Alembic iniziali per tutte le tabelle
       descritte in `docs/DATABASE.md` (record, advertisement, media,
       sources, canonical_history, scrape_runs, scrape_errors,
       media_classification_history, summary_versions, export_jobs,
       audit_log, users). — fatto e verificato dal vivo (`alembic upgrade
       head` crea le 12 tabelle su Postgres reale, vedi sezione 12).
-- [ ] Definire e creare gli **indici** definitivi oltre a quelli minimi
-      già identificati (es. indici compositi per i filtri di ricerca più
-      usati: città + data, fonte + stato, full-text su descrizione).
-- [ ] Definire la **retention policy per categoria di dato** (annunci,
-      media, log, export scaduti, audit log) e implementarla come task
-      periodico dello scheduler — dipendenza: decisione legale/prodotto,
-      vedi sezione 8.
-- [ ] Configurare **backup automatici** di PostgreSQL (dump periodici +
-      test di ripristino) e di MinIO (versioning o replica) — dipendenza:
-      scelta dell'ambiente di hosting definitivo.
-- [ ] Valutare **partitioning** delle tabelle ad alto volume
-      (`advertisement`, `scrape_errors`) se il volume di dati atteso è
-      elevato nel tempo.
-- [ ] Popolare un **seed di sviluppo** (fixture) per le 9 fonti previste,
-      utile per testare frontend/API senza scraping reale.
+- [x] Definire e creare gli **indici** definitivi oltre a quelli minimi
+      già identificati. Nota: il punto citava "città + data" come esempio,
+      ma `advertisement` non ha un campo città (schema reale verificato,
+      non inventato ora) — sostituito con indici che mappano su colonne
+      esistenti e query reali: composito `advertisements(source_id,
+      status)`, GIN full-text su `advertisements` (title+description),
+      `media(perceptual_hash)`, composito `export_jobs(status,
+      requested_at)`, `export_jobs(requested_by_user_id)`,
+      `scrape_errors(created_at)`, `audit_log(created_at)` — migrazione
+      `backend/migrations/versions/20260829091500_additional_indexes.py`,
+      applicata con successo su Postgres reale.
+- [x] Definire la **retention policy per categoria di dato** e
+      implementarla come task periodico dello scheduler. Nessuna scadenza
+      automatica per annunci/media/record (dato "vivo": resta sospesa a
+      validazione legale/GDPR, vedi sezione 8) — solo per dati accessori:
+      `AUDIT_LOG_RETENTION_DAYS` (365gg), `SCRAPE_ERROR_RETENTION_DAYS`
+      (90gg), `EXPORT_RETENTION_DAYS` (7gg, con nuova colonna
+      `export_jobs.expires_at`), valori di default proposti e configurabili
+      via env, nessuna decisione legale bloccante. Task
+      `app.workers.tasks_maintenance.cleanup_expired_data`, schedulato
+      ogni notte alle 3:00 UTC, eseguito sulla coda `maintenance` del
+      worker `worker-scraper` (nessun servizio Celery dedicato).
+- [x] Configurare **backup automatici** di PostgreSQL e di MinIO, in
+      forma locale/Docker Compose riutilizzabile (dipendenza dall'ambiente
+      di hosting definitivo confermata, quindi non un backup off-site):
+      due nuovi servizi `backup-postgres` (dump giornaliero compresso +
+      rotazione, `infra/backup/backup-postgres.sh`) e `backup-minio`
+      (replica continua del bucket, `infra/backup/backup-minio.sh`), su
+      volumi dedicati `postgres-backups`/`minio-backups`. Test di
+      ripristino reso eseguibile (non automatizzato, è un'operazione
+      distruttiva) con `infra/backup/restore-postgres.sh`. Da adattare a
+      un target remoto quando si sceglie l'hosting definitivo.
+- [x] Valutare **partitioning** delle tabelle ad alto volume
+      (`advertisement`, `scrape_errors`): solo valutazione scritta (il
+      volume reale è oggi zero, nessuno scraper attivo — implementarlo ora
+      sarebbe prematuro), vedi `docs/DATABASE.md` § 7 per soglie
+      indicative e costo di conversione di una tabella esistente.
+- [x] ~~Popolare un **seed di sviluppo** per le 9 fonti previste~~ —
+      **rimosso in un secondo momento** insieme ai 9 connettori stub e a
+      `registry.py`: le fonti si creano ora solo via API/UI, nessun seed
+      automatico (vedi `docs/SVILUPPO.md` § 5).
 
 ## 3. Frontend
 
-- [ ] Rifinire la pagina/tab di **Login + 2FA** (stato di errore chiaro
-      su codice TOTP errato, countdown per nuovo tentativo dopo blocco).
-- [ ] Rifinire la pagina/tab di **Ricerca** (filtri combinabili, stato
-      vuoto, stato di errore rete, paginazione/infinite scroll).
-- [ ] Rifinire la pagina/tab di **Dettaglio Record** (annuncio canonico,
-      storico canonical_history, galleria media con stato classificazione,
-      riepilogo AI con storico versioni e azione "rigenera").
-- [ ] Rifinire la pagina/tab di **Gestione Fonti** (solo Admin/Operator a
-      seconda dei permessi: stato attivo/disattivo, storico run, avvio
-      manuale run, visualizzazione errori scraping).
-- [ ] Rifinire la pagina/tab di **Export** (creazione job, stato in
-      tempo reale/polling, storico job utente, download).
-- [ ] Rifinire la pagina/tab di **Amministrazione utenti** (solo Admin:
-      creazione utente, cambio ruolo, reset 2FA, disattivazione).
-- [ ] Rifinire la pagina/tab di **Audit log** (solo Admin: filtri per
-      utente/azione/data).
-- [ ] Gestione uniforme degli **stati di errore** (rete, 401/403, 404,
-      500) con componenti condivisi, non gestione ad-hoc per pagina.
-- [ ] Passata di **accessibilità** (contrasto colori, navigazione da
-      tastiera, attributi ARIA su componenti custom, focus management nei
-      modali).
-- [ ] Implementare **dark mode** (già previsto da Tailwind: definire i
-      token colore e il toggle persistente per utente).
-- [ ] Test end-to-end almeno sui flussi critici (login+2FA, ricerca,
-      export) — scegliere strumento (es. Playwright).
+Tutti i punti sottostanti sono stati implementati e verificati dal vivo
+(`docker compose up --build`, `npx playwright test` contro lo stack reale,
+non solo test statici). Due piccoli endpoint backend sono stati aggiunti
+per supportare onestamente i requisiti (storico versioni AI Summary,
+storico run per fonte) invece di limitare la UI ai dati già disponibili —
+vedi `docs/API.md`. Durante la verifica sono stati trovati e corretti 3 bug
+reali (dettagli nelle note dei singoli punti e in `docs/API.md`).
+
+- [x] Rifinire la pagina/tab di **Login + 2FA**: `describeError()`
+      (`src/lib/errors.ts`, nuovo) legge `retry_after_seconds` dal body
+      429/403 del backend; countdown live (`useCountdown`,
+      `src/hooks/useCountdown.ts`) che disabilita il submit fino a fine
+      lockout, sia sullo step password sia sullo step codice, sia sul
+      setup 2FA iniziale. Messaggio distinto "Too many attempts" vs
+      credenziali/codice errati. Verificato dal vivo con login reali
+      (password errata, codice TOTP errato, login completo con codice
+      TOTP generato a runtime nei test E2E).
+- [x] Rifinire la pagina/tab di **Ricerca**: filtri sincronizzati con la
+      query string (`useSearchParams`, sopravvivono al refresh), opzione
+      "Source Origin" popolata da `GET /sources` (prima 3 valori hardcoded
+      mai esistiti: `web`/`forum`/`manual`), errori di rete uniformati
+      (`ErrorRow error={...} onRetry={...}`). Paginazione a pagine
+      numerate mantenuta deliberatamente (volume atteso non giustifica
+      infinite scroll).
+- [x] Rifinire la pagina/tab di **Dettaglio Record**: AI Summary ha ora
+      un selettore storico versioni (nuovo endpoint `GET /records/{id}/
+      ai-summary/versions`, prima il backend esponeva solo l'ultima); gli
+      eventi "Cambio annuncio canonico" nello storico sono ora
+      visivamente distinti (icona/bordo/badge dedicati) dagli altri eventi
+      generici; galleria media già mostrava lo stato di classificazione,
+      solo uniformata la gestione errori.
+- [x] Rifinire la pagina/tab di **Gestione Fonti**: righe espandibili con
+      drill-down storico run + errori per fonte (nuovo endpoint `GET
+      /sources/{id}/runs`, prima assente: solo `errorRate` aggregato era
+      visibile); azioni Run/Pause/Disable nascoste lato client per il
+      ruolo Viewer (il backend le rifiutava già con 403, qui solo UX).
+- [x] Rifinire la pagina/tab di **Export**: polling automatico
+      (`refetchInterval` TanStack Query, ogni 3s solo se esiste un job
+      `processing`) in aggiunta al refresh manuale già presente.
+- [x] Rifinire la pagina/tab di **Amministrazione utenti**: form "Create
+      user" (`POST /admin/users`) e bottone "Reset 2FA" per riga (`POST
+      /admin/users/{id}/reset-2fa`) collegati per la prima volta in UI
+      (gli endpoint backend esistevano già, inutilizzati). Bug trovato e
+      corretto durante il collegamento: `POST /admin/users` rispondeva con
+      uno schema diverso (`UserRead`, snake_case) da tutti gli altri
+      endpoint dell'area (`AdminUserRead`, camelCase) — il form avrebbe
+      letto `undefined` per `name`/`status`/`mfaEnabled`. Trovato anche e
+      corretto durante la verifica manuale: i testi dei nuovi dialog
+      "Create user"/"Reset 2FA" erano stati scritti in italiano
+      dall'agente che li ha implementati, incoerenti con il resto
+      dell'interfaccia (interamente in inglese) — tradotti.
+- [x] Rifinire la pagina/tab di **Audit log**: filtri client-side per
+      attore/azione (substring) e range data sui record già scaricati
+      (l'endpoint `GET /admin/audit-log` non supporta query param di
+      filtro, non esteso in questa fase).
+- [x] Gestione uniforme degli **stati di errore**: nuovo
+      `src/lib/errors.ts` (`describeError`, mappa 403/404/429 con
+      `retry_after_seconds`/5xx/errore di rete su titolo+descrizione+
+      retryable) e nuovo componente condiviso `src/components/ui/
+      ErrorState.tsx`; `ErrorRow` (`src/components/ui/Table.tsx`) esteso
+      per accettare lo stesso pattern dentro le tabelle. Applicato a tutte
+      le pagine/tab, sostituendo la gestione ad-hoc precedente (stringhe
+      fisse per pagina, nessun retry).
+- [x] Passata di **accessibilità**: `Dialog` (`src/components/ui/
+      Dialog.tsx`) ora ha focus trap (Tab/Shift+Tab vincolati dentro il
+      modale), chiusura con Escape, ripristino del focus precedente alla
+      chiusura, `aria-labelledby` sul titolo — verificato dal vivo (focus
+      dentro il dialog all'apertura, dialog chiuso da Escape). Aggiunte
+      `aria-label` mancanti sui bottoni icon-only del Topbar. Label dei
+      filtri di Ricerca collegate ai controlli (`htmlFor`/`id`, prima
+      erano `<label>` senza associazione programmatica — un vero difetto
+      di accessibilità, non solo un problema di test). Contrasto colori
+      verificato a vista sulla palette dark (§ punto successivo), nessun
+      fallimento evidente.
+- [x] Implementare **dark mode**: tutti i ~40 token colore convertiti da
+      valori hex statici a variabili CSS (`src/index.css`, pattern
+      `rgb(var(--color-x) / <alpha-value>)`), con un blocco `.dark`
+      completo che copre l'intera palette (ruoli Material-3 "fixed"
+      esclusi, identici per design in entrambi i temi) — questo evita di
+      dover aggiungere varianti `dark:` a ogni classa Tailwind esistente.
+      `ThemeContext` (`src/context/ThemeContext.tsx`, nuovo) con
+      preferenza `light`/`dark`/`system` persistita in `localStorage`,
+      applicata prima del primo paint via script inline in `index.html`
+      (evita flash del tema sbagliato). Toggle nel Topbar. Verificato dal
+      vivo: toggle applica `html.dark`, persiste al reload, sfondo
+      effettivamente cambiato (RGB confermato via script).
+- [x] Test end-to-end sui 3 flussi critici con **Playwright**
+      (`frontend/e2e/`, `playwright.config.ts`): login+2FA (incluso un
+      generatore TOTP nativo in `e2e/totp.ts`, nessuna dipendenza
+      aggiuntiva, verificato produrre lo stesso codice di `pyotp`),
+      ricerca, export. **Eseguiti realmente** con `npx playwright test`
+      contro lo stack Docker live (non solo scritti): 8/9 passati, 1
+      skippato correttamente (nessun export "ready" esiste ancora in
+      questo ambiente, atteso finché il worker reale non è implementato,
+      vedi § 7).
 
 ## 4. Scraper per fonte
 
-Per ciascuna fonte elencata, il lavoro da fare è lo stesso schema:
-verificare `robots.txt`/ToS, implementare i selettori reali (oggi non
-esistono connettori funzionanti, solo l'interfaccia `base.py` prevista),
-scrivere test con fixture HTML salvate, validare rate limiting.
+**Cambio di approccio rispetto alla formulazione originale di questa
+sezione** (che chiedeva selettori hardcoded per le 9 fonti sotto): è stato
+costruito un **motore di scraping generico e reale**
+(`backend/app/scrapers/generic.py:GenericScraper`) — fetch e parsing HTML
+via Scrapling, nessun sito specifico conosciuto dal motore. La conoscenza
+del sito (URL, selettori CSS per
+link annunci/paginazione/campi) è fornita dall'operatore tramite l'app
+(`PATCH /sources/{id}` o il form "Add/Edit Source" in UI), non scritta da
+chi ha sviluppato il progetto. Motivazione: implementare selettori reali
+per queste 9 fonti specifiche (siti commerciali di annunci di servizi
+sessuali) avrebbe significato raccogliere sistematicamente numeri di
+telefono e media di persone reali senza possibilità di verificare
+un'autorizzazione legale o una finalità legittima — un rischio concreto
+di abilitare stalking/doxxing/molestie verso una popolazione vulnerabile,
+indipendentemente dal contesto d'uso dichiarato. Per questo le 9 checkbox
+per-fonte restano non spuntate: il lavoro rimanente per ciascuna è ora
+"verificare ToS/robots.txt e trovare i selettori CSS giusti", non più
+"scrivere codice" — vedi `docs/SVILUPPO.md` § 7 per la procedura completa
+(Check robots.txt -> Test configuration su un annuncio reale, senza
+scrivere su DB -> scan reale).
 
-- [ ] **escort_advisor**: validare ToS/robots.txt, implementare
-      selettori reali, gestire eventuale paginazione/login richiesto, test.
-- [ ] **bakeca_incontri**: validare ToS/robots.txt, implementare
-      selettori reali, test.
-- [ ] **moscarossa**: validare ToS/robots.txt, implementare selettori
-      reali, test.
-- [ ] **megaescort**: validare ToS/robots.txt, implementare selettori
-      reali, test.
-- [ ] **escortforumit**: validare ToS/robots.txt (nota: è un forum,
-      struttura dati diversa dagli annunci classici, potrebbe richiedere
-      parsing dedicato dei thread), implementare selettori reali, test.
-- [ ] **escortacom**: validare ToS/robots.txt, implementare selettori
-      reali, test.
-- [ ] **rosa_rossa**: validare ToS/robots.txt, implementare selettori
-      reali, test.
-- [ ] **torino_erotica**: validare ToS/robots.txt, implementare
-      selettori reali, test.
-- [ ] **punterforum**: validare ToS/robots.txt (anche questo un forum,
-      stessa nota di escortforumit), implementare selettori reali, test.
-- [ ] Definire una **policy comune di User-Agent/identificazione** dello
-      scraper e un piano di gestione per eventuali blocchi IP/captcha
-      (proxy rotation? — decisione da prendere, ha impatto su costi).
-- [ ] Dashboard/alert per **fonti che smettono di funzionare**
-      (cambio struttura HTML del sito sorgente).
+- [x] Rendere configurabile lo **User-Agent** dello scraper per singola
+      fonte: `scrapeConfig.userAgent` è opzionale e, se assente, il motore
+      usa il default `Scraper.user_agent`
+      (`backend/app/scrapers/base.py`). Lo stesso valore viene usato da
+      Scrapling, download media e verifica `robots.txt`.
+- [x] Dashboard/alert per **fonti che smettono di funzionare**:
+      `consecutiveFailures` in `GET /sources` (run consecutivi falliti,
+      dati già in `scrape_runs`), badge "Connector broken?" in UI quando
+      >= 3 (`CONSECUTIVE_FAILURES_ALERT_THRESHOLD`,
+      `backend/app/api/v1/sources.py`). Solo alert visivo in-app: nessun
+      canale di notifica esterno (email/Slack) esiste nel progetto (vedi
+      § 9 Observability).
+- [x] **Motore di scraping generico reale**, configurabile per fonte
+      dall'applicazione (URL di partenza, selettore link annunci,
+      paginazione, campi da estrarre, `fetchMode` HTTP/dynamic/stealth e
+      opzioni Scrapling) — vedi sopra. Rispetta SEMPRE
+      `robots.txt` (verificato prima di ogni richiesta, non solo come
+      check manuale — `app/services/robots_check.py`) e un rate limit
+      minimo di 1s tra le richieste, non disattivabili da configurazione.
+      Collegato alla pipeline reale di ingestione
+      (`app/services/scrape_ingest.py`): dedup per telefono, upsert
+      annunci, upload media su MinIO, ricalcolo canonico — la PRIMA
+      pipeline di scraping->persistenza end-to-end del progetto.
+- [x] **CRUD completo per le fonti dall'applicazione**: `POST/PATCH/
+      DELETE /sources`, form "Add/Edit Source" in UI (solo Admin per
+      creazione/modifica/eliminazione; eliminazione bloccata con 409 se
+      esistono annunci collegati). Unico modo per creare una fonte oggi:
+      i 9 connettori stub e lo script di seed sono stati rimossi in un
+      secondo momento (vedi nota sotto).
+- [x] **Verifica `robots.txt`**: enforcement automatico nel motore (sopra)
+      + strumento di verifica manuale in UI (`POST /sources/{id}/
+      check-robots`, scarica solo il file pubblico `robots.txt`, nessun
+      altro contenuto della fonte).
+
+**Nota successiva (rimozione dei 9 connettori stub)**: i 9 connettori
+Python per-sito descritti nella sezione seguente e il loro
+`app/scrapers/registry.py` sono stati eliminati dal codice in un secondo
+momento, su richiesta esplicita — non restavano comunque implementabili
+per le ragioni di sicurezza spiegate sotto, quindi tenerli come stub morti
+nel repository non aggiungeva valore. L'unico motore di scraping oggi è
+quello generico (`GenericScraper`), a cui va associata esplicitamente
+qualunque fonte tramite `scrape_config` prima di poterla scansionare.
+
+**Verificato dal vivo** (Docker reale, non solo test): creata una fonte di
+test via `POST /sources` puntata a un piccolo server HTTP locale
+sintetico (fixture scritte da zero, non un sito reale — le stesse usate
+dai test pytest in `backend/tests/scrapers/`), verificato `check-robots`
+e `test-config`, eseguito uno scan reale (`POST /sources/{id}/scan`) che
+ha davvero scaricato le pagine con rate limiting (~1s tra le richieste),
+creato 2 `Record`/`Advertisement` reali (il terzo annuncio di test, senza
+telefono, correttamente scartato), caricato 2 media reali su MinIO
+(verificato con `list_objects`), impostato `canonical_ad_id`. Verificato
+anche il blocco 409 su `DELETE` con annunci collegati, poi eliminazione
+riuscita dopo aver rimosso i dati di test. 9 test pytest nuovi
+(`backend/tests/scrapers/test_generic_scraper.py`) contro le stesse
+fixture sintetiche via un vero server HTTP locale (nessuna rete reale),
+incluso un test che verifica che un `robots.txt` con `Disallow: /` blocchi
+DAVVERO il motore (non solo in teoria) + 8 test di validazione schema
+(`backend/tests/test_sources_schemas.py`) — suite completa a 85/85.
+
+Bug pre-esistente trovato e corretto in questo passaggio: la colonna
+"Priority" della tabella Sources in UI mostrava in realtà un'etichetta
+High/Medium/Low derivata da `errorRate` (il campo `priority` non era mai
+stato esposto da `GET /sources`) — il tasso di errore travestito da
+priorità. Corretto aggiungendo `priority` allo schema `SourceRead`.
 
 ## 5. AI / classificazione media
 
@@ -219,8 +394,8 @@ scrivere test con fixture HTML salvate, validare rate limiting.
 
 - [ ] Ottenere **validazione legale specialistica** sullo scraping di
       dati personali (numeri di telefono, contenuti media) da fonti
-      terze, con particolare attenzione alle 9 fonti elencate in
-      sezione 4 (richiamo a `docs/SICUREZZA.md` §7 e al §21 del PDF di
+      terze, per ciascuna fonte configurata dall'operatore con il motore
+      generico (richiamo a `docs/SICUREZZA.md` §7 e al §21 del PDF di
       progetto).
 - [ ] Definire e rendere **configurabile la retention** per ogni
       categoria di dato (annunci, media, log, audit log) — collegata al

@@ -1,6 +1,7 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useCallback, useMemo } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { useRecordSearch } from "@/hooks/useRecords";
+import { useSources } from "@/hooks/useSources";
 import Icon from "@/components/ui/Icon";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
@@ -30,22 +31,52 @@ function formatDate(iso: string): string {
 }
 
 export default function SearchPage() {
-  const [phone, setPhone] = useState("");
-  const [source, setSource] = useState("");
-  const [status, setStatus] = useState("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
-  const [page, setPage] = useState(1);
+  // Filters live in the URL query string (not local state) so a refresh
+  // doesn't lose the search and the URL can be shared/bookmarked as-is.
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  const filters: RecordSearchFilters = {
-    phone: phone || undefined,
-    source: source || undefined,
-    status: status || undefined,
-    dateFrom: dateFrom || undefined,
-    dateTo: dateTo || undefined,
-    page,
-    pageSize: PAGE_SIZE,
-  };
+  const phone = searchParams.get("phone") ?? "";
+  const source = searchParams.get("source") ?? "";
+  const status = searchParams.get("status") ?? "";
+  const dateFrom = searchParams.get("dateFrom") ?? "";
+  const dateTo = searchParams.get("dateTo") ?? "";
+  const page = Math.max(1, Number(searchParams.get("page") ?? "1") || 1);
+
+  // Merges a partial patch into the current query string, dropping empty
+  // values entirely rather than keeping them as "key=" — keeps the URL
+  // clean. Any filter change also resets `page` unless explicitly overridden.
+  const updateParams = useCallback(
+    (patch: Record<string, string | number | undefined>, resetPage = true) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          const fullPatch = resetPage ? { ...patch, page: undefined } : patch;
+          for (const [key, value] of Object.entries(fullPatch)) {
+            if (value === undefined || value === "") next.delete(key);
+            else next.set(key, String(value));
+          }
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
+  const sources = useSources();
+
+  const filters: RecordSearchFilters = useMemo(
+    () => ({
+      phone: phone || undefined,
+      source: source || undefined,
+      status: status || undefined,
+      dateFrom: dateFrom || undefined,
+      dateTo: dateTo || undefined,
+      page,
+      pageSize: PAGE_SIZE,
+    }),
+    [phone, source, status, dateFrom, dateTo, page],
+  );
 
   const search = useRecordSearch(filters);
   // The hook is gated (enabled: only once a filter is set) — mirror that here
@@ -53,12 +84,11 @@ export default function SearchPage() {
   const hasFilters = Boolean(phone || source || status || dateFrom);
 
   function clearAll() {
-    setPhone("");
-    setSource("");
-    setStatus("");
-    setDateFrom("");
-    setDateTo("");
-    setPage(1);
+    setSearchParams({}, { replace: true });
+  }
+
+  function setPage(updater: (current: number) => number) {
+    updateParams({ page: updater(page) }, false);
   }
 
   const total = search.data?.total ?? 0;
@@ -79,17 +109,14 @@ export default function SearchPage() {
             icon="search"
             placeholder="e.g. +39 345 678 9012"
             value={phone}
-            onChange={(e) => {
-              setPhone(e.target.value);
-              setPage(1);
-            }}
+            onChange={(e) => updateParams({ phone: e.target.value })}
             className="py-4 text-body-lg rounded-xl"
           />
         </div>
       </section>
 
       {/* Advanced Filters */}
-      <section className="bg-white border border-border rounded-lg p-4 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+      <section className="bg-surface-container-lowest border border-border rounded-lg p-4 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-body-md font-semibold text-on-surface flex items-center gap-2">
             <Icon name="tune" size={18} className="text-primary" />
@@ -101,30 +128,32 @@ export default function SearchPage() {
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="space-y-2">
-            <label className="text-label-sm text-on-surface-variant block">Source Origin</label>
+            <label htmlFor="filter-source" className="text-label-sm text-on-surface-variant block">
+              Source Origin
+            </label>
             <Select
+              id="filter-source"
               className="w-full"
               value={source}
-              onChange={(e) => {
-                setSource(e.target.value);
-                setPage(1);
-              }}
+              onChange={(e) => updateParams({ source: e.target.value })}
             >
               <option value="">All Sources</option>
-              <option value="web">Web Scrape</option>
-              <option value="forum">Forum Dump</option>
-              <option value="manual">Manual Entry</option>
+              {sources.data?.map((s) => (
+                <option key={s.code} value={s.code}>
+                  {s.name}
+                </option>
+              ))}
             </Select>
           </div>
           <div className="space-y-2">
-            <label className="text-label-sm text-on-surface-variant block">Verification Status</label>
+            <label htmlFor="filter-status" className="text-label-sm text-on-surface-variant block">
+              Verification Status
+            </label>
             <Select
+              id="filter-status"
               className="w-full"
               value={status}
-              onChange={(e) => {
-                setStatus(e.target.value);
-                setPage(1);
-              }}
+              onChange={(e) => updateParams({ status: e.target.value })}
             >
               <option value="">Any Status</option>
               <option value="verified">Verified</option>
@@ -133,25 +162,23 @@ export default function SearchPage() {
             </Select>
           </div>
           <div className="space-y-2">
-            <label className="text-label-sm text-on-surface-variant block">Last Seen Date</label>
-            <div className="flex items-center gap-2">
+            <span id="filter-last-seen-label" className="text-label-sm text-on-surface-variant block">
+              Last Seen Date
+            </span>
+            <div className="flex items-center gap-2" role="group" aria-labelledby="filter-last-seen-label">
               <input
                 type="date"
+                aria-label="Last seen from"
                 value={dateFrom}
-                onChange={(e) => {
-                  setDateFrom(e.target.value);
-                  setPage(1);
-                }}
+                onChange={(e) => updateParams({ dateFrom: e.target.value })}
                 className="w-full rounded border border-outline-variant bg-surface text-body-md text-on-surface focus:ring-2 focus:ring-primary-container focus:border-primary-container py-2 px-3 outline-none transition-colors"
               />
-              <span className="text-outline">-</span>
+              <span className="text-outline" aria-hidden="true">-</span>
               <input
                 type="date"
+                aria-label="Last seen to"
                 value={dateTo}
-                onChange={(e) => {
-                  setDateTo(e.target.value);
-                  setPage(1);
-                }}
+                onChange={(e) => updateParams({ dateTo: e.target.value })}
                 className="w-full rounded border border-outline-variant bg-surface text-body-md text-on-surface focus:ring-2 focus:ring-primary-container focus:border-primary-container py-2 px-3 outline-none transition-colors"
               />
             </div>
@@ -172,7 +199,7 @@ export default function SearchPage() {
           </div>
         </div>
 
-        <div className="bg-white border border-border rounded-lg shadow-[0_1px_2px_rgba(0,0,0,0.02)] flex flex-col min-h-[300px]">
+        <div className="bg-surface-container-lowest border border-border rounded-lg shadow-[0_1px_2px_rgba(0,0,0,0.02)] flex flex-col min-h-[300px]">
           <Table>
             <THead>
               <Tr className="hover:bg-transparent">
@@ -190,7 +217,9 @@ export default function SearchPage() {
                 <EmptyRow colSpan={7} message="Enter a phone number or apply a filter to search records." />
               )}
               {hasFilters && search.isLoading && <LoadingRow colSpan={7} />}
-              {hasFilters && search.isError && <ErrorRow colSpan={7} message="Failed to load search results." />}
+              {hasFilters && search.isError && (
+                <ErrorRow colSpan={7} error={search.error} onRetry={() => search.refetch()} />
+              )}
               {hasFilters && search.data && search.data.results.length === 0 && (
                 <EmptyRow colSpan={7} message="No records match these filters." />
               )}

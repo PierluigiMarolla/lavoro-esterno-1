@@ -103,6 +103,26 @@ class Settings(BaseSettings):
         description="Chiave segreta HMAC-SHA256 per l'hash di lookup deterministico del telefono.",
     )
 
+    # --- Retention dati (pulizia periodica, vedi app/workers/tasks_maintenance.py) --
+    # Nessuna scadenza automatica per dati "vivi" (record/advertisement/media):
+    # la retention di questi resta sospesa a una validazione legale/GDPR
+    # definitiva (vedi docs/SICUREZZA.md). Qui solo dati accessori/di log, per
+    # cui una retention di default è una scelta operativa ragionevole e
+    # reversibile (i valori sono configurabili via env, non un vincolo fisso).
+    AUDIT_LOG_RETENTION_DAYS: int = Field(
+        default=365, description="Giorni di conservazione di audit_log prima della cancellazione."
+    )
+    SCRAPE_ERROR_RETENTION_DAYS: int = Field(
+        default=90, description="Giorni di conservazione di scrape_errors prima della cancellazione."
+    )
+    EXPORT_RETENTION_DAYS: int = Field(
+        default=7,
+        description=(
+            "Giorni dopo i quali un pacchetto di export viene rimosso da MinIO "
+            "(la riga export_jobs resta, per audit, ma perde object_key)."
+        ),
+    )
+
     # --- CORS -------------------------------------------------------------
     CORS_ORIGIN: str = Field(
         default="http://localhost:5173",

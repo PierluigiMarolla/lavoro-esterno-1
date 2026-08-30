@@ -35,7 +35,9 @@ class Media(UUIDPKMixin, Base):
     # Perceptual hash (pHash) per il rilevamento di duplicati "quasi identici"
     # (stesso soggetto, ricompressione/resize diversi). Nullable per i video o
     # finché non calcolato in background.
-    perceptual_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Indicizzato: usato per il matching di duplicati "quasi identici" tramite
+    # pHash (vedi app/services/dedup.py, TODO di implementazione reale).
+    perceptual_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
 
     mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
 

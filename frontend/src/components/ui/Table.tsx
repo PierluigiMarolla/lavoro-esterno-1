@@ -1,5 +1,6 @@
 import type { HTMLAttributes, TdHTMLAttributes, ThHTMLAttributes } from "react";
 import { cn } from "@/lib/cn";
+import { describeError } from "@/lib/errors";
 
 // Minimal composable table primitives shared by every data-heavy page
 // (Dashboard, Search, Sources, Exports, Admin, Record Occurrences).
@@ -65,12 +66,38 @@ export function LoadingRow({ colSpan }: { colSpan: number }) {
   );
 }
 
-// Shown inside a <tbody> when the underlying query failed.
-export function ErrorRow({ colSpan, message }: { colSpan: number; message: string }) {
+// Shown inside a <tbody> when the underlying query failed. Pass `error`
+// (the caught ApiError/exception) for a status-aware title+description+
+// retry button via `describeError` (src/lib/errors.ts); `message` remains
+// as a plain fallback for call sites that don't have the raw error handy.
+export function ErrorRow({
+  colSpan,
+  error,
+  message,
+  onRetry,
+}: {
+  colSpan: number;
+  error?: unknown;
+  message?: string;
+  onRetry?: () => void;
+}) {
+  const presentation = error !== undefined ? describeError(error) : undefined;
+
   return (
     <tr>
-      <td colSpan={colSpan} className="px-5 py-12 text-center text-body-md text-error">
-        {message}
+      <td colSpan={colSpan} className="px-5 py-10 text-center">
+        <p className="text-body-md font-semibold text-error">{presentation?.title ?? "Error"}</p>
+        <p className="text-body-md text-on-surface-variant mt-1">
+          {presentation?.description ?? message ?? "Something went wrong."}
+        </p>
+        {presentation?.retryable && onRetry && (
+          <button
+            onClick={onRetry}
+            className="mt-3 px-3 py-1.5 border border-border rounded text-label-sm text-on-surface hover:bg-surface-container-low transition-colors"
+          >
+            Retry
+          </button>
+        )}
       </td>
     </tr>
   );

@@ -1,6 +1,7 @@
 import { apiRequest } from "./client";
 import type {
   RecordAiSummary,
+  RecordAiSummaryVersion,
   RecordHistoryEvent,
   RecordMedia,
   RecordOccurrence,
@@ -43,6 +44,12 @@ export function fetchRecordHistory(id: string): Promise<RecordHistoryEvent[]> {
 
 export function fetchRecordAiSummary(id: string): Promise<RecordAiSummary> {
   return apiRequest<RecordAiSummary>(`/records/${id}/ai-summary`);
+}
+
+// Full version history, most recent first — lets the UI offer a version
+// picker instead of only ever showing the latest summary.
+export function fetchRecordAiSummaryVersions(id: string): Promise<RecordAiSummaryVersion[]> {
+  return apiRequest<RecordAiSummaryVersion[]>(`/records/${id}/ai-summary/versions`);
 }
 
 // Triggers a fresh AI summary generation job; the summary query should be

@@ -21,6 +21,8 @@ from app.services.phone_crypto import (
         ("333 1234567", "+393331234567"),
         ("3331234567", "+393331234567"),
         ("+39(333)1234567", "+393331234567"),
+        ("350\u200b8490562", "+393508490562"),
+        ("tel:+393923508765", "+393923508765"),
     ],
 )
 def test_normalize_phone_variants_converge(raw: str, expected: str) -> None:

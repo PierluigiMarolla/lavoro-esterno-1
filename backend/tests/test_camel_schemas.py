@@ -23,8 +23,8 @@ from datetime import UTC, datetime
 
 from app.schemas.dashboard import DashboardKpisRead, SourceHealthBreakdownRead
 from app.schemas.exports import ExportJobOut
-from app.schemas.records import RecordSearchResultRead
-from app.schemas.sources import SourcesSummaryRead
+from app.schemas.records import RecordAiSummaryVersionRead, RecordSearchResultRead
+from app.schemas.sources import ScrapeErrorRead, ScrapeRunRead, SourceRead, SourcesSummaryRead
 
 
 def test_dashboard_kpis_serializes_camel_case() -> None:
@@ -56,6 +56,68 @@ def test_sources_summary_serializes_camel_case() -> None:
     summary = SourcesSummaryRead(total=4, active=2, degraded=1, offline=1)
     dumped = summary.model_dump(mode="json", by_alias=True)
     assert dumped == {"total": 4, "active": 2, "degraded": 1, "offline": 1}
+
+
+def test_source_read_items_last_24h_uses_lowercase_h() -> None:
+    """Regressione: `to_camel("items_last_24h")` produce "itemsLast24H" (H
+    maiuscola) per via del confine cifra/lettera — bug reale osservato dal
+    vivo (vedi PROGETTO.md § 2, sezione 12) e corretto con un alias
+    esplicito in `SourceRead`. Senza questo test, un futuro refactor dello
+    schema potrebbe reintrodurre silenziosamente lo stesso difetto."""
+    source = SourceRead(
+        id=uuid.uuid4(),
+        code="bakeca_incontri",
+        name="Bakeca Incontri",
+        status="healthy",
+        priority="medium",
+        last_run_at=None,
+        items_last_24h=42,
+        error_rate=0.1,
+        consecutive_failures=0,
+        has_scrape_config=False,
+    )
+    dumped = source.model_dump(mode="json", by_alias=True)
+    assert dumped["itemsLast24h"] == 42
+    assert "itemsLast24H" not in dumped
+    assert "items_last_24h" not in dumped
+
+
+def test_scrape_run_read_serializes_camel_case_with_nested_errors() -> None:
+    run_id = uuid.uuid4()
+    error_id = uuid.uuid4()
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    run = ScrapeRunRead(
+        id=run_id,
+        started_at=now,
+        finished_at=now,
+        status="failed",
+        items_found=10,
+        items_new=2,
+        errors_count=1,
+        errors=[
+            ScrapeErrorRead(id=error_id, url="https://example.invalid", error_message="boom", created_at=now)
+        ],
+    )
+    dumped = run.model_dump(mode="json", by_alias=True)
+    assert dumped["itemsFound"] == 10
+    assert dumped["itemsNew"] == 2
+    assert dumped["errorsCount"] == 1
+    assert dumped["errors"][0]["errorMessage"] == "boom"
+
+
+def test_record_ai_summary_version_read_serializes_camel_case() -> None:
+    version = RecordAiSummaryVersionRead(
+        version=3,
+        generated_at=None,
+        executive_synthesis="Sintesi",
+        unverified_claims=["claim"],
+        forum_chatter=[],
+        sources_used=[],
+    )
+    dumped = version.model_dump(mode="json", by_alias=True)
+    assert dumped["version"] == 3
+    assert dumped["executiveSynthesis"] == "Sintesi"
+    assert dumped["unverifiedClaims"] == ["claim"]
 
 
 def test_record_search_result_serializes_camel_case() -> None:

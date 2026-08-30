@@ -23,4 +23,7 @@ class AuditLog(UUIDPKMixin, Base):
     entity_type: Mapped[str] = mapped_column(String(100), nullable=False)
     entity_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     details_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # Indicizzato: query di retention (app.workers.tasks_maintenance.cleanup_expired_data).
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )

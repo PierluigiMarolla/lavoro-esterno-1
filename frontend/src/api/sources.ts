@@ -1,11 +1,30 @@
 import { apiRequest } from "./client";
-import type { Source } from "@/types";
+import type { RobotsCheckResult, ScrapeConfig, ScrapeRun, Source, SourcePriority, TestConfigResult } from "@/types";
 
 export interface SourcesSummary {
   total: number;
   active: number;
   degraded: number;
   offline: number;
+}
+
+export interface SourceDetail extends Source {
+  scrapeConfig: ScrapeConfig | null;
+}
+
+export interface CreateSourceInput {
+  name: string;
+  slug: string;
+  baseUrl: string;
+  priority: SourcePriority;
+  scrapeConfig?: ScrapeConfig | null;
+}
+
+export interface UpdateSourceInput {
+  name?: string;
+  baseUrl?: string;
+  priority?: SourcePriority;
+  scrapeConfig?: ScrapeConfig | null;
 }
 
 export function fetchSources(): Promise<Source[]> {
@@ -26,4 +45,41 @@ export function pauseSource(id: string): Promise<void> {
 
 export function disableSource(id: string): Promise<void> {
   return apiRequest<void>(`/sources/${id}/disable`, { method: "POST" });
+}
+
+// Drill-down history for a single source (recent scrape_runs + their
+// errors), used by the expandable row in SourcesPage.
+export function fetchSourceRuns(id: string): Promise<ScrapeRun[]> {
+  return apiRequest<ScrapeRun[]>(`/sources/${id}/runs`);
+}
+
+// Full detail including scrapeConfig, used to pre-fill the "Edit
+// configuration" dialog (GET /sources only returns hasScrapeConfig, a
+// boolean — not the config itself, which the plain list view doesn't need).
+export function fetchSource(id: string): Promise<SourceDetail> {
+  return apiRequest<SourceDetail>(`/sources/${id}`);
+}
+
+export function createSource(input: CreateSourceInput): Promise<Source> {
+  return apiRequest<Source>("/sources", { method: "POST", body: input });
+}
+
+export function updateSource(id: string, input: UpdateSourceInput): Promise<Source> {
+  return apiRequest<Source>(`/sources/${id}`, { method: "PATCH", body: input });
+}
+
+export function deleteSource(id: string): Promise<void> {
+  return apiRequest<void>(`/sources/${id}`, { method: "DELETE" });
+}
+
+// Checks the source's public robots.txt for the configured user-agent —
+// only robots.txt itself is fetched, no other content from the source.
+export function checkSourceRobots(id: string): Promise<RobotsCheckResult> {
+  return apiRequest<RobotsCheckResult>(`/sources/${id}/check-robots`, { method: "POST" });
+}
+
+// Dry-runs the source's scrape config against ONE real ad (nothing is
+// saved to the DB) so an operator can verify selectors before a real scan.
+export function testSourceConfig(id: string): Promise<TestConfigResult> {
+  return apiRequest<TestConfigResult>(`/sources/${id}/test-config`, { method: "POST" });
 }

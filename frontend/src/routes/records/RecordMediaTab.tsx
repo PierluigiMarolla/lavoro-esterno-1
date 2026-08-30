@@ -2,6 +2,7 @@ import { useParams } from "react-router-dom";
 import { useState } from "react";
 import { useRecordMedia } from "@/hooks/useRecords";
 import Icon from "@/components/ui/Icon";
+import ErrorState from "@/components/ui/ErrorState";
 import type { RecordMedia } from "@/types";
 
 // Replicates desing/record_detail_media/code.html: a media gallery where
@@ -37,7 +38,7 @@ export default function RecordMediaTab() {
     );
   }
   if (media.isError) {
-    return <p className="text-body-md text-error">Failed to load media.</p>;
+    return <ErrorState error={media.error} onRetry={() => media.refetch()} />;
   }
   if (!media.data || media.data.length === 0) {
     return <p className="text-body-md text-on-surface-variant">No media associated with this record.</p>;
@@ -67,7 +68,7 @@ function MediaCard({
   const isBlurred = item.sensitivity === "explicit" && !isRevealed;
 
   return (
-    <div className="bg-white border border-border rounded-lg overflow-hidden flex flex-col">
+    <div className="bg-surface-container-lowest border border-border rounded-lg overflow-hidden flex flex-col">
       <div className="relative h-48 bg-surface-container-low w-full overflow-hidden">
         <img
           src={item.thumbnailUrl}
@@ -81,13 +82,13 @@ function MediaCard({
             <button
               type="button"
               onClick={onReveal}
-              className="mt-2 px-3 py-1 bg-white border border-border rounded text-label-sm text-on-surface hover:bg-surface-container-low transition-colors"
+              className="mt-2 px-3 py-1 bg-surface-container-lowest border border-border rounded text-label-sm text-on-surface hover:bg-surface-container-low transition-colors"
             >
               Reveal Media
             </button>
           </div>
         )}
-        <div className="absolute top-2 right-2 bg-white/90 backdrop-blur-sm rounded-full px-2 py-1 flex items-center gap-1 border border-border/50">
+        <div className="absolute top-2 right-2 bg-surface-container-lowest/90 backdrop-blur-sm rounded-full px-2 py-1 flex items-center gap-1 border border-border/50">
           <Icon name={item.type === "video" ? "movie" : "image"} size={16} className="text-info" />
           <span className="text-label-sm text-on-surface">{item.type === "video" ? "VID" : "IMG"}</span>
         </div>

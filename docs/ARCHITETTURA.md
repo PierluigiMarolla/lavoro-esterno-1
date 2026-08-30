@@ -97,6 +97,40 @@ canonica, `media_classification_history` per le rivalutazioni dei media,
 `summary_versions` per le rigenerazioni dei riepiloghi AI, `audit_log` per
 le azioni utente rilevanti (vedi `docs/DATABASE.md`).
 
+### 2.1 Stato di implementazione reale (vs. diagramma sopra)
+
+Il diagramma descrive il flusso a regime; lo stato implementativo reale,
+verificato dal vivo, è più preciso su questi punti (vedi PROGETTO.md § 4):
+
+- **Motore di scraping generico e reale**: `app/scrapers/generic.py:
+  GenericScraper` usa Scrapling per richieste HTTP, browser headless e
+  modalità stealth configurabile (`fetchMode`) per qualunque fonte con
+  `Source.scrape_config` valorizzato — nessuna fonte specifica è hardcoded
+  nel motore, i selettori CSS (URL di partenza, link annunci, paginazione,
+  campi) sono forniti dall'operatore via `PATCH /sources/{id}` o il form
+  "Add/Edit Source" in UI. Rispetta sempre `robots.txt` (verificato PRIMA
+  di ogni richiesta, non solo come check manuale), un rate limit minimo e
+  lo User-Agent configurato per la fonte (con fallback al default del
+  progetto).
+  È l'unico motore di scraping del progetto: non esistono più connettori
+  Python per-sito precompilati (i 9 stub iniziali descritti nelle versioni
+  precedenti di questo documento sono stati rimossi, insieme al
+  `registry.py` che li risolveva).
+- **Media e classificazione**: nel codice reale, il download dei media e
+  la classificazione (`RuleBasedMediaClassifier`, placeholder) avvengono
+  IN LINEA dentro lo stesso task `worker-scraper` (`app/services/
+  scrape_ingest.py`), non in un task separato sulla coda "media" come
+  suggerisce il diagramma — una separazione in una coda dedicata resta un
+  miglioramento futuro (utile se il volume di media crescesse al punto da
+  voler scalare la classificazione indipendentemente dallo scraping).
+- **Riepilogo AI**: generato solo su richiesta esplicita (`POST /records/
+  {id}/ai-summary/regenerate`), non automaticamente dopo ogni scraping.
+- La **deduplicazione** realmente applicata durante l'ingestione è solo
+  quella esatta per numero di telefono normalizzato (punto 1
+  dell'elenco nel diagramma) — le euristiche di similarità testuale
+  (punti 2-3) restano hook non implementati in `app/services/dedup.py`
+  (vedi i TODO in quel file).
+
 ## 3. Ruolo dei servizi nel `docker-compose.yml`
 
 - **`api`**: espone le rotte REST, applica autenticazione JWT+2FA e RBAC,

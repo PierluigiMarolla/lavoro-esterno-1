@@ -179,3 +179,12 @@ class RecordAiSummaryRead(CamelModel):
     unverified_claims: list[str] = Field(default_factory=list)
     forum_chatter: list[str] = Field(default_factory=list)
     sources_used: list[SourceUsedRead] = Field(default_factory=list)
+
+
+class RecordAiSummaryVersionRead(RecordAiSummaryRead):
+    """Una singola voce dello storico versioni (`GET /records/{id}/
+    ai-summary/versions`): stessa forma di `RecordAiSummaryRead` più
+    `version`, per popolare un selettore storico nella UI (`frontend/src/
+    routes/records/RecordAiSummaryTab.tsx`)."""
+
+    version: int

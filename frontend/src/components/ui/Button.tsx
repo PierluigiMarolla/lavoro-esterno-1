@@ -6,7 +6,7 @@ type Size = "sm" | "md";
 
 const variantClasses: Record<Variant, string> = {
   primary: "bg-primary text-on-primary hover:bg-primary-container shadow-sm",
-  secondary: "border border-border bg-white text-on-surface-variant hover:bg-surface-container-lowest",
+  secondary: "border border-border bg-surface-container-lowest text-on-surface-variant hover:bg-surface-container-low",
   ghost: "text-on-surface-variant hover:text-primary hover:bg-surface-container-low",
   danger: "border border-error/20 bg-error-container/30 text-error hover:bg-error-container/50",
 };

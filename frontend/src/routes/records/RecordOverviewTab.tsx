@@ -3,6 +3,7 @@ import { useRecordOverview } from "@/hooks/useRecords";
 import Icon from "@/components/ui/Icon";
 import Badge, { type BadgeTone } from "@/components/ui/Badge";
 import ProgressBar from "@/components/ui/ProgressBar";
+import ErrorState from "@/components/ui/ErrorState";
 
 // Replicates desing/record_detail_overview/code.html: a canonical listing
 // card (title/description/confidence) plus a right-hand entity summary card.
@@ -31,7 +32,7 @@ export default function RecordOverviewTab() {
     return <div className="h-64 animate-pulse bg-surface-container-low rounded-lg" />;
   }
   if (overview.isError) {
-    return <p className="text-body-md text-error">Failed to load record overview.</p>;
+    return <ErrorState error={overview.error} onRetry={() => overview.refetch()} />;
   }
   if (!overview.data) {
     return <p className="text-body-md text-on-surface-variant">No overview data available for this record.</p>;
@@ -42,7 +43,7 @@ export default function RecordOverviewTab() {
   return (
     <div className="grid grid-cols-1 xl:grid-cols-12 gap-gutter">
       <div className="xl:col-span-8 space-y-gutter">
-        <section className="bg-white border border-border rounded-lg shadow-sm">
+        <section className="bg-surface-container-lowest border border-border rounded-lg shadow-sm">
           <div className="p-4 border-b border-border flex justify-between items-center bg-surface-container-lowest">
             <h3 className="text-headline-sm text-on-surface flex items-center gap-2">
               <Icon name="campaign" className="text-outline" />
@@ -94,7 +95,7 @@ export default function RecordOverviewTab() {
       </div>
 
       <div className="xl:col-span-4 space-y-gutter">
-        <div className="bg-white border border-border rounded-lg shadow-sm p-5">
+        <div className="bg-surface-container-lowest border border-border rounded-lg shadow-sm p-5">
           <h3 className="text-headline-sm text-on-surface mb-4">Entity Summary</h3>
           <div className="space-y-3">
             <div className="flex items-center gap-3 p-3 border border-border rounded-md">
@@ -128,7 +129,7 @@ export default function RecordOverviewTab() {
         </div>
 
         {record.tags.length > 0 && (
-          <div className="bg-white border border-border rounded-lg shadow-sm p-5">
+          <div className="bg-surface-container-lowest border border-border rounded-lg shadow-sm p-5">
             <h3 className="text-headline-sm text-on-surface mb-4">Tags</h3>
             <div className="flex flex-wrap gap-2">
               {record.tags.map((tag) => (

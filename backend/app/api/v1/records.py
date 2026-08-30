@@ -38,6 +38,7 @@ from app.models.summary_versions import SummaryVersion
 from app.models.users import User
 from app.schemas.records import (
     RecordAiSummaryRead,
+    RecordAiSummaryVersionRead,
     RecordDetail,
     RecordHistoryEventRead,
     RecordMediaRead,
@@ -503,7 +504,10 @@ async def get_record_history(
     return events
 
 
-def _summary_version_to_schema(version: SummaryVersion) -> RecordAiSummaryRead:
+def _summary_version_fields(version: SummaryVersion) -> dict:
+    """Campi comuni tra `RecordAiSummaryRead` (ultima versione) e
+    `RecordAiSummaryVersionRead` (voce di storico) — evita di duplicare il
+    parsing di `summary_json` nei due endpoint che lo consumano."""
     payload = version.summary_json or {}
     forum_information = payload.get("forum_information", [])
     forum_chatter = [
@@ -518,13 +522,44 @@ def _summary_version_to_schema(version: SummaryVersion) -> RecordAiSummaryRead:
     sources_used = [
         SourceUsedRead(name=url, url=url) for url in payload.get("sources", []) if url
     ]
-    return RecordAiSummaryRead(
-        generated_at=version.created_at,
-        executive_synthesis=payload.get("summary", ""),
-        unverified_claims=payload.get("unverified_claims", []),
-        forum_chatter=forum_chatter,
-        sources_used=sources_used,
+    return {
+        "generated_at": version.created_at,
+        "executive_synthesis": payload.get("summary", ""),
+        "unverified_claims": payload.get("unverified_claims", []),
+        "forum_chatter": forum_chatter,
+        "sources_used": sources_used,
+    }
+
+
+def _summary_version_to_schema(version: SummaryVersion) -> RecordAiSummaryRead:
+    return RecordAiSummaryRead(**_summary_version_fields(version))
+
+
+def _summary_version_to_versioned_schema(version: SummaryVersion) -> RecordAiSummaryVersionRead:
+    return RecordAiSummaryVersionRead(**_summary_version_fields(version), version=version.version)
+
+
+@router.get("/{record_id}/ai-summary/versions", response_model=list[RecordAiSummaryVersionRead])
+async def get_record_ai_summary_versions(
+    record_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> list[RecordAiSummaryVersionRead]:
+    """Storico COMPLETO delle versioni del riepilogo AI (a differenza di
+    `GET /{record_id}/ai-summary`, che restituisce solo l'ultima): permette
+    alla UI di offrire un selettore storico invece di mostrare solo il
+    riepilogo più recente (`frontend/src/routes/records/
+    RecordAiSummaryTab.tsx`). Ordinate dalla più recente alla più vecchia.
+    """
+    await _get_record_or_404(db, record_id)
+
+    stmt = (
+        select(SummaryVersion)
+        .where(SummaryVersion.record_id == record_id)
+        .order_by(SummaryVersion.version.desc())
     )
+    versions = (await db.execute(stmt)).scalars().all()
+    return [_summary_version_to_versioned_schema(v) for v in versions]
 
 
 @router.get(

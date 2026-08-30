@@ -27,7 +27,6 @@ from app.schemas.admin import (
     AdminUserUpdate,
     AuditLogEntryRead,
     UserCreate,
-    UserRead,
     display_name_from_email,
     status_from_is_active,
 )
@@ -75,17 +74,24 @@ async def list_users(
     return [_to_admin_user_read(u) for u in result.scalars().all()]
 
 
-@router.post("/users", response_model=UserRead, status_code=201)
+@router.post("/users", response_model=AdminUserRead, status_code=201)
 async def create_user(
     payload: UserCreate,
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(require_admin_with_2fa),
-) -> UserRead:
+) -> AdminUserRead:
     """Crea un nuovo utente operatore.
 
     Operazione sensibile (crea account con potenzialmente ampi permessi):
     richiede non solo il ruolo admin ma anche la 2FA attiva sull'account
     admin richiedente (vedi require_admin_with_2fa).
+
+    Risponde con `AdminUserRead` (camelCase), non `UserRead` (bug corretto:
+    ogni altro endpoint di quest'area — `GET /users`, `PATCH /users/{id}`,
+    `POST /users/{id}/suspend` — risponde già in questa forma, consumata
+    direttamente dal frontend come `AdminUser` senza mapping; `UserRead`
+    (snake_case) avrebbe fatto leggere `undefined` per `name`/`status`/
+    `mfaEnabled` al form "Crea utente" di `frontend/src/routes/AdminPage.tsx`).
     """
     user = User(
         email=payload.email,
@@ -96,7 +102,7 @@ async def create_user(
     db.add(user)
     await db.commit()
     await db.refresh(user)
-    return UserRead.model_validate(user)
+    return _to_admin_user_read(user)
 
 
 async def _get_user_or_404(db: AsyncSession, user_id: uuid.UUID) -> User:

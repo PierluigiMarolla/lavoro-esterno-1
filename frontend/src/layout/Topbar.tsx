@@ -1,5 +1,6 @@
 import { Link, useLocation } from "react-router-dom";
 import Icon from "@/components/ui/Icon";
+import { useTheme } from "@/context/ThemeContext";
 
 const SEGMENT_LABELS: Record<string, string> = {
   dashboard: "Dashboard",
@@ -25,6 +26,7 @@ function useBreadcrumb() {
 
 export default function Topbar() {
   const crumbs = useBreadcrumb();
+  const { resolvedTheme, toggle } = useTheme();
 
   return (
     <header className="flex justify-between items-center px-gutter w-full sticky top-0 z-40 bg-surface h-topbar-height shadow-[0_1px_3px_rgba(0,0,0,0.05)] border-b border-border">
@@ -46,17 +48,27 @@ export default function Topbar() {
 
       <div className="flex items-center gap-3">
         <button
+          onClick={toggle}
+          className="p-2 rounded-full text-on-secondary-container hover:text-primary hover:bg-surface-container-low transition-colors focus:ring-2 focus:ring-primary-container outline-none"
+          title={resolvedTheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          aria-label={resolvedTheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+        >
+          <Icon name={resolvedTheme === "dark" ? "light_mode" : "dark_mode"} />
+        </button>
+        <button
           className="p-2 rounded-full text-on-secondary-container hover:text-primary hover:bg-surface-container-low transition-colors focus:ring-2 focus:ring-primary-container outline-none"
           title="System status"
+          aria-label="System status"
         >
           <Icon name="sensors" />
         </button>
         <button
           className="p-2 rounded-full text-on-secondary-container hover:text-primary hover:bg-surface-container-low transition-colors focus:ring-2 focus:ring-primary-container outline-none relative"
           title="Notifications"
+          aria-label="Notifications"
         >
           <Icon name="notifications" />
-          <span className="absolute top-1 right-1 w-2 h-2 bg-error rounded-full" />
+          <span className="absolute top-1 right-1 w-2 h-2 bg-error rounded-full" aria-hidden="true" />
         </button>
         <div className="h-4 w-px bg-border mx-1" />
         <a

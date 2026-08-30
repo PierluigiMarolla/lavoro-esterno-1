@@ -37,13 +37,18 @@ docker compose exec api alembic upgrade head
 #    (vedi backend/app/scripts/create_admin.py per i dettagli):
 docker compose exec api python -m app.scripts.create_admin \
     --email admin@lavoro.internal --password "una-password-forte"
+
+# 6. Creare le fonti da scrapare: nessun seed automatico, si usa il CRUD
+#    completo via API/UI (POST /sources, form "Add Source" nella pagina
+#    Sources — vedi docs/API.md e § 5 sotto). /sources e /search restano
+#    vuoti finché non se ne crea almeno una.
 ```
 
 Questa intera sequenza (`docker compose up --build`, migrazioni, creazione
 admin, login) è stata eseguita ed è stata verificata contro un ambiente
-Docker reale: build delle 6 immagini custom, avvio dei 13 servizi, `POST
-/api/v1/auth/login` funzionante con la coppia access/refresh token e
-l'oggetto `user` atteso dal frontend.
+Docker reale: build delle 6 immagini custom, avvio dei 13 servizi (+ 2
+servizi di backup, vedi § 8), `POST /api/v1/auth/login` funzionante con la
+coppia access/refresh token e l'oggetto `user` atteso dal frontend.
 
 Servizi raggiungibili dopo l'avvio:
 
@@ -110,58 +115,86 @@ npm run build
 # npm run test (se/quando configurato un runner, es. Vitest)
 ```
 
-## 5. Aggiungere un nuovo connettore scraper
+## 5. Aggiungere una nuova fonte in `sources`
 
-Ogni fonte (sito di annunci) ha un connettore scraper dedicato in
-`backend/app/scrapers/`, che implementa un'interfaccia comune definita in
-**`backend/app/scrapers/base.py`**. Passi per aggiungerne uno nuovo:
+Il progetto non ha (più) connettori Python per-sito: l'unico motore di
+scraping è quello generico configurabile, guidato interamente da
+`Source.scrape_config` (§ 6 sotto) — nessun codice da scrivere per
+aggiungere una fonte.
 
-1. Creare il modulo del connettore, es.
-   `backend/app/scrapers/<slug_fonte>.py`, con una classe che eredita da
-   `Scraper` (`backend/app/scrapers/base.py`) e imposta `slug`/`base_url`.
-   I 4 metodi astratti da implementare sono `async discover(self) ->
-   list[str]` (elenca gli URL dei singoli annunci), `async scrape_ad(self,
-   url) -> dict` (scarica ed estrae i dati grezzi di un annuncio), `async
-   download_media(self, ad)` e `async normalize(self, data)` (mappa i
-   campi grezzi sul formato comune usato da `app/services/dedup.py` e
-   `canonical.py`). Gli stub esistenti (es.
-   `backend/app/scrapers/bakeca_incontri.py`) sollevano
-   `NotImplementedError` con un messaggio che ricorda di rispettare ToS e
-   rate limit: da sostituire con l'implementazione reale.
-2. Registrare il connettore in `backend/app/scrapers/registry.py` (mappa
-   `slug -> classe connettore`).
-3. Il numero di telefono estratto va passato così com'è (stringa grezza)
-   al layer comune: la normalizzazione E.164, la cifratura AES-256-GCM e
-   l'hash di lookup HMAC-SHA256 sono responsabilità di
-   `app/services/phone_crypto.py`, il connettore non deve gestirle.
-4. Rispettare `rate_limit_seconds` (attributo di classe su `Scraper`,
-   sovrascrivibile per fonte) per non sovraccaricare il sito di origine.
-5. Gestire e propagare gli errori in modo che vengano registrati in
-   `scrape_errors` (collegati a `scrape_runs`), non silenziarli.
-6. Scrivere test unitari per il parsing (HTML di esempio salvato come
-   fixture, non richieste live verso il sito reale nei test automatici).
-7. **Prima di attivare il connettore in produzione**: verificare
-   `robots.txt` e termini di servizio della fonte (vedi
-   `docs/SICUREZZA.md` e la checklist per-fonte in `PROGETTO.md`). Il
-   modello `Source` non ha oggi colonne dedicate per tracciare questa
-   verifica (`robots_txt_checked_at`, ecc.): è un'estensione di schema da
-   valutare quando si passa a scraper reali, non ancora presente.
+- Esiste un CRUD completo via API/UI (`POST /sources`, `PATCH
+  /sources/{id}`, `DELETE /sources/{id}`, form "Add/Edit Source" nella
+  pagina Sources — vedi `docs/API.md`) per creare/configurare una fonte.
+- Dopo aver creato/configurato la fonte: `POST
+  /api/v1/sources/{source_id}/scan` accoda un run reale (coda `scraping`,
+  vedi `backend/app/workers/tasks_scraper.py`) — controllare
+  `scrape_runs`/`scrape_errors` (o il drill-down nella UI) prima di
+  lasciare la fonte attiva su uno schedule. Una fonte senza
+  `scrape_config` fallisce esplicitamente il run (nessuna azione
+  possibile senza una configurazione).
 
-## 6. Aggiungere una nuova fonte in `sources`
+## 6. Configurare il motore di scraping generico
 
-Una "fonte" (riga in `sources`, vedi `docs/DATABASE.md`: `name`, `slug`,
-`base_url`, `priority`, `status`, `enabled`) è distinta dal connettore
-scraper: il connettore è codice, la fonte è configurazione runtime.
+`app/scrapers/generic.py:GenericScraper` esegue scraping REALE tramite
+Scrapling (`fetchMode: "http"` per richieste HTTP, `"dynamic"` per browser
+headless, `"stealth"` per opzioni anti-bot) per qualunque fonte, guidato da
+`Source.scrape_config` — nessun sito specifico è hardcoded nel motore. È
+l'unico modo per attivare una fonte, PURCHÉ prima si verifichino ToS/
+robots.txt per quel sito specifico (vedi PROGETTO.md § 4 sul perché questo
+progetto non lo fa per te).
 
-1. Assicurarsi che esista il connettore scraper corrispondente (punto 5
-   sopra) e conoscerne lo `slug` univoco usato per la registrazione.
-2. Inserire la riga in `sources` (oggi non esiste un endpoint `POST
-   /api/v1/sources` nel backend, solo `GET /sources`, `GET
-   /sources/summary`, `POST /sources/{id}/scan|pause|disable` — vedi
-   `docs/API.md`): per gli ambienti di sviluppo, inserirla direttamente
-   via SQL/script oppure aggiungere l'endpoint di creazione mancante,
-   annotato in `PROGETTO.md`.
-3. Eseguire un run manuale di test con `POST
-   /api/v1/sources/{source_id}/scan` (accoda un task sulla coda
-   `scraping`, vedi `backend/app/workers/tasks_scraper.py`) e controllare
-   `scrape_runs`/`scrape_errors` prima di lasciare la fonte attiva.
+1. Nel form "Add Source" (o via `PATCH /sources/{id}` con `scrapeConfig`),
+   fornire: uno o più `startUrls` (pagine di elenco annunci),
+   `adLinkSelector` (selettore CSS dei link ai singoli annunci),
+   opzionalmente `nextPageSelector` (paginazione), `fetchMode`,
+   `userAgent`, opzioni browser/stealth (`waitSelector`, `waitMs`,
+   `solveCloudflare`, `blockWebrtc`, `hideCanvas`, `realChrome`,
+   `blockAds`, `proxy`) e i `fields` da estrarre da ogni pagina annuncio
+   (selettore CSS + `attribute` `text`/`href`/`src` + `multiple` per liste
+   come le immagini). Un campo `phone` è obbligatorio: senza telefono un
+   annuncio non può essere collegato a nessun Record.
+2. Usare "Check robots.txt" per verificare che il sito non vieti
+   esplicitamente l'accesso (il motore lo verifica comunque ad ogni
+   richiesta reale, ma è utile saperlo prima).
+3. Usare "Test configuration" (`POST /sources/{id}/test-config`, richiede
+   la fonte già salvata) per provare i selettori su UN solo annuncio reale
+   senza scrivere nulla su database/MinIO — utile per iterare rapidamente
+   sui selettori CSS ispezionando l'HTML del sito target nel browser.
+4. Solo quando l'estrazione di prova è corretta, lanciare uno scan reale
+   (`POST /sources/{id}/scan` o il bottone "Run Scan" in UI, visibile solo
+   quando `hasScrapeConfig` è vero).
+
+Rate limiting (minimo 1s tra le richieste) e rispetto di `robots.txt` sono
+applicati SEMPRE dal motore, non sono opzioni disattivabili dalla
+configurazione. Se `userAgent` non viene configurato, il motore usa il
+default `LavoroEsternoBot/...`.
+
+## 8. Retention e backup
+
+Dettagli completi in `docs/DATABASE.md` (§ 5-7). In sintesi:
+
+- **Retention**: un task Celery Beat notturno
+  (`app.workers.tasks_maintenance.cleanup_expired_data`) cancella
+  `audit_log`/`scrape_errors` più vecchi delle soglie configurate
+  (`AUDIT_LOG_RETENTION_DAYS`, `SCRAPE_ERROR_RETENTION_DAYS` in `.env`) e
+  libera i pacchetti di export scaduti (`EXPORT_RETENTION_DAYS`). Per
+  testarlo manualmente senza aspettare le 3:00 UTC:
+  ```bash
+  docker compose exec worker-scraper celery -A app.workers.celery_app \
+      call app.workers.tasks_maintenance.cleanup_expired_data
+  ```
+- **Backup**: due servizi sempre attivi nel `docker-compose.yml`,
+  `backup-postgres` (dump giornalieri compressi, rotazione
+  `BACKUP_RETENTION_DAYS`) e `backup-minio` (replica continua del bucket
+  media). Nessuna azione manuale richiesta per farli funzionare; per
+  forzare un run immediato (utile in test):
+  ```bash
+  docker compose exec backup-postgres sh /scripts/backup-postgres.sh --once
+  docker compose exec backup-minio sh /scripts/backup-minio.sh --once
+  ```
+- **Ripristino** (solo manuale, mai automatico):
+  ```bash
+  docker compose exec backup-postgres ls -la /backups
+  docker compose exec backup-postgres sh /scripts/restore-postgres.sh \
+      /backups/lavoro_esterno_<timestamp>.sql.gz
+  ```

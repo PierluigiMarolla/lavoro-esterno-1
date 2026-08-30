@@ -8,6 +8,10 @@ volumes:
   grafana-data:
   prometheus-data:
   loki-data:
+  # Backup locali (stesso host Docker): non sostituiscono un backup
+  # off-site, vedi infra/backup/ e docs/DATABASE.md § Backup.
+  postgres-backups:
+  minio-backups:
 
 services:
   # ---------------------------------------------------------------------
@@ -81,6 +85,56 @@ services:
       - lavoro-esterno-net
 
   # ---------------------------------------------------------------------
+  # Backup Postgres: dump giornaliero + rotazione, su un volume locale
+  # separato dal volume dati (postgres-backups, non postgres-data).
+  # Locale/Docker Compose per ora (vedi docs/DATABASE.md § Backup): quando
+  # si sceglie l'hosting definitivo, adattare backup-postgres.sh per
+  # spedire i dump anche a uno storage remoto/off-site.
+  # ---------------------------------------------------------------------
+  backup-postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/scripts/backup-postgres.sh"]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+    volumes:
+      - ./infra/backup:/scripts:ro
+      - postgres-backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - lavoro-esterno-net
+
+  # ---------------------------------------------------------------------
+  # Backup MinIO: mirror giornaliero del bucket media + rotazione, su un
+  # volume locale separato (minio-backups). Stessa nota sopra: locale per
+  # ora, da adattare a un target S3-compatible remoto in produzione.
+  # ---------------------------------------------------------------------
+  backup-minio:
+    image: minio/mc:latest
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/scripts/backup-minio.sh"]
+    environment:
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_BUCKET: ${MINIO_BUCKET:-lavoro-esterno-media}
+      MINIO_SECURE: ${MINIO_SECURE:-false}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+    volumes:
+      - ./infra/backup:/scripts:ro
+      - minio-backups:/backups
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - lavoro-esterno-net
+
+  # ---------------------------------------------------------------------
   # API - FastAPI. Nessuna porta pubblicata verso l'host: raggiungibile
   # solo tramite il reverse proxy nginx (vedi infra/nginx/nginx.conf).
   # "expose" documenta la porta interna senza pubblicarla sull'host.
@@ -108,13 +162,16 @@ services:
   # ---------------------------------------------------------------------
   # Worker Celery dedicato alla coda "scraping" (esecuzione connettori
   # scraper per fonte, orchestrati dallo scheduler o avviati manualmente).
+  # Ascolta anche "maintenance" (pulizia retention notturna, vedi
+  # app/workers/tasks_maintenance.py): è un task leggero e poco frequente,
+  # non giustifica un servizio Celery dedicato.
   # ---------------------------------------------------------------------
   worker-scraper:
     build:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
-    command: ["celery", "-A", "app.workers.celery_app", "worker", "-Q", "scraping", "-n", "worker-scraper@%h", "--loglevel=info"]
+    command: ["celery", "-A", "app.workers.celery_app", "worker", "-Q", "scraping,maintenance", "-n", "worker-scraper@%h", "--loglevel=info"]
     env_file:
       - .env
     depends_on:

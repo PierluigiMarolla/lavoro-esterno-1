@@ -1,7 +1,11 @@
+import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { useRecordAiSummary, useRegenerateAiSummary } from "@/hooks/useRecords";
+import { useRecordAiSummary, useRecordAiSummaryVersions, useRegenerateAiSummary } from "@/hooks/useRecords";
 import Icon from "@/components/ui/Icon";
 import Button from "@/components/ui/Button";
+import ErrorState from "@/components/ui/ErrorState";
+import { cn } from "@/lib/cn";
+import type { RecordAiSummary, RecordAiSummaryVersion } from "@/types";
 
 // Replicates desing/record_detail_ai_summary/code.html. The whole tab uses a
 // tinted surface + explicit "AI-generated" framing per DESIGN.md, so this
@@ -15,19 +19,37 @@ function formatDateTime(iso: string | null): string {
 export default function RecordAiSummaryTab() {
   const { id = "" } = useParams();
   const summary = useRecordAiSummary(id);
+  const versions = useRecordAiSummaryVersions(id);
   const regenerate = useRegenerateAiSummary(id);
+
+  // null (the sentinel default) means "show the latest summary" — the
+  // useRecordAiSummary query, not a versions list entry — so that a
+  // Regenerate always lands back on the newest version even if the user had
+  // a different one selected. Any other value pins the picker to that
+  // version's own number.
+  const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
+
+  // A regenerate call bumps the latest version — make sure the picker
+  // doesn't stay pinned to what's now a stale, non-latest version.
+  useEffect(() => {
+    if (regenerate.isSuccess) setSelectedVersion(null);
+  }, [regenerate.isSuccess, regenerate.data]);
 
   if (summary.isLoading) {
     return <div className="h-64 animate-pulse bg-surface-container-low rounded-lg" />;
   }
   if (summary.isError) {
-    return <p className="text-body-md text-error">Failed to load AI summary.</p>;
+    return <ErrorState error={summary.error} onRetry={() => summary.refetch()} />;
   }
   if (!summary.data) {
     return <p className="text-body-md text-on-surface-variant">No AI summary available for this record.</p>;
   }
 
-  const data = summary.data;
+  const latestVersionNumber = versions.data && versions.data.length > 0 ? versions.data[0].version : null;
+  const selected: RecordAiSummary | RecordAiSummaryVersion | undefined =
+    selectedVersion === null ? summary.data : versions.data?.find((v) => v.version === selectedVersion);
+  const data = selected ?? summary.data;
+  const isViewingLatest = selectedVersion === null || selectedVersion === latestVersionNumber;
 
   return (
     <div className="bg-surface-container-low/40 -m-margin-page p-margin-page">
@@ -50,6 +72,13 @@ export default function RecordAiSummaryTab() {
 
       <div className="grid grid-cols-12 gap-gutter">
         <div className="col-span-12 lg:col-span-8 flex flex-col gap-gutter">
+          {!isViewingLatest && (
+            <div className="flex items-center gap-2 bg-info/10 border border-info/30 text-info rounded-lg px-4 py-2 text-body-md">
+              <Icon name="history" size={18} />
+              <span>You&apos;re viewing an older version of this summary. Regenerating will create a new latest version.</span>
+            </div>
+          )}
+
           <section className="bg-surface-container-lowest border border-border rounded-lg p-6 shadow-sm">
             <div className="flex items-center gap-2 mb-4 border-b border-border pb-3">
               <Icon name="psychology" className="text-primary" size={24} />
@@ -82,6 +111,16 @@ export default function RecordAiSummaryTab() {
         </div>
 
         <div className="col-span-12 lg:col-span-4 flex flex-col gap-gutter">
+          <VersionPicker
+            versions={versions.data}
+            isLoading={versions.isLoading}
+            error={versions.error}
+            onRetry={() => versions.refetch()}
+            latestVersionNumber={latestVersionNumber}
+            selectedVersion={selectedVersion}
+            onSelect={setSelectedVersion}
+          />
+
           <section className="bg-surface-container-lowest border border-border rounded-lg p-6 shadow-sm">
             <div className="flex items-center gap-2 mb-4 border-b border-border pb-3">
               <Icon name="forum" className="text-secondary" size={24} />
@@ -128,5 +167,68 @@ export default function RecordAiSummaryTab() {
         </div>
       </div>
     </div>
+  );
+}
+
+function VersionPicker({
+  versions,
+  isLoading,
+  error,
+  onRetry,
+  latestVersionNumber,
+  selectedVersion,
+  onSelect,
+}: {
+  versions: RecordAiSummaryVersion[] | undefined;
+  isLoading: boolean;
+  error: unknown;
+  onRetry: () => void;
+  latestVersionNumber: number | null;
+  selectedVersion: number | null;
+  onSelect: (version: number | null) => void;
+}) {
+  return (
+    <section className="bg-surface-container-lowest border border-border rounded-lg p-6 shadow-sm">
+      <div className="flex items-center gap-2 mb-4 border-b border-border pb-3">
+        <Icon name="history" className="text-secondary" size={24} />
+        <h3 className="text-headline-sm text-on-surface">Version History</h3>
+      </div>
+      {isLoading && <p className="text-body-md text-on-surface-variant">Loading versions…</p>}
+      {error !== undefined && error !== null && <ErrorState error={error} onRetry={onRetry} className="py-4" />}
+      {versions && versions.length === 0 && (
+        <p className="text-body-md text-on-surface-variant">No prior versions recorded.</p>
+      )}
+      {versions && versions.length > 0 && (
+        <ul className="space-y-1.5 max-h-72 overflow-y-auto">
+          {versions.map((version) => {
+            const isLatest = version.version === latestVersionNumber;
+            const isSelected = isLatest ? selectedVersion === null : selectedVersion === version.version;
+            return (
+              <li key={version.version}>
+                <button
+                  type="button"
+                  onClick={() => onSelect(isLatest ? null : version.version)}
+                  className={cn(
+                    "w-full flex items-center justify-between gap-2 px-3 py-2 rounded text-left text-body-md transition-colors",
+                    isSelected
+                      ? "bg-primary/10 text-primary border border-primary/30"
+                      : "text-on-surface-variant hover:bg-surface-container-low border border-transparent",
+                  )}
+                >
+                  <span>
+                    Version {version.version} — {formatDateTime(version.generatedAt)}
+                  </span>
+                  {isLatest && (
+                    <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wider uppercase bg-primary-container text-on-primary border border-primary/20">
+                      Current
+                    </span>
+                  )}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
   );
 }

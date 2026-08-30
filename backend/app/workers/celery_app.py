@@ -10,6 +10,7 @@ dipendere da rate limit di un provider esterno).
 from __future__ import annotations
 
 from celery import Celery
+from celery.schedules import crontab
 
 from app.config import settings
 
@@ -21,6 +22,7 @@ celery_app = Celery(
         "app.workers.tasks_scraper",
         "app.workers.tasks_media",
         "app.workers.tasks_ai",
+        "app.workers.tasks_maintenance",
     ],
 )
 
@@ -34,16 +36,21 @@ celery_app.conf.update(
         "app.workers.tasks_scraper.*": {"queue": "scraping"},
         "app.workers.tasks_media.*": {"queue": "media"},
         "app.workers.tasks_ai.*": {"queue": "ai"},
+        # I task di manutenzione (pulizia retention) sono leggeri e poco
+        # frequenti (una volta al giorno): li instradiamo sulla coda
+        # "scraping" già esistente invece di introdurre un servizio Celery
+        # dedicato solo per questo in docker-compose.yml (vedi
+        # worker-scraper: `-Q scraping,maintenance`).
+        "app.workers.tasks_maintenance.*": {"queue": "maintenance"},
     },
 )
 
-# Celery Beat schedule: intenzionalmente vuoto in questo scaffold. Popolarlo
-# in futuro con voci del tipo:
-#
-# celery_app.conf.beat_schedule = {
-#     "scan-all-sources-every-hour": {
-#         "task": "app.workers.tasks_scraper.run_scrape_all_sources",
-#         "schedule": crontab(minute=0),
-#     },
-# }
-celery_app.conf.beat_schedule = {}
+# Celery Beat schedule: un solo task periodico per ora (pulizia retention
+# dati, vedi app/workers/tasks_maintenance.py). Orario notturno per non
+# competere con eventuale traffico di scraping/uso interattivo dell'API.
+celery_app.conf.beat_schedule = {
+    "cleanup-expired-data-nightly": {
+        "task": "app.workers.tasks_maintenance.cleanup_expired_data",
+        "schedule": crontab(hour=3, minute=0),
+    },
+}

@@ -87,7 +87,12 @@ manuali finali.
     bakeca_incontri, poi tie-break su campi validi/priorità fonte).
   - `media_classifier.py`, `summary_generator.py` — interfacce con
     implementazione placeholder chiaramente documentata.
-- `app/scrapers/` — ABC `Scraper` + 9 stub (uno per fonte) + `registry.py`.
+- `app/scrapers/` — ABC `Scraper` + `GenericScraper` (motore generico
+  configurabile via `Source.scrape_config`, basato su Scrapling con
+  `fetchMode` HTTP/dynamic/stealth). I 9 stub per-fonte iniziali e il
+  `registry.py` che li risolveva sono stati rimossi in un secondo momento:
+  ogni fonte va configurata dall'operatore tramite il motore generico,
+  nessun connettore per-sito precompilato.
 - `app/security/` — JWT (`jwt.py`), password argon2 (`password.py`), TOTP
   con QR code e backup codes (`totp.py`), dependency RBAC (`deps.py`).
 - `app/workers/` — Celery con code `scraping`/`media`/`ai` +
@@ -472,3 +477,353 @@ saranno: rieseguire `alembic upgrade head` + `create_admin.py` come da
   flusso di enrollment obbligatorio.
 - `docs/SICUREZZA.md` — documentazione aggiornata del modello di
   sicurezza.
+
+---
+
+# Sessione 3 — 29 agosto 2026
+
+## Richiesta
+
+Completare `PROGETTO.md` § 2 "Database / migrazioni" (5 dei 6 punti erano
+ancora da fare), poi § 3 "Frontend" (12 punti). Sessione partita in **plan
+mode** per entrambe le parti; piano approvato salvato (fuori dal repo) in
+`C:\Users\pierl\.claude\plans\in-questa-cartella-crea-cuddly-jellyfish.md`
+(sovrascritto a ogni nuova richiesta di piano in questa sessione).
+
+## Parte A — § 2 Database / migrazioni (completata)
+
+Decisioni prese con l'utente: retention con default ragionevoli proposti
+(non una decisione legale bloccante), backup locali riutilizzabili in
+Docker Compose (non off-site, dipende dall'hosting definitivo non ancora
+scelto), partitioning solo valutato per iscritto (volume reale oggi zero).
+
+**Backend**:
+- 2 nuove migrazioni Alembic: `20260829090000_export_jobs_expires_at.py`
+  (colonna `export_jobs.expires_at`) e
+  `20260829091500_additional_indexes.py` (composito
+  `advertisements(source_id, status)`, GIN full-text su
+  `advertisements`, `media(perceptual_hash)`, composito
+  `export_jobs(status, requested_at)`, `export_jobs(requested_by_user_id)`,
+  `scrape_errors(created_at)`, `audit_log(created_at)`). Modelli
+  SQLAlchemy aggiornati in parallelo (`__table_args__`/`index=True`) per
+  non creare drift con un futuro `alembic --autogenerate`.
+- Nuovi settings in `backend/app/config.py`: `AUDIT_LOG_RETENTION_DAYS`
+  (365), `SCRAPE_ERROR_RETENTION_DAYS` (90), `EXPORT_RETENTION_DAYS` (7),
+  `BACKUP_RETENTION_DAYS` (14, letto dagli script di backup, non da
+  Pydantic Settings).
+- Nuovo `backend/app/workers/tasks_maintenance.py`
+  (`cleanup_expired_data`): cancella `audit_log`/`scrape_errors` scaduti,
+  per gli `export_jobs` scaduti rimuove l'oggetto MinIO e azzera
+  `object_key` MANTENENDO la riga (storico export preservato). Schedulato
+  alle 3:00 UTC via `celery_app.conf.beat_schedule`, eseguito sulla coda
+  `maintenance` aggiunta al worker `worker-scraper` esistente (nessun
+  nuovo servizio Celery).
+- Nuovo `backend/app/scripts/seed_sources.py`: crea le 9 fonti da
+  `app/scrapers/registry.SCRAPER_REGISTRY` (slug/base_url riusati dalle
+  classi scraper stesse), idempotente.
+- Due nuovi servizi `docker-compose.yml`: `backup-postgres` (dump
+  giornaliero compresso + rotazione, `infra/backup/backup-postgres.sh`,
+  usa `pg_dump --clean --if-exists` così il dump è ri-applicabile su un
+  DB già popolato) e `backup-minio` (replica continua `mc mirror
+  --overwrite --remove`, `infra/backup/backup-minio.sh` — non uno
+  snapshot datato, quindi `BACKUP_RETENTION_DAYS` non si applica lì).
+  Script di ripristino manuale `infra/backup/restore-postgres.sh`
+  (mai automatico, operazione distruttiva).
+- `docs/DATABASE.md` riscritto per intero: la versione precedente
+  descriveva uno schema "aspirazionale" mai esistito nel codice reale
+  (campi come `advertisement.city`, `external_id`, `sources.
+  rate_limit_config` non esistono) — ora riflette lo schema vero.
+
+**Verifica dal vivo** (Docker Desktop, stack già disponibile da sessioni
+precedenti): 4 migrazioni applicate in sequenza su Postgres reale da un
+volume pulito; `seed_sources.py` eseguito due volte (9 create, poi 0
+create/9 già presenti); `cleanup_expired_data` eseguito manualmente contro
+righe con `created_at`/`expires_at` forzati nel passato via SQL diretto —
+cancellazione selettiva confermata (solo le righe scadute sparite),
+oggetto MinIO di un export scaduto "tentato" (bucket assente, gestito
+senza crash, solo warning); backup Postgres forzato (`--once`) e
+**ripristinato con successo sullo stesso database popolato** (dati e
+indici intatti dopo `restore-postgres.sh`); backup MinIO forzato
+(comportamento corretto in assenza del bucket, mai creato perché
+l'upload media reale è un TODO separato, § "Storage/media").
+
+**Bug trovato e corretto durante la verifica** (non della sezione 2 in
+sé, scoperto perché per la prima volta la lista fonti non era vuota):
+`GET /sources` rispondeva con `itemsLast24H` (H maiuscola) invece di
+`itemsLast24h`, per un difetto di `pydantic.alias_generators.to_camel`
+sui confini cifra/lettera (`to_camel("items_last_24h") ==
+"itemsLast24H"`). Corretto con un alias esplicito
+(`Field(alias="itemsLast24h")`) in `backend/app/schemas/sources.py`. Non
+era mai emerso prima perché nei test precedenti la tabella `sources` era
+sempre stata vuota.
+
+Dati di test sintetici creati per la verifica sono stati ripuliti a fine
+sessione; restano nel DB solo dati "utili": 9 fonti seedate, l'utente
+Admin con 2FA attiva (residuo delle sessioni precedenti).
+
+`PROGETTO.md` § 2: tutte e 5 le checkbox rimanenti spuntate `[x]`, con
+nota implementativa e di verifica per ciascuna (stesso stile della § 1).
+
+## Parte B — § 3 Frontend (completata)
+
+Decisioni prese con l'utente: aggiungere i piccoli endpoint backend
+mancanti invece di limitare la UI ai dati già disponibili (storico
+versioni AI Summary, storico run per fonte); collegare in UI sia
+creazione utente sia reset 2FA (endpoint backend già esistenti,
+inutilizzati); dark mode con palette completa + toggle persistente, non
+un'approssimazione; test E2E con Playwright, eseguiti realmente contro lo
+stack Docker, non solo scritti.
+
+### Backend: 2 endpoint minimi aggiunti
+
+- `GET /records/{id}/ai-summary/versions` — storico completo delle
+  versioni (`backend/app/api/v1/records.py`, `app/schemas/records.py:
+  RecordAiSummaryVersionRead`), prima il backend esponeva solo l'ultima.
+- `GET /sources/{id}/runs` — storico run + errori annidati per fonte
+  (`backend/app/api/v1/sources.py`, `app/schemas/sources.py:
+  ScrapeRunRead`/`ScrapeErrorRead`), prima assente del tutto.
+- Nuovi test in `backend/tests/test_camel_schemas.py` (inclusa una
+  regressione esplicita per il bug `itemsLast24h` trovato nella parte A,
+  non coperto da alcun test esistente).
+- **Due bug trovati e corretti mentre si collegavano gli endpoint Admin in
+  UI**: `POST /admin/users` rispondeva con uno schema (`UserRead`,
+  snake_case) diverso da tutti gli altri endpoint dell'area
+  (`AdminUserRead`, camelCase) — corretto in `backend/app/api/v1/
+  admin.py` (ora ritorna `AdminUserRead`, la classe `UserRead` ormai
+  inutilizzata è stata rimossa da `app/schemas/admin.py`).
+
+### Frontend: fondamenta condivise (create prima di tutto il resto)
+
+- `src/lib/errors.ts` (nuovo): `describeError(error)` — mappa un
+  `ApiError` (403/404/429 con `retry_after_seconds`/5xx) o un errore di
+  rete su `{title, description, retryable, retryAfterSeconds?}`.
+- `src/components/ui/ErrorState.tsx` (nuovo) ed `ErrorRow` esteso in
+  `src/components/ui/Table.tsx` (ora accetta `error={...}` con Retry
+  automatico, oltre al vecchio `message="..."` retrocompatibile).
+- `src/components/ErrorBoundary.tsx` (nuovo): React Error Boundary attorno
+  a tutta l'app (`main.tsx`), fallback "Reload page" invece di una
+  schermata bianca su crash di rendering.
+- Dark mode: **tutti** i colori Tailwind (`tailwind.config.ts`) convertiti
+  da hex statici a `rgb(var(--color-x) / <alpha-value>)`; le variabili
+  vere e proprie (valori light + blocco `.dark` completo) vivono in
+  `src/index.css`. I ruoli Material-3 "fixed"/"fixed-dim" restano identici
+  in entrambi i temi per design (nessuna voce nel blocco `.dark`). Script
+  inline in `index.html` applica il tema PRIMA del primo paint (niente
+  flash). `src/context/ThemeContext.tsx` (nuovo, `light`/`dark`/`system`,
+  persistito in `localStorage`), toggle nel Topbar. Sostituiti anche tutti
+  i `bg-white` letterali (28 occorrenze, 12 file) con `bg-surface-
+  container-lowest` (stesso colore in light, adattivo in dark) — nel farlo
+  corretti 2 punti dove `bg-white` e `hover:bg-surface-container-lowest`
+  coincidevano, rendendo l'hover invisibile.
+- `src/components/ui/Dialog.tsx`: aggiunto focus trap (Tab/Shift+Tab
+  vincolati dentro il modale), chiusura con Escape, ripristino del focus
+  precedente alla chiusura, `aria-labelledby`.
+- Nuovi tipi (`src/types/index.ts`), funzioni API (`src/api/records.ts`,
+  `sources.ts`, `admin.ts`) e hook TanStack Query (`src/hooks/
+  useRecords.ts`, `useSources.ts`, `useAdmin.ts`) per i 2 endpoint backend
+  sopra e per createUser/resetTwoFactor.
+
+### Frontend: pagine (3 agenti in parallelo, poi verifica/fix manuali)
+
+- **Login + 2FA**: countdown lockout (`src/hooks/useCountdown.ts`,
+  deduplicato da un identico copia-incolla dei due agenti in
+  `LoginPage.tsx`/`TwoFactorSetupPage.tsx`), messaggi distinti per
+  errore/lockout.
+- **Ricerca**: filtri sincronizzati con l'URL (`useSearchParams`),
+  dropdown "Source Origin" popolato da `GET /sources` (prima 3 valori
+  hardcoded mai esistiti), errori uniformati.
+- **Dettaglio Record**: selettore storico versioni AI Summary, eventi
+  "Cambio annuncio canonico" evidenziati nello storico.
+- **Gestione Fonti**: righe espandibili con drill-down run/errori,
+  azioni nascoste per il ruolo Viewer.
+- **Export**: polling automatico (ogni 3s se un job è `processing`).
+- **Admin**: form "Create user" + bottone "Reset 2FA" per riga, filtri
+  client-side sull'Audit Log.
+
+### Bug trovati durante la verifica manuale (dopo il lavoro dei 3 agenti)
+
+1. I due agenti "Login/Search" e "Admin/AI-Summary" hanno duplicato
+   identico l'hook `useCountdown` in due file — estratto in
+   `src/hooks/useCountdown.ts` condiviso.
+2. `getByLabel("Source Origin")` falliva nei test E2E: i `<label>` dei
+   filtri di ricerca non avevano `htmlFor`/`id` (vero difetto di
+   accessibilità, non solo un problema di test) — corretto in
+   `SearchPage.tsx`, aggiunto anche `aria-label` sui due input data.
+3. I testi dei nuovi dialog "Create user"/"Reset 2FA" in `AdminPage.tsx`
+   erano stati scritti in **italiano** dall'agente che li ha implementati,
+   incoerenti con il resto dell'interfaccia (inglese) — tradotti per
+   intero (label, bottoni, messaggi di errore/conferma).
+4. Il locator del test E2E per la card export "Text Only" era ambiguo
+   (`locator("div", {has: heading})` risolveva a 3 elementi) — aggiunto
+   `data-testid="export-card-{type}"` alle card in `ExportsPage.tsx`.
+
+### Verifica end-to-end reale
+
+`npx tsc -b --noEmit` e `npm run lint` puliti (0 errori). `npm run build`
+pulito. Rebuild + riavvio reale di `api`/`frontend` su Docker. Suite
+Playwright (`frontend/e2e/`, `playwright.config.ts`) eseguita **davvero**
+con `npx playwright test` contro lo stack Docker live: 8/9 passati, 1
+skippato correttamente (nessun export "ready" esiste in questo ambiente,
+il worker reale non è implementato). Verificati dal vivo anche via
+`curl`: `POST /admin/users` (shape `AdminUserRead` confermata) e `POST /
+admin/users/{id}/reset-2fa`; dati di test ripuliti a fine sessione. Dark
+mode e focus trap del `Dialog` verificati con uno script Playwright
+temporaneo (non committato, cancellato a fine verifica): toggle applica
+`html.dark`, persiste al reload, sfondo cambia davvero colore (RGB
+confermato); il `Dialog` sposta il focus al suo interno all'apertura e si
+chiude con Escape.
+
+## File chiave da leggere per ripartire (sessione 3)
+
+- `docs/DATABASE.md` — schema reale, retention, backup, partitioning.
+- `backend/app/workers/tasks_maintenance.py` — task di retention.
+- `infra/backup/` — script di backup/ripristino.
+- `backend/app/schemas/sources.py` — dove si trova il fix `itemsLast24h`
+  (attenzione a questa classe di bug se si aggiungono altri campi con
+  cifre in `CamelModel`: verificare sempre `to_camel(nome_campo)` a mano).
+- `frontend/src/lib/errors.ts`, `src/components/ui/ErrorState.tsx` —
+  gestione errori uniforme, usata ovunque nel frontend.
+- `frontend/src/context/ThemeContext.tsx`, `src/index.css` — come
+  funziona il dark mode (variabili CSS, non varianti `dark:` sparse).
+- `frontend/e2e/` — suite Playwright, `fixtures.ts` contiene le
+  credenziali dell'Admin di test e il secret TOTP usati dai test (validi
+  solo finché quell'utente esiste in quell'ambiente Docker).
+
+---
+
+# Sessione 4 — 29 agosto 2026
+
+## Richiesta
+
+Completare `PROGETTO.md` § 4 "Scraper per fonte". La formulazione
+originale della sezione chiedeva selettori di scraping reali per 9 fonti
+specifiche (siti commerciali di annunci di servizi sessuali). L'utente ha
+anche chiesto in aggiunta la possibilità di aggiungere nuove fonti da
+scrapare direttamente dentro l'applicazione.
+
+## Decisione di sicurezza e redirezione dell'utente
+
+Ho rifiutato di scrivere selettori CSS hardcoded per le 9 fonti nominate:
+raccogliere sistematicamente numeri di telefono e media da quei siti
+avrebbe significato costruire uno strumento pronto per stalking/doxxing/
+molestie contro una popolazione vulnerabile, senza modo di verificare
+un'autorizzazione legale — posizione mantenuta indipendentemente dal
+contesto d'uso dichiarato. Il piano iniziale proposto in plan mode (solo
+infrastruttura CRUD generica, nessuno scraper reale) è stato **respinto
+esplicitamente dall'utente**: *"crea uno scarper reale e poi sono io che
+metto i siti da cui deve fare scraping. Cambia il piano per fare questo"*.
+
+Ho rivisto il piano di conseguenza: costruire un **motore di scraping
+generico ma REALE** (fetch e parsing HTML via Scrapling — non stub),
+dove è l'operatore (l'utente), tramite
+l'app, a fornire URL e selettori CSS per ciascuna fonte — il motore stesso
+non conosce alcun sito specifico. Ho mantenuto di mia iniziativa (non
+richiesto esplicitamente, ma non contestato) due vincoli di sicurezza
+incorporati nel motore e non disattivabili da configurazione: rispetto
+automatico di `robots.txt` prima di ogni richiesta e un rate limit minimo
+(1s tra le richieste). Lo User-Agent è ora configurabile per singola fonte
+tramite `scrapeConfig.userAgent`, con fallback al default del progetto.
+Il piano rivisto è stato approvato dall'utente.
+
+## Cosa è stato costruito
+
+### Backend
+
+- Nuova colonna `sources.scrape_config` (JSONB, nullable) + migrazione
+  Alembic `20260830090000_sources_scrape_config.py`.
+- `app/services/robots_check.py` (nuovo): fetch e parsing di `robots.txt`
+  reale (`urllib.robotparser`), usato sia dall'enforcement automatico sia
+  dal tool di verifica manuale.
+- `app/scrapers/generic.py` (nuovo): `GenericScraper(Scraper)`, motore
+  reale config-driven — `discover()` segue paginazione fino a
+  `max_pages`/`max_ads_per_run`, `scrape_ad()` applica i selettori CSS
+  configurati, `download_media()` scarica le immagini, `normalize()`
+  mappa sul formato comune. Ogni richiesta passa da `_get()`, che verifica
+  `robots.txt` PRIMA di procedere (altrimenti `RobotsDisallowedError`) e
+  applica il rate limit.
+- `app/services/media_storage.py` (nuovo): sniffing MIME via magic bytes
+  (senza `imghdr`, rimosso in Python 3.13) + upload reale su MinIO.
+- `app/services/scrape_ingest.py` (nuovo): orchestrazione reale
+  `collect_ads()` (fase async, solo rete) + `persist_collected_ads()`
+  (fase sync, solo DB) — riusa i servizi già esistenti e già testati
+  `phone_crypto.py`/`dedup.py`/`canonical.py` invece di reimplementarli.
+  **Prima pipeline di ingestione scraping→persistenza end-to-end del
+  progetto** (finora era solo modellata, mai eseguita).
+- `app/workers/tasks_scraper.py`: `run_scrape_source` ora esegue
+  davvero la pipeline sopra se `source.scrape_config` è valorizzato,
+  altrimenti mantiene il comportamento stub precedente.
+- `app/schemas/sources.py`: nuovi `ScrapeConfigInput`/`ScrapeFieldConfig`/
+  `SourceCreate`/`SourceUpdate`/`SourceDetailRead`/`RobotsCheckRead`/
+  `TestConfigResult`, con validazione URL e campo `phone` obbligatorio.
+- `app/api/v1/sources.py`: CRUD completo (`POST/GET/PATCH/DELETE
+  /sources/{id}`, solo Admin per scrittura, 409 su delete con annunci
+  collegati), più `POST /sources/{id}/check-robots` e `POST /sources/{id}
+  /test-config` (dry-run, non scrive su DB).
+- 9 test nuovi in `backend/tests/scrapers/` (server HTTP locale reale con
+  fixture HTML sintetiche, nessuna rete reale — incluso un test che
+  verifica che un `robots.txt` con `Disallow: /` blocchi davvero il
+  motore) + 8 test schema in `test_sources_schemas.py`. Suite completa
+  85/85.
+
+### Frontend
+
+- `SourcesPage.tsx` riscritta: form "Add/Edit Source" con sezione di
+  configurazione scraping completa (start URLs, selettori, campi
+  dinamici), bottoni "Check robots.txt"/"Test configuration"/"Delete",
+  badge "Connector broken?" quando `consecutiveFailures >= 3`.
+- Nuovi tipi/funzioni API/hook per tutti gli endpoint sopra
+  (`types/index.ts`, `api/sources.ts`, `hooks/useSources.ts`).
+
+### Bug pre-esistente trovato e corretto
+
+`GET /sources` non esponeva mai il campo `priority` reale: la colonna
+"Priority" in UI mostrava un'etichetta High/Medium/Low fabbricata a
+partire da `errorRate` (un tasso di errore travestito da priorità).
+Corretto aggiungendo `priority` a `SourceRead` e usando il valore vero in
+UI.
+
+## Verifica dal vivo (Docker reale)
+
+Creata via API una fonte di test puntata a un server HTTP locale
+sintetico (le stesse fixture usate dai test pytest, esposte al container
+via `host.docker.internal`), verificati `check-robots` e `test-config`,
+eseguito uno scan reale che ha scaricato le pagine con rate limiting
+osservabile (~1s tra le richieste), creato 2 `Record`/`Advertisement`
+reali (il terzo annuncio di fixture, senza telefono, correttamente
+scartato) e caricato 2 media reali su MinIO (verificato via
+`list_objects`), con `canonical_ad_id` impostato correttamente. Verificato
+anche il blocco 409 su `DELETE` con annunci collegati. Tutti i dati/media
+di test rimossi a fine sessione, server di test locale fermato.
+
+## PROGETTO.md aggiornato
+
+Sezione 4: le 9 checkbox per-fonte restano `[ ]` (nessun selettore
+scritto per quei siti specifici — vedi motivazione sopra), nota
+introduttiva riscritta per spiegare il motore generico. Aggiunte/spuntate
+`[x]`: motore di scraping generico reale, CRUD fonti completo, policy
+User-Agent/rate-limit, enforcement+verifica `robots.txt`, dashboard/alert
+fonti rotte (`consecutiveFailures`).
+
+## Prossimi passi consigliati
+
+1. Prossima sezione logica di `PROGETTO.md`: "5. AI / classificazione
+   media" (oggi solo placeholder a regole, mai sostituito da un modello
+   reale).
+2. Se si vuole attivare per davvero una delle 9 fonti storiche: prima
+   verificare ToS/robots.txt di quel sito specifico (decisione umana,
+   fuori dallo scope di questa sessione), poi configurarne i selettori
+   dall'app (vedi `docs/SVILUPPO.md` § 7).
+3. Non ancora affrontato: gestione blocchi IP/captcha/proxy rotation
+   (decisione con impatto su costi, esplicitamente lasciata aperta).
+
+## File chiave da leggere per ripartire (sessione 4)
+
+- `backend/app/scrapers/generic.py` — il motore di scraping generico.
+- `backend/app/services/scrape_ingest.py` — la pipeline di ingestione
+  reale (collect + persist).
+- `backend/app/services/robots_check.py` — enforcement `robots.txt`.
+- `backend/app/api/v1/sources.py` e `app/schemas/sources.py` — CRUD fonti
+  e validazione configurazione.
+- `frontend/src/routes/SourcesPage.tsx` — form di configurazione fonte.
+- `docs/SVILUPPO.md` § 7 — come configurare una fonte generica senza
+  scrivere codice.

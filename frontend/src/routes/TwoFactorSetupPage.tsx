@@ -2,8 +2,15 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import * as authApi from "@/api/auth";
-import { ApiError } from "@/api/client";
 import Icon from "@/components/ui/Icon";
+import { describeError } from "@/lib/errors";
+import { useCountdown } from "@/hooks/useCountdown";
+
+interface FormError {
+  title: string;
+  description: string;
+  retryAfterSeconds?: number;
+}
 
 // Mandatory 2FA enrollment screen: shown whenever an Admin/Operator account
 // hasn't activated TOTP yet (ProtectedRoute redirects here for any other
@@ -22,8 +29,10 @@ export default function TwoFactorSetupPage() {
   const [backupCodes, setBackupCodes] = useState<string[]>([]);
   const [savedCodesAck, setSavedCodesAck] = useState(false);
   const [code, setCode] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<FormError | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const lockoutRemaining = useCountdown(error?.retryAfterSeconds);
+  const isLockedOut = Boolean(lockoutRemaining && lockoutRemaining > 0);
 
   useEffect(() => {
     let cancelled = false;
@@ -35,7 +44,10 @@ export default function TwoFactorSetupPage() {
         setSecret(setup.secret);
         setBackupCodes(setup.backupCodes);
       })
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Unable to start 2FA setup."))
+      .catch((err) => {
+        const { title, description, retryAfterSeconds } = describeError(err);
+        setError({ title, description, retryAfterSeconds });
+      })
       .finally(() => setLoadingSetup(false));
     return () => {
       cancelled = true;
@@ -50,7 +62,8 @@ export default function TwoFactorSetupPage() {
       await completeTwoFactorSetup(code);
       navigate("/dashboard", { replace: true });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Invalid verification code.");
+      const { title, description, retryAfterSeconds } = describeError(err);
+      setError({ title, description, retryAfterSeconds });
     } finally {
       setSubmitting(false);
     }
@@ -69,7 +82,11 @@ export default function TwoFactorSetupPage() {
 
         <div className="p-8 pt-6 flex-1 flex flex-col justify-center gap-5">
           {error && (
-            <div className="px-3 py-2 rounded bg-error-container/40 text-error text-body-md">{error}</div>
+            <div className="px-3 py-2 rounded bg-error-container/40 text-error text-body-md">
+              <p className="font-semibold">{error.title}</p>
+              <p>{error.description}</p>
+              {isLockedOut && <p className="mt-1 font-mono text-mono-data">Retry in {lockoutRemaining}s</p>}
+            </div>
           )}
 
           {loadingSetup ? (
@@ -135,10 +152,10 @@ export default function TwoFactorSetupPage() {
               </div>
               <button
                 type="submit"
-                disabled={submitting || code.length !== 6}
+                disabled={submitting || isLockedOut || code.length !== 6}
                 className="w-full py-2.5 px-4 rounded shadow-sm text-label-sm text-on-primary bg-primary hover:bg-primary-container transition-colors disabled:opacity-60"
               >
-                {submitting ? "Verifying…" : "Activate 2FA"}
+                {isLockedOut ? `Retry in ${lockoutRemaining}s` : submitting ? "Verifying…" : "Activate 2FA"}
               </button>
             </form>
           )}

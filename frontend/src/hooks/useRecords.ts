@@ -39,6 +39,17 @@ export function useRegenerateAiSummary(id: string) {
     mutationFn: () => recordsApi.regenerateRecordAiSummary(id),
     onSuccess: (data) => {
       queryClient.setQueryData(["records", id, "ai-summary"], data);
+      // A regenerate call appends a new version server-side — the version
+      // history list is now stale even though its own query key didn't change.
+      queryClient.invalidateQueries({ queryKey: ["records", id, "ai-summary", "versions"] });
     },
+  });
+}
+
+export function useRecordAiSummaryVersions(id: string) {
+  return useQuery({
+    queryKey: ["records", id, "ai-summary", "versions"],
+    queryFn: () => recordsApi.fetchRecordAiSummaryVersions(id),
+    enabled: Boolean(id),
   });
 }

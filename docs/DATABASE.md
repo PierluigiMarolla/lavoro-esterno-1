@@ -1,11 +1,10 @@
 # Database - Lavoro Esterno
 
-Database PostgreSQL 17, schema gestito con SQLAlchemy 2 (modelli) e
-Alembic (migrazioni, in `backend/migrations/`). Questo documento descrive
-lo schema logico delle tabelle principali: i nomi esatti delle colonne
-possono variare leggermente rispetto all'implementazione finale nei
-modelli SQLAlchemy, ma la struttura relazionale e le motivazioni di design
-descritte qui sono vincolanti.
+Database PostgreSQL 17, schema gestito con SQLAlchemy 2 (modelli in
+`backend/app/models/`) e Alembic (migrazioni in `backend/migrations/
+versions/`). A differenza di una versione precedente di questo documento,
+qui sotto sono elencate le colonne **realmente esistenti nel codice**, non
+uno schema aspirazionale: se una colonna non è elencata, non esiste ancora.
 
 ## 1. Perché il telefono non è una chiave primaria in chiaro
 
@@ -15,147 +14,279 @@ annunci, ma è anche un dato personale sensibile. Per questo:
 - Il valore in chiaro **non viene mai usato come chiave di ricerca/join**
   né salvato senza cifratura.
 - Viene cifrato con **AES-256-GCM** (chiave `PHONE_ENCRYPTION_KEY`, 32
-  byte, da `.env`) prima di essere scritto su disco: solo l'applicazione,
-  in possesso della chiave, può decifrarlo per la visualizzazione
-  autorizzata.
+  byte, da `.env`) prima di essere scritto su disco (`records.
+  phone_encrypted`): solo l'applicazione, in possesso della chiave, può
+  decifrarlo per la visualizzazione autorizzata.
 - Per permettere comunque ricerca esatta e deduplicazione senza decifrare
   ogni riga, viene calcolato in parallelo un **hash HMAC-SHA256** del
-  numero normalizzato (E.164), usando `PHONE_HMAC_SECRET`: questo hash è
-  deterministico (stesso numero -> stesso hash) ma non invertibile, e
-  viene indicizzato per i lookup di deduplicazione e ricerca per telefono.
+  numero normalizzato E.164 (`records.phone_lookup_hash`, `PHONE_HMAC_
+  SECRET`): deterministico (stesso numero → stesso hash) ma non
+  invertibile, indicizzato univocamente per i lookup di deduplicazione e
+  ricerca per telefono.
 - Effetto pratico: un accesso non autorizzato al solo database (senza le
   chiavi applicative) non espone i numeri di telefono in chiaro, mentre
   l'applicazione può comunque deduplicare in modo efficiente tramite
   l'indice sull'hash.
 
-## 2. Tabelle principali
+Vedi `backend/app/services/phone_crypto.py` per l'implementazione.
+
+## 2. Tabelle (schema reale)
 
 ### `users`
-Utenti dell'applicazione (accesso riservato, nessuna registrazione
-pubblica).
-- `id`, `email` (univoco), `password_hash`, `role` (`admin` / `operator`
-  / `viewer`), `is_active`
-- `totp_secret` (cifrato), `totp_enabled`, `backup_codes_hash` (lista di
-  hash dei codici di recupero, ciascuno monouso)
-- `created_at`, `last_login_at`
+- `id` UUID PK
+- `email` String(320), **unique, index**
+- `password_hash` String(255)
+- `role` enum `user_role` (`admin` / `operator` / `viewer`), default `viewer`
+- `totp_secret_encrypted` bytes nullable (cifrato AES-256-GCM, stessa
+  primitiva del telefono), `totp_enabled` bool default `false`
+- `backup_codes_hash` JSONB nullable (lista hash argon2 dei backup code
+  monouso)
+- `is_active` bool default `true`
+- `security_stamp_at` timestamptz, `server_default=now()` — invalida in
+  blocco tutti i JWT emessi prima di questo istante (claim `sst`), usato
+  da logout/cambio password/reset 2FA (vedi `docs/SICUREZZA.md`)
+- `created_at`, `updated_at` (mixin comune)
 
-### `record`
-Entità "canonica" di deduplicazione: rappresenta **un numero di telefono
-univoco** e aggrega tutti gli annunci collegati.
-- `id`
-- `phone_encrypted` (AES-256-GCM), `phone_hmac` (indicizzato, univoco)
-- `phone_country_hint`, `phone_display_masked` (es. `+39 3xx xxx xx89`,
-  per visualizzazione senza decifrare a ogni richiesta)
-- `canonical_advertisement_id` (FK verso `advertisement`, l'annuncio
-  attualmente selezionato come rappresentativo)
-- `first_seen_at`, `last_seen_at`, `advertisement_count`
+### `records`
+Entità "numero di telefono univoco", aggrega N `advertisements`.
+- `id` UUID PK
+- `phone_encrypted` bytes (AES-256-GCM)
+- `phone_lookup_hash` String(64), **unique, index**
+- `canonical_ad_id` UUID nullable, FK → `advertisements.id` (`use_alter`
+  per spezzare il ciclo di dipendenza DDL con `advertisements`, che a sua
+  volta referenzia `records.id`)
+- `created_at`, `updated_at`
 
-### `advertisement`
-Singolo annuncio scrapato da una fonte, prima della deduplicazione.
-- `id`, `record_id` (FK verso `record`, valorizzato dopo la
-  deduplicazione)
-- `source_id` (FK verso `sources`), `external_id` (id/URL nella fonte
-  originale, per idempotenza dello scraping)
-- `raw_title`, `raw_description`, `city`, `age_declared`
-- `normalized_phone_hmac` (ridondante rispetto a `record.phone_hmac`,
-  utile per il matching prima ancora che il record sia creato/collegato)
-- `scraped_at`, `source_published_at`, `is_active` (annuncio ancora
-  presente sulla fonte all'ultimo run)
+### `advertisements`
+Singolo annuncio scrapato da una fonte.
+- `id` UUID PK
+- `record_id` UUID, FK → `records.id` ondelete CASCADE, **index**
+- `source_id` UUID, FK → `sources.id` ondelete RESTRICT, **index**
+- `source_url` Text
+- `title` Text nullable, `description` Text nullable
+- `content_hash` String(64) nullable, **index** (SHA-256 del contenuto
+  normalizzato, per rilevare ripubblicazioni identiche)
+- `first_seen_at`, `last_seen_at` (aggiornato via `onupdate`), `scraped_at`
+- `confidence` Float default `1.0`
+- `status` enum `advertisement_status` (`active` / `removed` / `invalid`)
+- **Nessun campo città/età/external_id**: non esistono nel modello attuale.
+  Se in futuro serve idempotenza per-fonte (evitare di ricreare lo stesso
+  annuncio a ogni scan), andrà aggiunto un campo `external_id` + un
+  vincolo `unique(source_id, external_id)` — non presente oggi.
 
 ### `media`
-Media (immagine/video) associato a un annuncio.
-- `id`, `advertisement_id` (FK), `record_id` (FK, denormalizzato per
-  query dirette)
-- `storage_bucket`, `storage_key` (posizione su MinIO), `media_type`
-  (`image` / `video`), `mime_type`, `file_size_bytes`
-- `thumbnail_storage_key`
-- `classification_status` (`pending` / `classified` / `failed`),
-  `classification_label_current` (es. volto visibile, watermark
-  presente, esplicito/non esplicito - tassonomia da definire in
-  `PROGETTO.md`)
-- `downloaded_at`
+File (immagine/video) associato a un annuncio.
+- `id` UUID PK
+- `advertisement_id` UUID, FK → `advertisements.id` ondelete CASCADE, **index**
+- `original_object_key` Text (chiave oggetto MinIO del file originale)
+- `derived_object_key` Text nullable (thumbnail/versione derivata)
+- `sha256` String(64), **index** (dedup esatto)
+- `perceptual_hash` String(64) nullable, **index** (dedup pHash, TODO in
+  `app/services/dedup.py`)
+- `mime_type` String(100)
+- `classification` enum `media_classification` (`explicit` / `safe` /
+  `unclassified`), default `unclassified`
+- `classification_confidence` Float nullable, `classifier_version` String nullable
+- `created_at`
 
 ### `sources`
-Configurazione delle fonti scrapate (uno o più connettori, vedi
-`docs/SVILUPPO.md` per come aggiungerne uno).
-- `id`, `code` (slug univoco, es. `escort_advisor`, `bakeca_incontri`,
-  `moscarossa`, `megaescort`, `escortforumit`, `escortacom`,
-  `rosa_rossa`, `torino_erotica`, `punterforum`)
-- `display_name`, `base_url`, `is_active`
-- `scrape_schedule_cron` (usato dallo scheduler/Celery Beat)
-- `rate_limit_config` (JSON: richieste/minuto, backoff)
-- `robots_txt_checked_at`, `tos_notes` (riferimento a verifica ToS/robots,
-  vedi `PROGETTO.md`)
+- `id` UUID PK
+- `name` String(200)
+- `slug` String(100), **unique, index** — identificatore tecnico della
+  fonte, libero (nessun connettore Python per-sito da risolvere: l'unico
+  motore di scraping è quello generico configurabile, vedi
+  `app/scrapers/generic.py`)
+- `base_url` Text
+- `priority` enum `source_priority` (`high` / `medium` / `low`), default `medium`
+- `status` enum `source_status` (`healthy` / `degraded` / `offline`), default `healthy`
+- `enabled` bool default `true`
+- `scrape_config` JSONB, nullable — configurazione del motore di scraping
+  generico (`app/scrapers/generic.py`, vedi § "Motore di scraping
+  generico" sotto), unico motore esistente. Nullable: una fonte senza
+  `scrape_config` non può essere scansionata (il run fallisce
+  esplicitamente finché non viene configurata).
+- `created_at`, `updated_at`
 
 ### `scrape_runs`
-Storico dei run di scraping per fonte.
-- `id`, `source_id` (FK), `started_at`, `finished_at`, `status`
-  (`running` / `success` / `partial_failure` / `failed`)
-- `advertisements_found`, `advertisements_new`, `advertisements_updated`
+- `id` UUID PK
+- `source_id` UUID, FK → `sources.id` ondelete CASCADE, **index**
+- `started_at`, `finished_at` nullable
+- `status` enum `scrape_run_status` (`running` / `completed` / `failed`)
+- `items_found`, `items_new`, `errors_count` Integer, default `0`
 
 ### `scrape_errors`
-Errori occorsi durante un run (per debug/osservabilità, collegati a
-Grafana/Loki tramite correlazione sui log).
-- `id`, `scrape_run_id` (FK), `occurred_at`, `error_type`, `message`,
-  `url` (pagina/annuncio che ha causato l'errore)
+- `id` UUID PK
+- `scrape_run_id` UUID, FK → `scrape_runs.id` ondelete CASCADE, **index**
+- `url` Text, `error_message` Text
+- `created_at`, **index** (query di retention, vedi § 4)
 
 ### `canonical_history`
-Traccia ogni cambio di annuncio canonico per un `record`, per
-trasparenza/audit sulla selezione deterministica.
-- `id`, `record_id` (FK), `previous_advertisement_id`,
-  `new_advertisement_id`, `changed_at`, `reason` (es. "nuovo annuncio più
-  recente e più completo", regola applicata dall'algoritmo)
+- `id` UUID PK
+- `record_id` UUID, FK → `records.id` ondelete CASCADE, **index**
+- `previous_advertisement_id` UUID nullable, FK → `advertisements.id` ondelete SET NULL
+- `new_advertisement_id` UUID, FK → `advertisements.id` ondelete CASCADE
+- `reason` Text
+- `overridden_by_user_id` UUID nullable, FK → `users.id` ondelete SET NULL
+  (valorizzato solo per override manuali, non per applicazioni automatiche
+  della regola in `app/services/canonical.py`)
+- `created_at`
 
 ### `media_classification_history`
-Storico delle rivalutazioni di classificazione di un media (utile quando
-il classificatore viene aggiornato/ri-eseguito).
-- `id`, `media_id` (FK), `classified_at`, `model_version`, `labels`
-  (JSON), `confidence_scores` (JSON)
+- `id` UUID PK
+- `media_id` UUID, FK → `media.id` ondelete CASCADE, **index**
+- `previous_classification` enum nullable, `new_classification` enum
+- `confidence` Float nullable
+- `manual_override` bool default `false`
+- `changed_by_user_id` UUID nullable, FK → `users.id` ondelete SET NULL
+- `created_at`
 
 ### `summary_versions`
-Storico dei riepiloghi generati dall'AI per un record (permette di
-tornare a una versione precedente e di tracciare quale modello/prompt li
-ha generati).
-- `id`, `record_id` (FK), `generated_at`, `model_provider`,
-  `model_name`, `prompt_version`, `content` (testo del riepilogo),
-  `is_current` (bool)
+- `id` UUID PK
+- `record_id` UUID, FK → `records.id` ondelete CASCADE, **index**
+- `version` Integer
+- `summary_json` JSONB (`{summary, advertisement_information,
+  forum_information, unverified_claims, sources}`, vedi
+  `app/services/summary_generator.py`)
+- `model_name` String(200)
+- `created_at`
 
 ### `export_jobs`
-Job di esportazione dati richiesti dagli utenti.
-- `id`, `requested_by_user_id` (FK verso `users`), `filter_criteria`
-  (JSON, gli stessi parametri di `/api/v1/search`), `format`
-  (`csv` / `json` / `zip_with_media`)
-- `status` (`pending` / `running` / `completed` / `failed`),
-  `storage_key` (pacchetto risultante su MinIO), `expires_at`
-  (per pulizia automatica via scheduler)
-- `created_at`, `completed_at`
+- `id` UUID PK
+- `record_id` UUID nullable, FK → `records.id` ondelete CASCADE, **index**
+  (nullable: un export può essere bulk, con l'elenco record in
+  `manifest_json["record_ids"]` invece che una singola FK)
+- `type` enum `export_type` (`text_only` / `complete_media` / `safe_complete`)
+- `status` enum `export_status` (`pending` / `processing` / `ready` / `failed`)
+- `progress_percent` Integer default `0`
+- `requested_by_user_id` UUID, FK → `users.id` ondelete RESTRICT, **index**
+- `requested_at`, `completed_at` nullable
+- `manifest_json` JSONB nullable, `object_key` Text nullable, `error_message` Text nullable
+- `expires_at` timestamptz nullable — calcolata a `requested_at +
+  EXPORT_RETENTION_DAYS` da `app/api/v1/exports.py`, usata dal task di
+  retention (§ 4) per rimuovere l'oggetto MinIO scaduto **senza cancellare
+  la riga** (storico esportazioni preservato per audit)
+- **Composito** `(status, requested_at)`, **index**
 
 ### `audit_log`
-Traccia delle azioni sensibili per requisiti di sicurezza/GDPR.
-- `id`, `user_id` (FK, nullable per azioni di sistema), `action` (es.
-  `login`, `login_2fa_failed`, `export_created`, `export_downloaded`,
-  `user_role_changed`, `source_created`)
-- `target_type`, `target_id`, `metadata` (JSON), `ip_address`,
-  `created_at`
+- `id` UUID PK
+- `user_id` UUID nullable, FK → `users.id` ondelete SET NULL, **index**
+  (nullable per azioni di sistema, es. il task di retention stesso)
+- `action` String(200), `entity_type` String(100), `entity_id` String(100) nullable
+- `details_json` JSONB nullable
+- `created_at`, **index** (query di retention, vedi § 4)
 
 ## 3. Relazioni principali (riassunto)
 
 ```
-sources 1───N advertisement N───1 record 1───N media
-                    │                │
-                    │                ├──1 canonical_history (storico)
-                    │                └──1 summary_versions (storico)
+sources 1───N advertisements N───1 records 1───N media (via advertisement)
+                    │                 │
+                    │                 ├──N canonical_history (storico)
+                    │                 └──N summary_versions (storico)
                     │
-                    └──N scrape_runs (via source_id) ──N scrape_errors
+                    └──N scrape_runs ──N scrape_errors
 
 users 1───N export_jobs
 users 1───N audit_log
 media 1───N media_classification_history
 ```
 
-Indici chiave attesi: `record.phone_hmac` (univoco), `advertisement.
-source_id + external_id` (univoco, per idempotenza scraping),
-`advertisement.normalized_phone_hmac`, `media.advertisement_id`,
-`export_jobs.expires_at` (per il job di pulizia periodica). L'elenco
-definitivo/eventuali indici aggiuntivi per query di ricerca sono da
-finalizzare in fase di ottimizzazione (vedi `PROGETTO.md`).
+## 4. Indici
+
+Oltre agli indici mono-colonna su ogni FK e sui campi elencati sopra come
+**index** (creati nella migrazione iniziale
+`20260827120000_initial_schema.py`), la migrazione
+`20260829091500_additional_indexes.py` aggiunge:
+
+- `advertisements(source_id, status)` — filtro "annunci attivi di una
+  fonte", usato dalla selezione canonica e da eventuali viste aggregate.
+- Indice funzionale **GIN full-text** su `advertisements` (`to_tsvector
+  ('simple', title || description)`, `ix_advertisements_fulltext`) — non
+  una colonna, un'espressione: query di ricerca testuale via `@@
+  plainto_tsquery(...)`. Se il volume di ricerche crescesse, valutare una
+  colonna `tsvector` generata/materializzata (più performante, più costosa
+  da mantenere) invece dell'indice funzionale.
+- `media(perceptual_hash)`, `export_jobs(status, requested_at)`,
+  `export_jobs(requested_by_user_id)`, `scrape_errors(created_at)`,
+  `audit_log(created_at)`.
+
+Nessun indice composito su una colonna "città" o simile: `advertisements`
+non ha un campo geografico strutturato oggi (vedi § 2).
+
+## 5. Retention policy
+
+Nessuna scadenza automatica per dato "vivo" (`records`/`advertisements`/
+`media`): la loro retention definitiva resta sospesa a una validazione
+legale/GDPR (vedi `docs/SICUREZZA.md`). Per i dati accessori (log, export
+scaduti), un task periodico Celery Beat applica default configurabili via
+env, non vincolanti:
+
+| Dato | Variabile | Default | Azione |
+|---|---|---|---|
+| `audit_log` | `AUDIT_LOG_RETENTION_DAYS` | 365 giorni | Riga cancellata |
+| `scrape_errors` | `SCRAPE_ERROR_RETENTION_DAYS` | 90 giorni | Riga cancellata |
+| `export_jobs` (pacchetto) | `EXPORT_RETENTION_DAYS` | 7 giorni | Oggetto MinIO rimosso, `object_key` azzerato; riga mantenuta |
+
+Implementato in `backend/app/workers/tasks_maintenance.py`
+(`cleanup_expired_data`), schedulato ogni notte alle 3:00 UTC via
+`celery_app.conf.beat_schedule` (`app/workers/celery_app.py`), eseguito dal
+worker `worker-scraper` (coda aggiuntiva `maintenance`, vedi
+`docker-compose.yml` — nessun servizio Celery dedicato, il volume di
+lavoro non lo giustifica).
+
+Test manuale: `docker compose exec worker-scraper celery -A
+app.workers.celery_app call app.workers.tasks_maintenance.cleanup_expired_data`.
+
+## 6. Backup
+
+Due servizi Docker Compose, locali (stesso host della sorgente — **non**
+un backup off-site/disaster-recovery):
+
+- **`backup-postgres`** (`postgres:17-alpine`): `pg_dump` compresso una
+  volta al giorno su un volume dedicato `postgres-backups`, con rotazione
+  (`BACKUP_RETENTION_DAYS`, default 14 giorni). Script:
+  `infra/backup/backup-postgres.sh`. Ripristino manuale (mai automatico,
+  è un'operazione distruttiva): `infra/backup/restore-postgres.sh
+  <dump.sql.gz>`, eseguito con `docker compose exec backup-postgres`.
+- **`backup-minio`** (`minio/mc`): **replica continua** (`mc mirror
+  --overwrite --remove`, non snapshot datati) del bucket media su un
+  volume dedicato `minio-backups`. `BACKUP_RETENTION_DAYS` non si applica
+  qui (nessuno snapshot da ruotare): la variabile resta letta per
+  coerenza e per un'eventuale futura evoluzione verso snapshot periodici.
+  Script: `infra/backup/backup-minio.sh`. Verificato dal vivo: finché il
+  bucket `lavoro-esterno-media` non esiste (nessun media è mai stato
+  caricato, l'upload reale su MinIO è un TODO aperto in § "Storage /
+  media" di `PROGETTO.md`), lo script logga un avviso e ritenta al ciclo
+  successivo invece di fallire il container — comportamento corretto,
+  nessuna azione richiesta finché quel TODO non è chiuso.
+
+Quando si sceglie l'hosting definitivo, adattare entrambi gli script per
+spedire una copia anche a uno storage remoto S3-compatible (i comandi
+`pg_dump`/`mc mirror` supportano target remoti nello stesso modo).
+
+## 7. Partitioning — valutazione (nessuna implementazione)
+
+`advertisements` e `scrape_errors` sono le tabelle a più alto volume
+atteso nel tempo (una riga per annuncio scrapato/per errore di scraping).
+Oggi il volume reale è **zero** (nessuno scraper attivo, vedi
+`PROGETTO.md` § 4): implementare il partitioning nativo Postgres ora
+sarebbe prematuro e aggiungerebbe complessità (query planner, vincoli
+unique/FK cross-partizione, manutenzione delle partizioni) senza alcun
+beneficio misurabile.
+
+Raccomandazione: rivalutare quando una delle due tabelle supera
+indicativamente **qualche milione di righe** o **decine di GB**, con
+partizionamento a range su `scraped_at` (per `advertisements`) o
+`created_at` (per `scrape_errors`), granularità mensile o trimestrale.
+Nota di costo: convertire una tabella esistente non partizionata in una
+partizionata richiede ricrearla e fare backfill dei dati (Postgres non
+supporta un `ALTER TABLE ... PARTITION BY` in-place) — un motivo in più
+per non partizionare "per sicurezza" oggi, ma per farlo consapevolmente
+quando il volume lo giustifica davvero, pianificando una finestra di
+manutenzione per la migrazione.
+
+## 8. Seed di sviluppo
+
+Nessuno script di seed per `sources`: si crea una fonte via API/UI (`POST
+/sources`, form "Add Source" nella pagina Sources), con o senza
+`scrape_config`. Vedi `app/scripts/create_admin.py` per il bootstrap del
+primo utente Admin (unico script "una tantum" rimasto).

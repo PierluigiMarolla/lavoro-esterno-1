@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 from sqlalchemy import Boolean, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, UUIDPKMixin
@@ -29,3 +30,11 @@ class Source(UUIDPKMixin, TimestampMixin, Base):
     priority: Mapped[str] = mapped_column(SourcePriority, default="medium", nullable=False)
     status: Mapped[str] = mapped_column(SourceStatus, default="healthy", nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Configurazione del motore di scraping generico (vedi
+    # app/scrapers/generic.py:GenericScraper), validata a livello di schema
+    # Pydantic (app/schemas/sources.py:ScrapeConfigInput) prima di essere
+    # salvata qui. Nullable: una fonte registrata come classe Python stub
+    # in app/scrapers/registry.py non ha bisogno di questa configurazione
+    # finché non viene riattivata tramite il motore generico.
+    scrape_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

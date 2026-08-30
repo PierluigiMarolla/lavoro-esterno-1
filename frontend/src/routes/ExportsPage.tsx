@@ -83,10 +83,11 @@ export default function ExportsPage() {
             return (
               <div
                 key={card.type}
+                data-testid={`export-card-${card.type}`}
                 className={
                   isPrimary
-                    ? "bg-white rounded-lg border border-primary p-6 shadow-sm relative overflow-hidden"
-                    : "bg-white rounded-lg border border-border p-6 shadow-[0_1px_2px_rgba(0,0,0,0.02)] relative overflow-hidden"
+                    ? "bg-surface-container-lowest rounded-lg border border-primary p-6 shadow-sm relative overflow-hidden"
+                    : "bg-surface-container-lowest rounded-lg border border-border p-6 shadow-[0_1px_2px_rgba(0,0,0,0.02)] relative overflow-hidden"
                 }
               >
                 <div className="flex items-start justify-between mb-4">
@@ -140,7 +141,7 @@ export default function ExportsPage() {
             <Icon name="refresh" size={20} />
           </button>
         </div>
-        <div className="bg-white border border-border rounded-lg overflow-hidden">
+        <div className="bg-surface-container-lowest border border-border rounded-lg overflow-hidden">
           <Table>
             <THead>
               <Tr className="hover:bg-transparent">
@@ -154,7 +155,7 @@ export default function ExportsPage() {
             </THead>
             <TBody>
               {jobs.isLoading && <LoadingRow colSpan={6} />}
-              {jobs.isError && <ErrorRow colSpan={6} message="Failed to load export jobs." />}
+              {jobs.isError && <ErrorRow colSpan={6} error={jobs.error} onRetry={() => jobs.refetch()} />}
               {jobs.data && jobs.data.length === 0 && <EmptyRow colSpan={6} message="No export jobs yet." />}
               {jobs.data?.map((job) => (
                 <Tr key={job.id}>

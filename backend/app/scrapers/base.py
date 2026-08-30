@@ -27,6 +27,10 @@ class Scraper(ABC):
     stessa fonte. Valore di default prudenziale; ogni connettore concreto può
     sovrascriverlo in base alle policy della fonte specifica."""
 
+    user_agent: str = "LavoroEsternoBot/1.0 (+https://lavoro.internal/bot)"
+    """User-Agent predefinito inviato dalle richieste reali quando una fonte
+    non ne configura uno esplicitamente in `Source.scrape_config`."""
+
     @abstractmethod
     async def discover(self) -> list[str]:
         """Individua gli URL dei singoli annunci da visitare (es. tramite le
@@ -50,3 +54,11 @@ class Scraper(ABC):
         resto della pipeline (campi coerenti con `app.models.advertisement.Advertisement`:
         title, description, source_url, phone, ecc.)."""
         raise NotImplementedError
+
+    async def aclose(self) -> None:
+        """Rilascia eventuali risorse di rete tenute aperte per la durata di
+        un run (client HTTP, browser headless, ...). No-op di default: solo
+        i connettori che tengono risorse persistenti (vedi
+        `app/scrapers/generic.py:GenericScraper`) hanno bisogno di
+        sovrascriverlo."""
+        return None

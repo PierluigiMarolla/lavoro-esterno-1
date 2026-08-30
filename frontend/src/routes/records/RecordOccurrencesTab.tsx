@@ -19,7 +19,7 @@ export default function RecordOccurrencesTab() {
   const occurrences = useRecordOccurrences(id);
 
   return (
-    <div className="bg-white border border-border rounded-lg shadow-sm flex flex-col">
+    <div className="bg-surface-container-lowest border border-border rounded-lg shadow-sm flex flex-col">
       <div className="p-4 border-b border-border flex justify-between items-center bg-surface-container-lowest rounded-t-lg">
         <span className="text-label-sm text-on-surface font-semibold">
           {occurrences.data ? `${occurrences.data.length} Occurrences Found` : "Occurrences"}
@@ -37,7 +37,7 @@ export default function RecordOccurrencesTab() {
         </THead>
         <TBody>
           {occurrences.isLoading && <LoadingRow colSpan={5} />}
-          {occurrences.isError && <ErrorRow colSpan={5} message="Failed to load occurrences." />}
+          {occurrences.isError && <ErrorRow colSpan={5} error={occurrences.error} onRetry={() => occurrences.refetch()} />}
           {occurrences.data && occurrences.data.length === 0 && (
             <EmptyRow colSpan={5} message="No occurrences found for this record." />
           )}

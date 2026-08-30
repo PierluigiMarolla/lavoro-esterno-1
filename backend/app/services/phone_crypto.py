@@ -56,7 +56,11 @@ def normalize_phone(raw: str) -> str:
     if not raw or not raw.strip():
         raise PhoneCryptoError("Numero di telefono vuoto.")
 
-    cleaned = re.sub(r"[\s\-().]", "", raw.strip())
+    value = raw.strip()
+    if value.lower().startswith("tel:"):
+        value = value[4:]
+
+    cleaned = re.sub(r"[\s\-().\u200b\u200c\u200d\ufeff]", "", value)
 
     if cleaned.startswith("00"):
         cleaned = "+" + cleaned[2:]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -103,6 +104,11 @@ async def create_export(
         progress_percent=0,
         requested_by_user_id=user.id,
         manifest_json=manifest,
+        # Il pacchetto (quando esisterà davvero, vedi TODO su _download_url)
+        # viene considerato scaduto EXPORT_RETENTION_DAYS dopo la RICHIESTA,
+        # non dal completamento: un job rimasto "pending"/"failed" a lungo
+        # non deve restare "eterno" solo perché non è mai stato completato.
+        expires_at=datetime.now(UTC) + timedelta(days=settings.EXPORT_RETENTION_DAYS),
     )
     db.add(job)
     await log_action(
@@ -165,6 +171,10 @@ async def retry_export(
     job.progress_percent = 0
     job.error_message = None
     job.completed_at = None
+    # Un retry riparte "da zero": la finestra di retention decorre di nuovo
+    # da ora, altrimenti un job più volte rifiutato potrebbe risultare già
+    # scaduto per il task di pulizia subito dopo essere stato riavviato.
+    job.expires_at = datetime.now(UTC) + timedelta(days=settings.EXPORT_RETENTION_DAYS)
     db.add(job)
     await log_action(
         db, user_id=user.id, action="retry_export", entity_type="export_job", entity_id=str(job_id)
