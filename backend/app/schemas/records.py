@@ -47,7 +47,9 @@ class RecordSearchRequest(BaseModel):
     app/services/phone_crypto.py.
     """
 
-    phone: str = Field(description="Numero di telefono in un formato qualsiasi (verrà normalizzato).")
+    phone: str = Field(
+        description="Numero di telefono in un formato qualsiasi (verrà normalizzato)."
+    )
 
 
 class SummaryPayloadSchema(BaseModel):
@@ -150,6 +152,13 @@ class RecordMediaRead(CamelModel):
     sensitivity: str
     source_name: str
     added_at: datetime
+    classification: str
+    classification_confidence: float | None = None
+    safety_signals: dict = Field(default_factory=dict)
+    review_status: str
+    processing_status: str
+    display_url: str
+    original_url: str
 
 
 class RecordHistoryEventRead(CamelModel):
@@ -188,3 +197,15 @@ class RecordAiSummaryVersionRead(RecordAiSummaryRead):
     routes/records/RecordAiSummaryTab.tsx`)."""
 
     version: int
+
+
+class SummaryGenerationJobRead(CamelModel):
+    id: uuid.UUID
+    record_id: uuid.UUID
+    status: str
+    result_version: int | None = None
+    cache_hit: bool = False
+    error_message: str | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None

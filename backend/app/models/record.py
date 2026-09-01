@@ -34,7 +34,9 @@ class Record(UUIDPKMixin, TimestampMixin, Base):
     __tablename__ = "records"
 
     phone_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
-    phone_lookup_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    phone_lookup_hash: Mapped[str] = mapped_column(
+        String(64), unique=True, index=True, nullable=False
+    )
 
     # FK verso l'annuncio scelto come "canonico" per questo record (vedi
     # app/services/canonical.py per la regola di selezione). Nullable perché un

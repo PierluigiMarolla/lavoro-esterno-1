@@ -334,43 +334,74 @@ priorità. Corretto aggiungendo `priority` allo schema `SourceRead`.
 
 ## 5. AI / classificazione media
 
-- [ ] Sostituire il **placeholder di classificazione media** con un
-      classificatore ONNX reale (oggi non esiste un modello integrato):
-      scegliere/addestrare il modello, definire la tassonomia di
-      classificazione (es. volto visibile, watermark, presenza minori —
-      requisito di sicurezza critico, non solo qualità dati).
-- [ ] Sostituire il **placeholder di generazione riepilogo** con un
-      generatore reale basato su LLM: scegliere il provider (OpenAI,
-      Anthropic, self-hosted) — dipendenza: decisione su costi e policy
-      sui dati inviati a provider terzi (dati personali, vedi sezione 8).
-- [ ] Definire e implementare **gestione costi/rate limit** verso il
-      provider LLM/inference (batching, cache dei riepiloghi già
-      generati, limiti per utente/periodo).
-- [ ] Definire **versioning di modello e prompt** (già previsto nello
-      schema `summary_versions.model_provider/model_name/prompt_
-      version`) e processo di valutazione qualità quando si cambia
-      modello o prompt.
-- [ ] Definire soglie di **confidenza minima** sotto le quali la
-      classificazione media va marcata come "da revisione umana"
-      piuttosto che applicata automaticamente.
+- [x] **Classificazione ONNX reale** con NudeNet 3.4.2/320n, modello
+      caricato in modo lazy nel worker media e versione persistita come
+      `nudenet-3.4.2-320n`. Le immagini sono analizzate direttamente; per
+      i video si aggrega il rischio massimo di cinque frame al
+      10/30/50/70/90%. I segnali salvati includono punteggio esplicito,
+      volto, watermark e `possibleMinorReview`. Quest'ultimo è solo un
+      escalation flag quando coesistono contenuto esplicito e volto: non
+      viene mai stimata automaticamente l'età.
+- [x] **Soglie e revisione umana prudenziale**: `explicit >= 0.65`,
+      `safe < 0.20`, fascia intermedia/errori `unclassified`; contenuti
+      non classificati o con escalation restano sensibili. Admin e
+      Operator possono effettuare override motivato tramite
+      `POST /media/{id}/review`; autore, note, history e audit sono
+      persistiti. È disponibile anche `POST /media/{id}/reprocess`.
+- [x] **Riepiloghi OpenAI asincroni** tramite Responses API, Structured
+      Outputs, `store=false` e modello configurabile (default
+      `gpt-5.6-luna`). Il POST di rigenerazione restituisce un job 202 e la
+      UI ne segue `pending/processing/completed/failed` via polling. Non
+      esiste fallback silenzioso al vecchio template o ad altri modelli.
+- [x] **Minimizzazione e gestione costi**: telefoni e URL vengono redatti
+      anche dai campi testuali; immagini e URL sorgente non sono inviati
+      al provider e i riferimenti interni vengono rimappati localmente.
+      Redis applica limite giornaliero utente, budget token globale e
+      requests/minute con prenotazione e riconciliazione. Chiave assente o
+      qualunque limite a zero mantiene l'AI disabilitata.
+- [x] **Cache/versioning/evaluation**: `summary-v1`, provider, modello,
+      hash deterministico, token input/output/cache e job sono salvati in
+      `summary_versions`; un vincolo univoco evita versioni duplicate e
+      abilita cache hit senza chiamata. Dataset sintetico/redatto e test
+      verificano schema, riferimenti interni, minimizzazione e stabilità.
+
+Verifica locale: inferenza NudeNet reale su immagine innocua, client OpenAI
+simulato e suite automatica completati. Il test live OpenAI resta volutamente
+opt-in: richiede una API key e budget non nulli e non è stato eseguito con
+credenziali fittizie.
 
 ## 6. Storage / media
 
-- [ ] Implementare la **rimozione filigrane (watermark)** nei casi
-      autorizzati — dipendenza: chiarire esattamente in quali casi è
-      legalmente/contrattualmente autorizzato farlo, non è solo una
-      questione tecnica.
-- [ ] Implementare la **pipeline FFmpeg per preview video** (estrazione
-      frame di anteprima, eventuale transcodifica per compatibilità
-      browser, generazione thumbnail).
-- [ ] Definire policy di **dimensione massima/validazione file** in
-      upload/download media (oggi solo `client_max_body_size` lato nginx
-      come limite generico).
-- [ ] Configurare **lifecycle policy MinIO** (es. classi di storage,
-      pulizia automatica media orfani non più collegati a nessun
-      annuncio attivo).
-- [ ] Valutare **CDN/cache** per la distribuzione dei media se il volume
-      di traffico lo giustifica.
+- [x] **Watermark autorizzato per fonte**, disabilitato per default. Solo
+      Admin può abilitarlo fornendo riferimento autorizzativo e almeno
+      una regione normalizzata valida. OpenCV inpaint elabora immagini e
+      FFmpeg `delogo` i video; l'originale è immutabile e l'operazione è
+      registrata nell'audit.
+- [x] **Pipeline FFmpeg reale** nel worker media: output MP4 H.264/AAC,
+      `yuv420p`, faststart, CRF 23, massimo 1280x720; thumbnail JPEG max
+      640 px e cinque frame per classificazione. Comandi senza shell
+      interpolation, timeout e directory temporanee isolate.
+- [x] **Download/validazione controllati**: solo HTTP(S), redirect
+      rivalidati, blocco SSRF verso IP privati/reserved, streaming con
+      limite e controllo Content-Length/risposta troncata. Allowlist MIME
+      e magic bytes, Pillow/ffprobe; immagini max 15 MB/40 MP e video max
+      100 MB/300 secondi.
+- [x] **Originali e varianti separate** in MinIO con stato/errori di
+      processing e metadati nel DB. Le API restituiscono URL presigned a
+      breve durata tramite `MINIO_PUBLIC_ENDPOINT`; i task partono solo
+      dopo commit e sono idempotenti/ritentabili.
+- [x] **Lifecycle e orfani**: configurazione giornaliera MinIO per
+      multipart incompleti/temporanei dopo un giorno e pulizia notturna
+      DB-aware dei soli oggetti non referenziati da oltre 24 ore. Nessuna
+      scadenza viene applicata a media ancora collegati.
+- [x] **CDN valutata e rinviata**: rivalutare quando egress supera
+      100 GB/mese oppure p95 di caricamento media supera 500 ms per due
+      settimane consecutive.
+
+La pipeline FFmpeg è verificata localmente su video sintetico con controllo
+di codec/risoluzione, thumbnail, cinque frame e originali invariati. La
+verifica dell'intero stack Docker resta dipendente dall'accesso al daemon
+Docker dell'host.
 
 ## 7. Export
 
@@ -482,8 +513,8 @@ priorità. Corretto aggiungendo `priority` allo schema `SourceRead`.
   build-time, non a runtime), puntato al reverse proxy pubblico e non alla
   porta interna 8000 dell'api.
 - Aggiunto `.gitignore` root mancante.
-- `.github/workflows/ci.yml` corretto: nessun `uv.lock` è ancora committato
-  (rimosso `--frozen`), env var di test allineate, rimosso lo step di build
+- `.github/workflows/ci.yml` corretto; `uv.lock` è ora generato e va usato
+  per installazioni backend riproducibili. Env var di test allineate, rimosso lo step di build
   Docker per `nginx` (nel compose usa l'immagine ufficiale con config
   montata, non un Dockerfile dedicato).
 - Contratto API backend↔frontend riconciliato con un passaggio dedicato

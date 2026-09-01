@@ -76,7 +76,8 @@ revoca/blacklist dei refresh token, ancora da implementare.
 | GET | `/api/v1/records/{record_id}/history` | Storico unificato: unione di `canonical_history`, `media_classification_history` e `audit_log` filtrati per il record, ordinati per data. |
 | GET | `/api/v1/records/{record_id}/ai-summary` | Ultima versione del riepilogo AI (`summary_versions`); risponde `204` se non è mai stato generato. |
 | GET | `/api/v1/records/{record_id}/ai-summary/versions` | Storico COMPLETO delle versioni (non solo l'ultima), più recente prima — per il selettore storico in `RecordAiSummaryTab.tsx`. |
-| POST | `/api/v1/records/{record_id}/ai-summary/regenerate` | Rigenera il riepilogo AI tramite `app/services/summary_generator.py` (placeholder, nessun LLM reale) e salva una nuova `SummaryVersion`. Riservato ad Admin/Operator. |
+| POST | `/api/v1/records/{record_id}/ai-summary/regenerate` | Crea un job persistente e risponde `202` con `SummaryGenerationJobRead`; il worker usa OpenAI Responses/Structured Outputs. Riservato ad Admin/Operator. |
+| GET | `/api/v1/records/{record_id}/ai-summary/jobs/{job_id}` | Stato asincrono `pending`, `processing`, `completed` o `failed`, versione risultante, cache hit ed errore sicuro. |
 
 ## Area `sources` - gestione fonti scrapate
 
@@ -85,8 +86,8 @@ revoca/blacklist dei refresh token, ancora da implementare.
 | GET | `/api/v1/sources` | Elenco delle fonti configurate: `code` (slug), `status`, `priority`, `lastRunAt`, `itemsLast24h`, `errorRate`, `consecutiveFailures`, `hasScrapeConfig` calcolati/letti da `scrape_runs`/`Source` (query N+1 accettata per il numero di fonti atteso, vedi commento in `app/api/v1/sources.py`); `country` è un placeholder fisso (`"N/D"`), nessuna colonna dedicata nel modello. |
 | GET | `/api/v1/sources/summary` | Conteggio fonti per stato (`total`/`active`/`degraded`/`offline`). |
 | GET | `/api/v1/sources/{source_id}` | Dettaglio di una fonte, incluso `scrapeConfig` completo (assente da `GET /sources`, che espone solo il booleano `hasScrapeConfig`) — usato per precompilare il form "Edit configuration". |
-| POST | `/api/v1/sources` | Crea una nuova fonte (solo Admin). `scrapeConfig` opzionale: se presente, la fonte è immediatamente scrapabile dal motore generico (`app/scrapers/generic.py`). Vedi § "Motore di scraping generico" sotto per la struttura di `scrapeConfig`. |
-| PATCH | `/api/v1/sources/{source_id}` | Modifica `name`/`baseUrl`/`priority`/`scrapeConfig` di una fonte esistente (solo Admin). Non permette di cambiare `slug`. |
+| POST | `/api/v1/sources` | Crea una fonte (solo Admin). Accetta `scrapeConfig` e `watermarkRemoval`; quest'ultimo richiede riferimento autorizzativo e almeno una regione normalizzata se abilitato. |
+| PATCH | `/api/v1/sources/{source_id}` | Modifica `name`/`baseUrl`/`priority`/`scrapeConfig`/`watermarkRemoval` (solo Admin). Non permette di cambiare `slug`. |
 | DELETE | `/api/v1/sources/{source_id}` | Rimuove una fonte (solo Admin). 409 se esistono `advertisement` collegati (storico preservato). |
 | POST | `/api/v1/sources/{source_id}/check-robots` | Verifica live il `robots.txt` pubblico della fonte usando lo stesso User-Agent configurato per lo scan — nessun altro contenuto scaricato. Nessuna restrizione di ruolo oltre l'autenticazione. |
 | POST | `/api/v1/sources/{source_id}/test-config` | Prova `scrapeConfig` su UN solo annuncio reale (non salvato su DB): utile per verificare i selettori prima di un run reale. Richiede Admin/Operator (esegue richieste HTTP reali verso la fonte). |
@@ -148,10 +149,15 @@ configurazione, ogni tentativo di scan fallisce esplicitamente.
 
 | Metodo | Path | Scopo |
 |---|---|---|
-| GET | `/api/v1/media/{media_id}` | Metadati di un media (tipo, dimensioni, stato classificazione). |
-| GET | `/api/v1/media/{media_id}/download` | URL firmato/temporaneo (o proxy) per scaricare il media originale da MinIO. |
-| GET | `/api/v1/media/{media_id}/thumbnail` | Anteprima/thumbnail generata. |
-| POST | `/api/v1/media/{media_id}/reclassify` | Forza una nuova classificazione del media (accoda un task sulla coda `media`), storicizzata in `media_classification_history`. |
+| GET | `/api/v1/media/{media_id}` | Metadati, segnali safety, processing/review state e URL presigned original/display/thumbnail. |
+| GET | `/api/v1/media/by-advertisement/{advertisement_id}` | Elenco media di un annuncio con lo stesso contratto esteso. |
+| POST | `/api/v1/media/{media_id}/review` | Override manuale `safe`/`explicit` con note, history e audit. Solo Admin/Operator. |
+| POST | `/api/v1/media/{media_id}/reprocess` | Reimposta un media fallito/pregresso e accoda la pipeline media; risposta `202`. Solo Admin/Operator. |
+
+Gli URL MinIO sono firmati per pochi minuti e costruiti usando
+`MINIO_PUBLIC_ENDPOINT`; non vengono più esposte chiavi oggetto o URL
+placeholder. Media `unclassified`, falliti o con `reviewStatus=required`
+devono essere presentati dalla UI come sensibili.
 
 ## Area `exports` - esportazione dati
 

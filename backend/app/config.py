@@ -54,6 +54,30 @@ class Settings(BaseSettings):
     MINIO_SECURE: bool = Field(
         default=False, description="Usa TLS per la connessione a MinIO (True in produzione)."
     )
+    MINIO_PUBLIC_ENDPOINT: str | None = Field(
+        default=None,
+        description="Endpoint MinIO raggiungibile dal browser per gli URL presigned.",
+    )
+    MINIO_PRESIGNED_TTL_MINUTES: int = Field(default=15, ge=1, le=60)
+
+    # --- Media -----------------------------------------------------------
+    MEDIA_IMAGE_MAX_BYTES: int = Field(default=15 * 1024 * 1024, ge=1)
+    MEDIA_VIDEO_MAX_BYTES: int = Field(default=100 * 1024 * 1024, ge=1)
+    MEDIA_IMAGE_MAX_PIXELS: int = Field(default=40_000_000, ge=1)
+    MEDIA_VIDEO_MAX_SECONDS: int = Field(default=300, ge=1)
+    MEDIA_ORPHAN_GRACE_HOURS: int = Field(default=24, ge=1)
+    MEDIA_EXPLICIT_THRESHOLD: float = Field(default=0.65, ge=0, le=1)
+    MEDIA_SAFE_THRESHOLD: float = Field(default=0.20, ge=0, le=1)
+
+    # --- Riepiloghi OpenAI ----------------------------------------------
+    OPENAI_API_KEY: str | None = Field(default=None, description="API key OpenAI server-side.")
+    OPENAI_MODEL: str = Field(default="gpt-5.6-luna")
+    OPENAI_PROMPT_VERSION: str = Field(default="summary-v1")
+    OPENAI_TIMEOUT_SECONDS: float = Field(default=60.0, gt=0, le=300)
+    AI_USER_DAILY_REQUEST_LIMIT: int = Field(default=0, ge=0)
+    AI_GLOBAL_DAILY_TOKEN_BUDGET: int = Field(default=0, ge=0)
+    AI_PROVIDER_REQUESTS_PER_MINUTE: int = Field(default=0, ge=0)
+    AI_MAX_INPUT_CHARS: int = Field(default=100_000, ge=1)
 
     # --- JWT (autenticazione) -------------------------------------------
     JWT_SECRET_KEY: str = Field(
@@ -113,7 +137,8 @@ class Settings(BaseSettings):
         default=365, description="Giorni di conservazione di audit_log prima della cancellazione."
     )
     SCRAPE_ERROR_RETENTION_DAYS: int = Field(
-        default=90, description="Giorni di conservazione di scrape_errors prima della cancellazione."
+        default=90,
+        description="Giorni di conservazione di scrape_errors prima della cancellazione.",
     )
     EXPORT_RETENTION_DAYS: int = Field(
         default=7,
@@ -126,13 +151,16 @@ class Settings(BaseSettings):
     # --- CORS -------------------------------------------------------------
     CORS_ORIGIN: str = Field(
         default="http://localhost:5173",
-        description="Origin consentita per le richieste CORS del frontend (lista separata da virgole).",
+        description=(
+            "Origin consentita per le richieste CORS del frontend (lista separata da virgole)."
+        ),
     )
 
     # --- Applicazione -------------------------------------------------------
     APP_NAME: str = Field(default="Lavoro Esterno API", description="Nome applicazione.")
     ENVIRONMENT: str = Field(
-        default="development", description="Ambiente di esecuzione (development/staging/production)."
+        default="development",
+        description="Ambiente di esecuzione (development/staging/production).",
     )
 
     @property

@@ -27,8 +27,10 @@ Il fetch delle pagine usa Scrapling:
 from __future__ import annotations
 
 import asyncio
+import ipaddress
+import socket
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -226,7 +228,7 @@ class GenericScraper(Scraper):
         return values[0] if values else None
 
     async def download_media(self, ad: dict[str, Any]) -> list[bytes]:
-        image_urls = ad.get("images") or []
+        image_urls = [*(ad.get("images") or []), *(ad.get("videos") or [])]
         results: list[bytes] = []
         for image_url in image_urls:
             try:
@@ -238,11 +240,69 @@ class GenericScraper(Scraper):
                     raise RobotsDisallowedError(absolute_url)
 
                 await asyncio.sleep(self.rate_limit_seconds)
-                response = await self._fetch_page_http(absolute_url)
-                results.append(response.body)
+                results.append(await self._download_media_stream(absolute_url))
             except (RobotsDisallowedError, PageFetchError, Exception):  # noqa: BLE001
                 continue
         return results
+
+    @staticmethod
+    async def _assert_public_url(url: str) -> None:
+        from app.config import settings
+
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise PageFetchError("URL media non HTTP(S).")
+        loop = asyncio.get_running_loop()
+        try:
+            addresses = await loop.run_in_executor(
+                None, lambda: socket.getaddrinfo(parsed.hostname, parsed.port or 443)
+            )
+        except socket.gaierror as exc:
+            raise PageFetchError("Host media non risolvibile.") from exc
+        for address in addresses:
+            ip = ipaddress.ip_address(address[4][0])
+            if not ip.is_global and settings.ENVIRONMENT != "test":
+                raise PageFetchError("URL media verso rete privata o riservata bloccato.")
+
+    async def _download_media_stream(self, url: str) -> bytes:
+        """Bounded streaming download with DNS/redirect SSRF checks."""
+        from app.config import settings
+        from app.services.media_storage import sniff_mime_type
+
+        current = url
+        limit = settings.MEDIA_VIDEO_MAX_BYTES
+        async with httpx.AsyncClient(
+            follow_redirects=False, timeout=_REQUEST_TIMEOUT_SECONDS
+        ) as client:
+            for _ in range(6):
+                await self._assert_public_url(current)
+                async with client.stream(
+                    "GET",
+                    current,
+                    headers={"User-Agent": self.user_agent, "Accept-Encoding": "identity"},
+                ) as response:
+                    if response.is_redirect:
+                        location = response.headers.get("location")
+                        if not location:
+                            raise PageFetchError("Redirect media senza Location.")
+                        current = urljoin(current, location)
+                        continue
+                    response.raise_for_status()
+                    declared = int(response.headers.get("content-length") or 0)
+                    if declared > limit:
+                        raise PageFetchError("Media oltre il limite massimo.")
+                    body = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        body.extend(chunk)
+                        if len(body) >= 12:
+                            if sniff_mime_type(body).startswith("image/"):
+                                limit = settings.MEDIA_IMAGE_MAX_BYTES
+                        if len(body) > limit:
+                            raise PageFetchError("Media oltre il limite massimo.")
+                    if declared and len(body) != declared:
+                        raise PageFetchError("Risposta media troncata rispetto a Content-Length.")
+                    return bytes(body)
+        raise PageFetchError("Troppi redirect durante il download media.")
 
     def normalize(self, data: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -251,6 +311,7 @@ class GenericScraper(Scraper):
             "phone_raw": data.get("phone"),
             "source_url": data.get("source_url"),
             "images": data.get("images") or [],
+            "videos": data.get("videos") or [],
         }
 
     async def aclose(self) -> None:

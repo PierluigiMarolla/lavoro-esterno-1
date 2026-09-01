@@ -31,6 +31,37 @@ class ScrapeFieldConfig(CamelModel):
     multiple: bool = False
 
 
+class WatermarkRegion(CamelModel):
+    """Rectangle expressed as normalized 0..1 coordinates."""
+
+    x: float = Field(ge=0, lt=1)
+    y: float = Field(ge=0, lt=1)
+    width: float = Field(gt=0, le=1)
+    height: float = Field(gt=0, le=1)
+
+    @model_validator(mode="after")
+    def contained_in_frame(self):
+        if self.x + self.width > 1 or self.y + self.height > 1:
+            raise ValueError("La regione watermark deve essere contenuta nel frame.")
+        return self
+
+
+class WatermarkRemovalConfig(CamelModel):
+    enabled: bool = False
+    authorization_reference: str | None = Field(default=None, max_length=2000)
+    regions: list[WatermarkRegion] = Field(default_factory=list, max_length=10)
+
+    @model_validator(mode="after")
+    def require_authorization(self):
+        if self.enabled and (
+            not self.authorization_reference or not self.authorization_reference.strip()
+        ):
+            raise ValueError("authorizationReference e obbligatorio per rimuovere watermark.")
+        if self.enabled and not self.regions:
+            raise ValueError("Almeno una regione e obbligatoria per rimuovere watermark.")
+        return self
+
+
 class ScrapeConfigInput(CamelModel):
     """Configurazione del motore di scraping generico per una fonte
     (`Source.scrape_config`). Validata qui prima di essere salvata: il
@@ -138,6 +169,7 @@ class SourceCreate(CamelModel):
     base_url: str
     priority: str = "medium"
     scrape_config: ScrapeConfigInput | None = None
+    watermark_removal: WatermarkRemovalConfig = Field(default_factory=WatermarkRemovalConfig)
 
     @field_validator("base_url")
     @classmethod
@@ -154,6 +186,7 @@ class SourceUpdate(CamelModel):
     base_url: str | None = None
     priority: str | None = None
     scrape_config: ScrapeConfigInput | None = None
+    watermark_removal: WatermarkRemovalConfig | None = None
 
     @field_validator("base_url")
     @classmethod
@@ -218,6 +251,7 @@ class SourceDetailRead(SourceRead):
     la tabella)."""
 
     scrape_config: ScrapeConfigInput | None = None
+    watermark_removal: WatermarkRemovalConfig = Field(default_factory=WatermarkRemovalConfig)
 
 
 class ScanTriggerResponse(BaseModel):

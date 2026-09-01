@@ -1,5 +1,5 @@
 import { apiRequest } from "./client";
-import type { RobotsCheckResult, ScrapeConfig, ScrapeRun, Source, SourcePriority, TestConfigResult } from "@/types";
+import type { RobotsCheckResult, ScrapeConfig, ScrapeRun, Source, SourcePriority, TestConfigResult, WatermarkRemovalConfig } from "@/types";
 
 export interface SourcesSummary {
   total: number;
@@ -10,6 +10,7 @@ export interface SourcesSummary {
 
 export interface SourceDetail extends Source {
   scrapeConfig: ScrapeConfig | null;
+  watermarkRemoval: WatermarkRemovalConfig;
 }
 
 export interface CreateSourceInput {
@@ -18,6 +19,7 @@ export interface CreateSourceInput {
   baseUrl: string;
   priority: SourcePriority;
   scrapeConfig?: ScrapeConfig | null;
+  watermarkRemoval?: WatermarkRemovalConfig;
 }
 
 export interface UpdateSourceInput {
@@ -25,6 +27,7 @@ export interface UpdateSourceInput {
   baseUrl?: string;
   priority?: SourcePriority;
   scrapeConfig?: ScrapeConfig | null;
+  watermarkRemoval?: WatermarkRemovalConfig;
 }
 
 export function fetchSources(): Promise<Source[]> {

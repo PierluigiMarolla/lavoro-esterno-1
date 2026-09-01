@@ -8,6 +8,7 @@ import type {
   RecordOverview,
   RecordSearchFilters,
   RecordSearchResponse,
+  SummaryGenerationJob,
 } from "@/types";
 
 function toQueryString(filters: RecordSearchFilters): string {
@@ -54,6 +55,18 @@ export function fetchRecordAiSummaryVersions(id: string): Promise<RecordAiSummar
 
 // Triggers a fresh AI summary generation job; the summary query should be
 // invalidated/refetched by the caller once this resolves.
-export function regenerateRecordAiSummary(id: string): Promise<RecordAiSummary> {
-  return apiRequest<RecordAiSummary>(`/records/${id}/ai-summary/regenerate`, { method: "POST" });
+export function regenerateRecordAiSummary(id: string): Promise<SummaryGenerationJob> {
+  return apiRequest<SummaryGenerationJob>(`/records/${id}/ai-summary/regenerate`, { method: "POST" });
+}
+
+export function fetchSummaryGenerationJob(id: string, jobId: string): Promise<SummaryGenerationJob> {
+  return apiRequest<SummaryGenerationJob>(`/records/${id}/ai-summary/jobs/${jobId}`);
+}
+
+export function reviewMedia(mediaId: string, classification: "safe" | "explicit", notes: string): Promise<unknown> {
+  return apiRequest(`/media/${mediaId}/review`, { method: "POST", body: { classification, notes } });
+}
+
+export function reprocessMedia(mediaId: string): Promise<unknown> {
+  return apiRequest(`/media/${mediaId}/reprocess`, { method: "POST" });
 }

@@ -1,6 +1,7 @@
 import { useParams } from "react-router-dom";
 import { useState } from "react";
-import { useRecordMedia } from "@/hooks/useRecords";
+import { useRecordMedia, useReprocessMedia, useReviewMedia } from "@/hooks/useRecords";
+import { useAuth } from "@/context/AuthContext";
 import Icon from "@/components/ui/Icon";
 import ErrorState from "@/components/ui/ErrorState";
 import type { RecordMedia } from "@/types";
@@ -16,6 +17,10 @@ function formatDate(iso: string): string {
 export default function RecordMediaTab() {
   const { id = "" } = useParams();
   const media = useRecordMedia(id);
+  const review = useReviewMedia(id);
+  const reprocess = useReprocessMedia(id);
+  const { user } = useAuth();
+  const canReview = user?.role === "admin" || user?.role === "operator";
 
   // Per-item, component-local reveal state (not persisted, not global). The
   // API already returns the media regardless of sensitivity — the blur is a
@@ -49,7 +54,18 @@ export default function RecordMediaTab() {
       <h3 className="text-headline-sm text-on-surface mb-4">Media Assets ({media.data.length})</h3>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {media.data.map((item) => (
-          <MediaCard key={item.id} item={item} isRevealed={revealed.has(item.id)} onReveal={() => reveal(item.id)} />
+          <MediaCard
+            key={item.id}
+            item={item}
+            isRevealed={revealed.has(item.id)}
+            onReveal={() => reveal(item.id)}
+            canReview={canReview}
+            onReview={(classification) => {
+              const notes = window.prompt("Review notes (required):");
+              if (notes?.trim()) review.mutate({ mediaId: item.id, classification, notes: notes.trim() });
+            }}
+            onReprocess={() => reprocess.mutate(item.id)}
+          />
         ))}
       </div>
     </div>
@@ -60,10 +76,16 @@ function MediaCard({
   item,
   isRevealed,
   onReveal,
+  canReview,
+  onReview,
+  onReprocess,
 }: {
   item: RecordMedia;
   isRevealed: boolean;
   onReveal: () => void;
+  canReview: boolean;
+  onReview: (classification: "safe" | "explicit") => void;
+  onReprocess: () => void;
 }) {
   const isBlurred = item.sensitivity === "explicit" && !isRevealed;
 
@@ -105,6 +127,11 @@ function MediaCard({
             >
               {item.sensitivity === "explicit" ? "Explicit" : "Safe"}
             </span>
+            {item.reviewStatus === "required" && (
+              <span className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-label-sm bg-warning/10 text-warning border border-warning/20">
+                Needs review
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2 text-label-sm text-on-surface-variant mb-4">
             <Icon name="language" size={14} />
@@ -123,6 +150,15 @@ function MediaCard({
             <Icon name="open_in_new" size={16} />
             View
           </a>
+          {canReview && item.reviewStatus === "required" && (
+            <div className="flex gap-2">
+              <button type="button" onClick={() => onReview("safe")} className="text-label-sm text-success">Mark safe</button>
+              <button type="button" onClick={() => onReview("explicit")} className="text-label-sm text-error">Mark explicit</button>
+            </div>
+          )}
+          {canReview && item.processingStatus === "failed" && (
+            <button type="button" onClick={onReprocess} className="text-label-sm text-primary">Reprocess</button>
+          )}
         </div>
       </div>
     </div>

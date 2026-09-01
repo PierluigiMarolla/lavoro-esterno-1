@@ -30,6 +30,8 @@ dependencies = [
     "scrapling[fetchers]>=0.4.15",
     "cryptography>=43.0.1",
     "email-validator>=2.2.0",
+    "openai>=2.0.0",
+    "nudenet==3.4.2",
 ]
 
 [dependency-groups]

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -93,13 +93,17 @@ async def _compute_source_read(db: AsyncSession, source: Source, since: datetime
     error_rate = (errors_last_24h / denominator) if denominator > 0 else 0.0
 
     last_statuses = (
-        await db.execute(
-            select(ScrapeRun.status)
-            .where(ScrapeRun.source_id == source.id)
-            .order_by(ScrapeRun.started_at.desc())
-            .limit(_CONSECUTIVE_FAILURES_LOOKBACK)
+        (
+            await db.execute(
+                select(ScrapeRun.status)
+                .where(ScrapeRun.source_id == source.id)
+                .order_by(ScrapeRun.started_at.desc())
+                .limit(_CONSECUTIVE_FAILURES_LOOKBACK)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     consecutive_failures = 0
     for run_status in last_statuses:
         if run_status != "failed":
@@ -127,7 +131,7 @@ async def list_sources(
 ) -> list[SourceRead]:
     """Elenco fonti nella forma attesa dal frontend (`Source` type)."""
     sources = (await db.execute(select(Source).order_by(Source.name))).scalars().all()
-    since = datetime.now(timezone.utc) - timedelta(hours=24)
+    since = datetime.now(UTC) - timedelta(hours=24)
     return [await _compute_source_read(db, source, since) for source in sources]
 
 
@@ -165,7 +169,8 @@ async def create_source(
     ).scalar_one_or_none()
     if existing is not None:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=f"Una fonte con slug '{payload.slug}' esiste già."
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Una fonte con slug '{payload.slug}' esiste già.",
         )
 
     source = Source(
@@ -176,10 +181,17 @@ async def create_source(
         status="healthy",
         enabled=True,
         scrape_config=payload.scrape_config.model_dump() if payload.scrape_config else None,
+        watermark_removal_enabled=payload.watermark_removal.enabled,
+        watermark_authorization_reference=payload.watermark_removal.authorization_reference,
+        watermark_regions=[region.model_dump() for region in payload.watermark_removal.regions],
     )
     db.add(source)
     await log_action(
-        db, user_id=user.id, action="create_source", entity_type="source", details={"slug": payload.slug}
+        db,
+        user_id=user.id,
+        action="create_source",
+        entity_type="source",
+        details={"slug": payload.slug},
     )
     await db.commit()
     await db.refresh(source)
@@ -223,9 +235,17 @@ async def get_source(
     precompilare il form "Edit configuration" in UI (`GET /sources`, la
     lista, espone solo `hasScrapeConfig`, un booleano)."""
     source = await _get_source_or_404(db, source_id)
-    since = datetime.now(timezone.utc) - timedelta(hours=24)
+    since = datetime.now(UTC) - timedelta(hours=24)
     base = await _compute_source_read(db, source, since)
-    return SourceDetailRead(**base.model_dump(by_alias=False), scrape_config=source.scrape_config)
+    return SourceDetailRead(
+        **base.model_dump(by_alias=False),
+        scrape_config=source.scrape_config,
+        watermark_removal={
+            "enabled": source.watermark_removal_enabled,
+            "authorization_reference": source.watermark_authorization_reference,
+            "regions": source.watermark_regions or [],
+        },
+    )
 
 
 @router.patch("/{source_id}", response_model=SourceRead)
@@ -241,14 +261,29 @@ async def update_source(
     (`app/scrapers/registry.py`) o, se configurata, al motore generico."""
     source = await _get_source_or_404(db, source_id)
 
-    updates = payload.model_dump(exclude_unset=True, exclude={"scrape_config"})
+    updates = payload.model_dump(exclude_unset=True, exclude={"scrape_config", "watermark_removal"})
     for field_name, value in updates.items():
         setattr(source, field_name, value)
     if "scrape_config" in payload.model_fields_set:
         source.scrape_config = payload.scrape_config.model_dump() if payload.scrape_config else None
+    if "watermark_removal" in payload.model_fields_set and payload.watermark_removal is not None:
+        wm = payload.watermark_removal
+        source.watermark_removal_enabled = wm.enabled
+        source.watermark_authorization_reference = wm.authorization_reference
+        source.watermark_regions = [region.model_dump() for region in wm.regions]
 
     db.add(source)
-    await log_action(db, user_id=user.id, action="update_source", entity_type="source", entity_id=str(source_id))
+    await log_action(
+        db,
+        user_id=user.id,
+        action="update_source",
+        entity_type="source",
+        entity_id=str(source_id),
+        details={
+            "watermark_removal_enabled": source.watermark_removal_enabled,
+            "watermark_authorization_reference": source.watermark_authorization_reference,
+        },
+    )
     await db.commit()
     await db.refresh(source)
 
@@ -267,7 +302,9 @@ async def delete_source(
     source = await _get_source_or_404(db, source_id)
 
     has_ads = (
-        await db.execute(select(Advertisement.id).where(Advertisement.source_id == source_id).limit(1))
+        await db.execute(
+            select(Advertisement.id).where(Advertisement.source_id == source_id).limit(1)
+        )
     ).scalar_one_or_none()
     if has_ads is not None:
         raise HTTPException(
@@ -275,7 +312,9 @@ async def delete_source(
             detail="Impossibile eliminare: esistono annunci collegati a questa fonte.",
         )
 
-    await log_action(db, user_id=user.id, action="delete_source", entity_type="source", entity_id=str(source_id))
+    await log_action(
+        db, user_id=user.id, action="delete_source", entity_type="source", entity_id=str(source_id)
+    )
     await db.delete(source)
     await db.commit()
 
@@ -435,7 +474,9 @@ async def check_source_robots(
 
     result = await check_robots(source.base_url, user_agent=_source_user_agent(source))
     return RobotsCheckRead(
-        allowed=result.allowed, robots_txt_found=result.robots_txt_found, checked_url=result.checked_url
+        allowed=result.allowed,
+        robots_txt_found=result.robots_txt_found,
+        checked_url=result.checked_url,
     )
 
 
@@ -464,13 +505,19 @@ async def test_source_config(
 
     from app.scrapers.generic import GenericScraper, RobotsDisallowedError
 
-    scraper = GenericScraper(slug=source.slug, base_url=source.base_url, config=source.scrape_config)
+    scraper = GenericScraper(
+        slug=source.slug, base_url=source.base_url, config=source.scrape_config
+    )
     try:
         ad_urls = await scraper.discover()
         if not ad_urls:
-            return TestConfigResult(ad_urls_found=0, error="Nessun link annuncio trovato con 'ad_link_selector'.")
+            return TestConfigResult(
+                ad_urls_found=0, error="Nessun link annuncio trovato con 'ad_link_selector'."
+            )
         raw = await scraper.scrape_ad(ad_urls[0])
-        return TestConfigResult(ad_urls_found=len(ad_urls), sample_url=ad_urls[0], extracted_fields=raw)
+        return TestConfigResult(
+            ad_urls_found=len(ad_urls), sample_url=ad_urls[0], extracted_fields=raw
+        )
     except RobotsDisallowedError as exc:
         return TestConfigResult(ad_urls_found=0, error=f"robots.txt vieta l'accesso: {exc}")
     except Exception as exc:  # noqa: BLE001 - risposta diagnostica per l'operatore, non un 500

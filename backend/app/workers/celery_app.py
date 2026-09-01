@@ -53,4 +53,12 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.tasks_maintenance.cleanup_expired_data",
         "schedule": crontab(hour=3, minute=0),
     },
+    "cleanup-orphan-media-nightly": {
+        "task": "app.workers.tasks_maintenance.cleanup_orphan_media_objects",
+        "schedule": crontab(hour=4, minute=0),
+    },
+    "configure-media-lifecycle-daily": {
+        "task": "app.workers.tasks_maintenance.configure_media_lifecycle",
+        "schedule": crontab(hour=4, minute=30),
+    },
 }

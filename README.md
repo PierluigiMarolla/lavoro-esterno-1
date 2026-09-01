@@ -88,8 +88,8 @@ frontend con hot reload) vedi [`docs/SVILUPPO.md`](docs/SVILUPPO.md).
 
 ## Stato del progetto
 
-Repository in fase di bootstrap: infrastruttura, documentazione e CI
-sono definite; l'implementazione applicativa (connettori scraper reali,
-classificazione AI, generazione export) è in corso. Vedi
+L'infrastruttura e i flussi principali sono implementati, inclusi scraper
+generico, pipeline media ONNX/FFmpeg e riepiloghi OpenAI asincroni. Restano
+attività di produzione come generazione export, GDPR e deploy. Vedi
 [`PROGETTO.md`](PROGETTO.md) per l'elenco dettagliato del lavoro
 rimanente.

@@ -1,60 +1,109 @@
-"""Classificazione dei media (esplicito / safe / non classificato).
-
-Definiamo un'interfaccia astratta (`MediaClassifier`) in modo che
-l'implementazione reale (es. un modello ONNX per la rilevazione di contenuti
-espliciti) possa essere sostituita senza toccare i chiamanti (worker Celery,
-endpoint media). L'implementazione fornita di default in questo scaffold è un
-PLACEHOLDER che non fa alcuna inferenza reale.
-"""
+"""Local ONNX media classification with conservative human-review policy."""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from functools import lru_cache
+from typing import Any
+
+from app.config import settings
+
+EXPLICIT_LABELS = {
+    "BUTTOCKS_EXPOSED",
+    "FEMALE_BREAST_EXPOSED",
+    "FEMALE_GENITALIA_EXPOSED",
+    "MALE_GENITALIA_EXPOSED",
+    "ANUS_EXPOSED",
+}
+FACE_LABELS = {"FACE_FEMALE", "FACE_MALE"}
 
 
 @dataclass(frozen=True)
 class ClassificationResult:
-    """Esito di una classificazione media."""
-
     classification: str
-    """Uno tra "explicit", "safe", "unclassified" (vedi app.models.media.MediaClassification)."""
-
     confidence: float
-    """Confidenza del modello nell'intervallo [0, 1]."""
-
     model_version: str
-    """Identificatore della versione del modello/euristica usata, salvato in
-    `media.classifier_version` per tracciabilità e riproducibilità."""
+    safety_signals: dict[str, Any] = field(default_factory=dict)
+    review_required: bool = True
 
 
 class MediaClassifier(ABC):
-    """Interfaccia per un classificatore di contenuti media."""
-
     @abstractmethod
     def classify(self, file_bytes: bytes, mime_type: str) -> ClassificationResult:
-        """Classifica il contenuto di un file media (immagine o frame video)."""
         raise NotImplementedError
 
 
-class RuleBasedMediaClassifier(MediaClassifier):
-    """Implementazione PLACEHOLDER.
+@lru_cache(maxsize=1)
+def _detector():
+    from nudenet import NudeDetector
 
-    Non esegue alcuna analisi reale del contenuto: restituisce sempre
-    "unclassified" con confidenza 0.0. Serve a:
-    - permettere che l'intera pipeline (upload -> media row -> task Celery di
-      classificazione -> aggiornamento DB) sia end-to-end funzionante fin da
-      subito, senza dipendere dalla disponibilità di un modello ML;
-    - definire chiaramente il punto di sostituzione: rimpiazzare questa
-      classe con un classificatore ONNX/reale (es. basato su un modello di
-      content-moderation) mantenendo la stessa interfaccia `MediaClassifier`.
-    """
+    return NudeDetector(inference_resolution=320)
 
-    MODEL_VERSION = "placeholder-unclassified-v0"
+
+class NudeNetOnnxMediaClassifier(MediaClassifier):
+    """NudeNet 3.4.2 (YOLOv8n ONNX) with explicit, face and review signals."""
+
+    MODEL_VERSION = "nudenet-3.4.2-320n"
+
+    @staticmethod
+    def from_detections(
+        detections: list[dict[str, Any]], *, watermark_present: bool = False
+    ) -> ClassificationResult:
+        explicit_score = max(
+            (float(d.get("score", 0)) for d in detections if d.get("class") in EXPLICIT_LABELS),
+            default=0.0,
+        )
+        face_score = max(
+            (float(d.get("score", 0)) for d in detections if d.get("class") in FACE_LABELS),
+            default=0.0,
+        )
+        explicit = explicit_score >= settings.MEDIA_EXPLICIT_THRESHOLD
+        face_visible = face_score >= 0.50
+        possible_minor_review = explicit and face_visible
+
+        if explicit:
+            classification = "explicit"
+            confidence = explicit_score
+            review_required = possible_minor_review
+        elif explicit_score < settings.MEDIA_SAFE_THRESHOLD:
+            classification = "safe"
+            confidence = 1.0 - explicit_score
+            review_required = False
+        else:
+            classification = "unclassified"
+            confidence = explicit_score
+            review_required = True
+
+        return ClassificationResult(
+            classification=classification,
+            confidence=round(confidence, 6),
+            model_version=NudeNetOnnxMediaClassifier.MODEL_VERSION,
+            review_required=review_required,
+            safety_signals={
+                "explicitContent": explicit,
+                "explicitScore": round(explicit_score, 6),
+                "faceVisible": face_visible,
+                "faceScore": round(face_score, 6),
+                "watermarkPresent": watermark_present,
+                # Policy escalation only; never an automated age estimate.
+                "possibleMinorReview": possible_minor_review,
+            },
+        )
 
     def classify(self, file_bytes: bytes, mime_type: str) -> ClassificationResult:
-        return ClassificationResult(
-            classification="unclassified",
-            confidence=0.0,
-            model_version=self.MODEL_VERSION,
-        )
+        if not mime_type.startswith("image/"):
+            raise ValueError("NudeNet richiede un'immagine o un frame video.")
+        detections = _detector().detect(file_bytes)
+        return self.from_detections(detections)
+
+
+# Backwards-compatible import name; it is no longer rule based.
+RuleBasedMediaClassifier = NudeNetOnnxMediaClassifier
+
+
+def aggregate_results(results: list[ClassificationResult]) -> ClassificationResult:
+    """Conservative video aggregation: retain the frame with greatest risk."""
+    if not results:
+        raise ValueError("Nessun frame classificabile.")
+    return max(results, key=lambda item: float(item.safety_signals.get("explicitScore", 0)))

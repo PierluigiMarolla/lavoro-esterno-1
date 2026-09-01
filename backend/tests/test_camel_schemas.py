@@ -95,7 +95,9 @@ def test_scrape_run_read_serializes_camel_case_with_nested_errors() -> None:
         items_new=2,
         errors_count=1,
         errors=[
-            ScrapeErrorRead(id=error_id, url="https://example.invalid", error_message="boom", created_at=now)
+            ScrapeErrorRead(
+                id=error_id, url="https://example.invalid", error_message="boom", created_at=now
+            )
         ],
     )
     dumped = run.model_dump(mode="json", by_alias=True)

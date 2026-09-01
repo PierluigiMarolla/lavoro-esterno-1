@@ -21,6 +21,7 @@ from app.models.record import Record
 from app.models.scrape_errors import ScrapeError
 from app.models.scrape_runs import ScrapeRun
 from app.models.sources import Source
+from app.models.summary_generation_jobs import SummaryGenerationJob
 from app.models.summary_versions import SummaryVersion
 from app.models.users import User
 
@@ -36,6 +37,7 @@ __all__ = [
     "ScrapeError",
     "MediaClassificationHistory",
     "SummaryVersion",
+    "SummaryGenerationJob",
     "ExportJob",
     "AuditLog",
 ]

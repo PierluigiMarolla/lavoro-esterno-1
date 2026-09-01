@@ -116,15 +116,16 @@ verificato dal vivo, è più preciso su questi punti (vedi PROGETTO.md § 4):
   Python per-sito precompilati (i 9 stub iniziali descritti nelle versioni
   precedenti di questo documento sono stati rimossi, insieme al
   `registry.py` che li risolveva).
-- **Media e classificazione**: nel codice reale, il download dei media e
-  la classificazione (`RuleBasedMediaClassifier`, placeholder) avvengono
-  IN LINEA dentro lo stesso task `worker-scraper` (`app/services/
-  scrape_ingest.py`), non in un task separato sulla coda "media" come
-  suggerisce il diagramma — una separazione in una coda dedicata resta un
-  miglioramento futuro (utile se il volume di media crescesse al punto da
-  voler scalare la classificazione indipendentemente dallo scraping).
-- **Riepilogo AI**: generato solo su richiesta esplicita (`POST /records/
-  {id}/ai-summary/regenerate`), non automaticamente dopo ogni scraping.
+- **Media e classificazione**: lo scraper scarica in streaming, valida e
+  persiste soltanto l'originale immutabile; dopo il commit accoda
+  `process_media` sulla coda `media`. Il worker genera display/thumbnail
+  con FFmpeg/OpenCV e classifica localmente con NudeNet ONNX. Task e stati
+  persistenti rendono la pipeline idempotente e ritentabile.
+- **Riepilogo AI**: `POST /records/{id}/ai-summary/regenerate` crea un job
+  persistente e risponde 202. Il worker `ai` applica budget Redis, cache
+  deterministica e OpenAI Responses con Structured Outputs/`store=false`;
+  l'API espone lo stato per il polling. Il provider non riceve telefono,
+  immagini o URL personali.
 - La **deduplicazione** realmente applicata durante l'ingestione è solo
   quella esatta per numero di telefono normalizzato (punto 1
   dell'elenco nel diagramma) — le euristiche di similarità testuale

@@ -25,6 +25,23 @@ export function useRecordMedia(id: string) {
   return useQuery({ queryKey: ["records", id, "media"], queryFn: () => recordsApi.fetchRecordMedia(id), enabled: Boolean(id) });
 }
 
+export function useReviewMedia(recordId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ mediaId, classification, notes }: { mediaId: string; classification: "safe" | "explicit"; notes: string }) =>
+      recordsApi.reviewMedia(mediaId, classification, notes),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["records", recordId, "media"] }),
+  });
+}
+
+export function useReprocessMedia(recordId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (mediaId: string) => recordsApi.reprocessMedia(mediaId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["records", recordId, "media"] }),
+  });
+}
+
 export function useRecordHistory(id: string) {
   return useQuery({ queryKey: ["records", id, "history"], queryFn: () => recordsApi.fetchRecordHistory(id), enabled: Boolean(id) });
 }
@@ -36,11 +53,17 @@ export function useRecordAiSummary(id: string) {
 export function useRegenerateAiSummary(id: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () => recordsApi.regenerateRecordAiSummary(id),
-    onSuccess: (data) => {
-      queryClient.setQueryData(["records", id, "ai-summary"], data);
-      // A regenerate call appends a new version server-side — the version
-      // history list is now stale even though its own query key didn't change.
+    mutationFn: async () => {
+      let job = await recordsApi.regenerateRecordAiSummary(id);
+      while (job.status === "pending" || job.status === "processing") {
+        await new Promise((resolve) => window.setTimeout(resolve, 2000));
+        job = await recordsApi.fetchSummaryGenerationJob(id, job.id);
+      }
+      if (job.status === "failed") throw new Error(job.errorMessage ?? "AI summary generation failed.");
+      return job;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["records", id, "ai-summary"] });
       queryClient.invalidateQueries({ queryKey: ["records", id, "ai-summary", "versions"] });
     },
   });

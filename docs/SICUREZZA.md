@@ -169,6 +169,22 @@ cliente. Principi applicati nell'architettura:
   sopra). Le procedure operative complete sono da finalizzare con
   consulenza legale (vedi `PROGETTO.md`, sezione Sicurezza/GDPR).
 
+### Provider AI e media sensibili
+
+- Prima della Responses API vengono rimossi telefoni e URL anche dal testo
+  libero; immagini, URL originali e numeri cifrati non lasciano il sistema.
+  I riferimenti `source-N` restituiti dal modello sono rimappati localmente.
+- Le richieste usano `store=false`. Secondo i [controlli dati OpenAI](https://developers.openai.com/api/docs/guides/your-data), i dati API non
+  vengono usati per training salvo opt-in; i log di abuse monitoring possono
+  essere conservati fino a 30 giorni. Zero Data Retention richiede idoneità e
+  approvazione separate e non va presunta da questa configurazione.
+- I media `unclassified`, con elaborazione fallita o revisione richiesta
+  sono sempre sensibili nella UI. `possibleMinorReview` non è una stima di
+  età: segnala soltanto la coesistenza prudenziale di nudità e volto.
+- La rimozione watermark è disabilitata per default, configurabile solo da
+  Admin con riferimento autorizzativo e regioni esplicite; originali e audit
+  vengono conservati.
+
 > Questo documento descrive il disegno tecnico di sicurezza. La
 > validazione legale/normativa completa (in particolare relativa allo
 > scraping di dati personali da fonti terze) resta un'attività separata,

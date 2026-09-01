@@ -37,7 +37,7 @@ class UserPublic(BaseModel):
     status: str
 
     @staticmethod
-    def from_user(user) -> "UserPublic":  # noqa: ANN001 - evita import ciclico su app.models.users.User
+    def from_user(user) -> UserPublic:  # noqa: ANN001 - evita import ciclico su app.models.users.User
         return UserPublic(
             id=user.id,
             email=user.email,
@@ -80,7 +80,9 @@ class LoginResponse(BaseModel):
 
 class Login2FARequest(BaseModel):
     mfa_token: str
-    code: str = Field(min_length=6, max_length=12, description="Codice TOTP a 6 cifre o backup code.")
+    code: str = Field(
+        min_length=6, max_length=12, description="Codice TOTP a 6 cifre o backup code."
+    )
 
 
 class TokenPairResponse(BaseModel):

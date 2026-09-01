@@ -11,7 +11,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, UUIDPKMixin, utcnow
 
-ScrapeRunStatus = sa.Enum("running", "completed", "failed", name="scrape_run_status", create_type=True)
+ScrapeRunStatus = sa.Enum(
+    "running", "completed", "failed", name="scrape_run_status", create_type=True
+)
 
 
 class ScrapeRun(UUIDPKMixin, Base):

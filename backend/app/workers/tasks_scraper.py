@@ -72,6 +72,7 @@ def run_scrape_source(self, source_id: str) -> dict:
         session.commit()
         session.refresh(run)
 
+        outcome: dict = {}
         if source.scrape_config:
             try:
                 collection = asyncio.run(collect_ads(source))
@@ -89,10 +90,14 @@ def run_scrape_source(self, source_id: str) -> dict:
                 # "completed" anche con alcuni errori parziali: solo un run
                 # senza NESSUN annuncio trovato/nuovo e con errori è un
                 # fallimento vero e proprio (es. robots.txt vieta tutto).
-                run.status = "failed" if (outcome["items_new"] == 0 and outcome["errors"]) else "completed"
+                run.status = (
+                    "failed" if (outcome["items_new"] == 0 and outcome["errors"]) else "completed"
+                )
                 for error in outcome["errors"]:
                     session.add(
-                        ScrapeError(scrape_run_id=run.id, url=error.url, error_message=error.message)
+                        ScrapeError(
+                            scrape_run_id=run.id, url=error.url, error_message=error.message
+                        )
                     )
         else:
             logger.warning(
@@ -114,6 +119,12 @@ def run_scrape_source(self, source_id: str) -> dict:
         run.finished_at = datetime.now(UTC)
         session.add(run)
         session.commit()
+
+        if source.scrape_config:
+            from app.workers.tasks_media import process_media
+
+            for media_id in outcome.get("media_ids", []):
+                process_media.delay(media_id)
 
         return {"status": run.status, "run_id": str(run.id)}
     finally:

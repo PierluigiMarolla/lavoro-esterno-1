@@ -11,6 +11,12 @@ contesto. Data sessione: 27 agosto 2026.
 > leggere prima quella (più recente), poi tornare qui per il contesto
 > originale del progetto se necessario.
 
+> **Aggiornamento più recente**: la sessione del **1 settembre 2026** ha
+> completato i punti 5 e 6 di `PROGETTO.md` (AI/classificazione e pipeline
+> storage/media). Il riepilogo operativo aggiornato si trova in fondo al
+> file, sezione **"Sessione 5 — 1 settembre 2026"**, che va letta per prima
+> quando si riprende il progetto.
+
 ## Richiesta originale
 
 L'utente ha fornito un PDF (`lavoro-esterno-1-stack-tecnico.pdf`, in root)
@@ -827,3 +833,198 @@ fonti rotte (`consecutiveFailures`).
 - `frontend/src/routes/SourcesPage.tsx` — form di configurazione fonte.
 - `docs/SVILUPPO.md` § 7 — come configurare una fonte generica senza
   scrivere codice.
+
+---
+
+# Sessione 5 — 1 settembre 2026
+
+## Richiesta e decisioni approvate
+
+L'utente ha chiesto di implementare integralmente il piano relativo ai
+punti 5 e 6 di `PROGETTO.md`: sostituzione dei placeholder AI/media,
+pipeline asincrone, revisione umana, limiti operativi, storage sicuro,
+FFmpeg, watermark autorizzato, lifecycle MinIO e aggiornamento frontend.
+
+Decisioni applicate:
+
+- OpenAI Responses API con Structured Outputs, `store=false`, modello
+  predefinito configurabile `gpt-5.6-luna` e prompt `summary-v1`.
+- AI disabilitata finché chiave e tutti i budget configurabili non hanno
+  valori positivi; nessun fallback al vecchio generatore template.
+- Nessun telefono, URL personale o media inviato a OpenAI. Telefoni e URL
+  vengono redatti anche quando compaiono nel testo libero degli annunci;
+  le fonti sono inviate come riferimenti interni e rimappate localmente.
+- NudeNet 3.4.2/ONNX 320n come classificatore locale. Nessuna stima
+  automatica dell'età: nudità esplicita insieme a un volto produce solo
+  `possibleMinorReview=true` e revisione obbligatoria.
+- Soglie: `explicit >= 0.65`, `safe < 0.20`, fascia intermedia o errore
+  `unclassified` con trattamento sensibile.
+- Watermark removal disabilitata per default e attivabile solo da Admin,
+  per singola fonte, con riferimento autorizzativo e regioni valide.
+- Limiti: immagini 15 MB/40 MP; video 100 MB/300 secondi. Nessuna CDN per
+  ora; rivalutazione oltre 100 GB/mese di egress o p95 media > 500 ms per
+  due settimane.
+
+## Backend e database implementati
+
+### Modelli e migrazione
+
+- Nuova migrazione
+  `backend/migrations/versions/20260901090000_ai_media_pipeline.py`, head
+  unica dopo `20260830090000`. Gli enum PostgreSQL usano
+  `create_type=False` per evitare il precedente `DuplicateObjectError`.
+- Nuova tabella `summary_generation_jobs` con stato
+  `pending/processing/completed/failed`, utente richiedente, modello,
+  prompt, input hash, versione risultante, cache hit, errore sicuro e
+  timestamp.
+- `summary_versions` ora salva provider, modello, prompt version, input
+  hash, token input/output/cache, job e cache metadata. Vincolo univoco su
+  record/hash/modello/prompt per evitare versioni duplicate concorrenti.
+- `media` ora distingue chiavi original/display/thumbnail e salva
+  dimensione, risoluzione, durata, stato/errori di processing, segnali
+  safety e stato/note/autore/timestamp della revisione.
+- `sources` contiene configurazione watermark: enabled, riferimento
+  autorizzativo e regioni normalizzate.
+- `backend/uv.lock` è stato generato con le nuove dipendenze.
+
+### Classificazione e processing media
+
+- `app/services/media_classifier.py`: classificatore reale
+  `NudeNetOnnxMediaClassifier`, modello lazy e versionato
+  `nudenet-3.4.2-320n`; segnali `explicitContent`, `explicitScore`,
+  `faceVisible`, `faceScore`, `watermarkPresent` e
+  `possibleMinorReview`. Il vecchio nome `RuleBasedMediaClassifier` resta
+  solo come alias retrocompatibile verso l'implementazione reale.
+- `app/services/media_processing.py`: validazione Pillow/ffprobe,
+  inpainting OpenCV, transcodifica FFmpeg H.264/AAC CRF 23, yuv420p,
+  faststart e massimo 1280x720; thumbnail JPEG max 640 e cinque frame al
+  10/30/50/70/90%. Comandi con `shell=False`, timeout e directory
+  temporanee isolate.
+- `app/workers/tasks_media.py`: task idempotente/ritentabile che scarica
+  l'originale da MinIO, genera varianti, classifica e aggiorna
+  atomicamente media/history/audit. Gli originali non vengono mai
+  sovrascritti.
+- `GenericScraper` ora scarica media con streaming limitato, redirect
+  manuali rivalidati, blocco SSRF per schemi non HTTP(S) e indirizzi
+  privati/reserved, Content-Length, risposta troncata e limite dinamico
+  immagine/video. Magic bytes e decoder reali decidono l'accettazione.
+- `tasks_scraper.py` accoda il processing media soltanto dopo il commit.
+
+### Riepiloghi OpenAI
+
+- `app/services/summary_generator.py`: rimosso il generatore template;
+  adapter OpenAI Responses con output Pydantic strutturato, `store=false`,
+  timeout, prompt cache key e usage token. Nessun modello alternativo.
+- `app/workers/tasks_ai.py`: job persistente asincrono, input minimizzato,
+  hash deterministico, cache hit senza nuova chiamata/versione, retry con
+  backoff soltanto per timeout/connessione/429/5xx e stato failed sicuro
+  per errori permanenti.
+- Redis applica limite richieste giornaliero per utente, richieste/minuto
+  provider e budget token globale. La stima viene prenotata prima della
+  chiamata, riconciliata con l'uso effettivo e rilasciata se la chiamata
+  fallisce.
+- `POST /records/{id}/ai-summary/regenerate` risponde 202 con il job;
+  `GET /records/{id}/ai-summary/jobs/{jobId}` espone lo stato. Lettura
+  ultima versione e storico restano compatibili.
+
+### API, RBAC, storage e manutenzione
+
+- `POST /media/{id}/review`: Admin/Operator può applicare override
+  esplicito con note, autore, history e audit.
+- `POST /media/{id}/reprocess`: riaccoda media falliti/pregressi.
+- Contratti `MediaRead`/`RecordMedia` estesi con classificazione,
+  confidenza, segnali, review/processing state e URL original/display/
+  thumbnail.
+- Gli URL `/media-objects/...` sono stati sostituiti da presigned URL
+  MinIO brevi, costruiti con `MINIO_PUBLIC_ENDPOINT`.
+- Task Beat giornaliero configura lifecycle per oggetti `tmp/` e multipart
+  incompleti dopo un giorno; task notturno elimina solo oggetti media più
+  vecchi della grace period e non referenziati da nessuna colonna DB.
+
+## Frontend implementato
+
+- La tab AI Summary avvia il job asincrono, effettua polling ogni due
+  secondi e mostra processing/errore/completamento, invalidando riepilogo
+  e storico al termine.
+- La tab Media mostra processing, classificazione e badge "Needs review";
+  Admin/Operator possono marcare safe/explicit con note e riaccodare media
+  falliti. Media non classificati o in review restano trattati come
+  sensibili.
+- Il form Sources espone configurazione watermark Admin-only con
+  autorizzazione e regione normalizzata; backend e frontend condividono
+  lo stesso contratto camelCase.
+
+## Test e verifiche eseguite
+
+- `ruff check .`: pulito.
+- Suite backend completa: **115 passed, 5 skipped**. Gli skip sono test
+  opt-in già previsti; 19 warning provengono da lxml/curl_cffi su Windows.
+- Test nuovi coprono soglie e aggregazione NudeNet, versione modello,
+  immagine innocua con inferenza reale, watermark/originale immutabile,
+  MIME e file corrotti, FFmpeg reale su MP4 sintetico, cinque frame,
+  risoluzione/thumbnail, Structured Output simulato, token usage,
+  minimizzazione URL/telefono, hash deterministico, AI disabilitata e
+  schema del dataset redatto.
+- `npm run lint`: 0 errori, due warning Fast Refresh preesistenti in
+  `AuthContext.tsx` e `ThemeContext.tsx`.
+- `npm run build`: completata; Vite segnala soltanto un warning relativo a
+  un `tsconfig.base.json` esterno non presente, senza bloccare TypeScript o
+  bundle.
+- Alembic: `20260901090000 (head)`; import completo FastAPI riuscito.
+- Build Docker backend reale completata nell'immagine locale
+  `lavoro-esterno-backend:points-5-6` con FFmpeg 7.1.5, OpenCV,
+  ONNX Runtime, NudeNet e OpenAI SDK.
+- Smoke test nell'immagine: FastAPI caricato e task Celery media/AI
+  registrati; `ffmpeg -version` riuscito.
+- Il PostgreSQL temporaneo avviato per una migrazione live è stato
+  arrestato e rimosso. L'esecuzione di `alembic upgrade head` contro quel
+  container non è avvenuta perché l'autorizzazione specifica è stata
+  rifiutata dall'utente/ambiente.
+- Nessuna chiamata OpenAI live: mancano intenzionalmente API key e budget
+  espliciti. Il comportamento fail-closed è stato verificato con test.
+- Playwright end-to-end dei nuovi flussi non è stato eseguito perché lo
+  stack completo con DB/account 2FA non è stato avviato in questa sessione.
+
+## Documentazione aggiornata
+
+- `PROGETTO.md`: punti 5 e 6 descritti nel dettaglio e spuntati, con note
+  trasparenti sui limiti della verifica live.
+- `README.md`, `docs/API.md`, `docs/ARCHITETTURA.md`,
+  `docs/DATABASE.md`, `docs/SICUREZZA.md`, `docs/SVILUPPO.md` aggiornati.
+- `docs/SICUREZZA.md` documenta minimizzazione, `store=false`, retention
+  standard dei log OpenAI fino a 30 giorni e il fatto che ZDR richiede
+  idoneità/approvazione separata.
+
+## Stato e prossimi passi consigliati
+
+Il codice dei punti 5 e 6 è implementato. Prima di un deploy effettuare:
+
+1. Avviare uno stack Docker con `.env` di sviluppo valido e applicare
+   `docker compose exec api alembic upgrade head`, verificando tabelle,
+   enum e worker reali su PostgreSQL/Redis/MinIO.
+2. Eseguire Playwright sui nuovi flussi AI/media con un account Admin 2FA
+   e fixture sintetiche.
+3. Eseguire il test OpenAI live solo con chiave dedicata e budget
+   positivi minimi; verificare job, usage, cache hit e output redatto.
+4. Verificare lifecycle MinIO e orphan cleanup su oggetti sintetici,
+   confermando che gli originali referenziati non vengano eliminati.
+5. Proseguire con `PROGETTO.md` § 7 (generazione export reale), senza
+   confonderlo con i presigned URL media ora completati.
+
+## File chiave da leggere per ripartire (sessione 5)
+
+- `backend/migrations/versions/20260901090000_ai_media_pipeline.py`
+- `backend/app/services/media_classifier.py`
+- `backend/app/services/media_processing.py`
+- `backend/app/services/summary_generator.py`
+- `backend/app/workers/tasks_media.py`
+- `backend/app/workers/tasks_ai.py`
+- `backend/app/workers/tasks_maintenance.py`
+- `backend/app/api/v1/media.py`, `records.py`, `sources.py`
+- `frontend/src/routes/records/RecordAiSummaryTab.tsx`
+- `frontend/src/routes/records/RecordMediaTab.tsx`
+- `frontend/src/routes/SourcesPage.tsx`
+- `backend/tests/test_media_classifier.py`
+- `backend/tests/test_media_processing.py`
+- `backend/tests/test_summary_ai.py`
+- `PROGETTO.md` § 5-6 e documentazione in `docs/`.

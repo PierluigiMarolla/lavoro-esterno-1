@@ -1,0 +1,13 @@
+[
+  {
+    "name": "two redacted advertisements",
+    "input": {
+      "advertisements": [
+        {"source_ref": "source-1", "title": "Example A", "description": "Redacted factual text."},
+        {"source_ref": "source-2", "title": "Example B", "description": "A second redacted occurrence."}
+      ],
+      "forum_snippets": []
+    },
+    "allowed_sources": ["source-1", "source-2"]
+  }
+]

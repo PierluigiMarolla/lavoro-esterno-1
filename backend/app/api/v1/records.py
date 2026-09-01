@@ -26,6 +26,7 @@ from sqlalchemy import and_, false, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
+from app.config import settings
 from app.db import get_db
 from app.models.advertisement import Advertisement
 from app.models.audit_log import AuditLog
@@ -34,6 +35,7 @@ from app.models.media import Media
 from app.models.media_classification_history import MediaClassificationHistory
 from app.models.record import Record
 from app.models.sources import Source
+from app.models.summary_generation_jobs import SummaryGenerationJob
 from app.models.summary_versions import SummaryVersion
 from app.models.users import User
 from app.schemas.records import (
@@ -48,16 +50,16 @@ from app.schemas.records import (
     RecordSearchResponseRead,
     RecordSearchResultRead,
     SourceUsedRead,
+    SummaryGenerationJobRead,
 )
 from app.security.deps import get_current_user, require_role
-from app.services.audit import log_action
+from app.services.media_storage import presigned_media_url
 from app.services.phone_crypto import decrypt_phone, phone_lookup_hash
 from app.services.record_search import (
     VERIFIED_CONFIDENCE_THRESHOLD,
     confidence_to_status,
     looks_like_full_phone,
 )
-from app.services.summary_generator import TemplateSummaryGenerator
 
 router = APIRouter()
 
@@ -191,9 +193,7 @@ async def search_records(
     if conditions:
         base_stmt = base_stmt.where(and_(*conditions))
 
-    total = (
-        await db.execute(select(func.count()).select_from(base_stmt.subquery()))
-    ).scalar_one()
+    total = (await db.execute(select(func.count()).select_from(base_stmt.subquery()))).scalar_one()
 
     page_stmt = (
         base_stmt.order_by(ad_agg.c.last_seen_at.desc())
@@ -329,21 +329,14 @@ async def get_record_occurrences(
 
 
 def _media_object_url(media: Media, *, variant: str) -> str:
-    """URL "placeholder" verso l'oggetto media in MinIO.
-
-    TODO: la generazione di un vero URL firmato (presigned, con scadenza)
-    richiede l'integrazione con il client MinIO (vedi le variabili
-    `MINIO_*` in `app/config.py`), non ancora implementata in questo
-    scaffold — lo stesso gap è documentato per `GET /exports/{id}/download`.
-    Per ora restituiamo un path deterministico basato sulla object_key, così
-    il frontend ha comunque un valore stabile da mostrare/collegare mentre
-    la generazione reale viene implementata.
-    """
-    if variant == "derived" and media.derived_object_key:
-        key = media.derived_object_key
+    """Short-lived MinIO URL; the original remains immutable."""
+    if variant == "thumbnail":
+        key = media.thumbnail_object_key or media.display_object_key or media.original_object_key
+    elif variant == "display":
+        key = media.display_object_key or media.derived_object_key or media.original_object_key
     else:
         key = media.original_object_key
-    return f"/media-objects/{key}"
+    return presigned_media_url(key)
 
 
 @router.get("/{record_id}/media", response_model=list[RecordMediaRead])
@@ -377,12 +370,19 @@ async def get_record_media(
         results.append(
             RecordMediaRead(
                 id=media.id,
-                url=_media_object_url(media, variant="original"),
-                thumbnail_url=_media_object_url(media, variant="derived"),
+                url=_media_object_url(media, variant="display"),
+                thumbnail_url=_media_object_url(media, variant="thumbnail"),
                 type=media_type,
                 sensitivity=sensitivity,
                 source_name=source_name,
                 added_at=media.created_at,
+                classification=media.classification,
+                classification_confidence=media.classification_confidence,
+                safety_signals=media.safety_signals or {},
+                review_status=media.review_status,
+                processing_status=media.processing_status,
+                display_url=_media_object_url(media, variant="display"),
+                original_url=_media_object_url(media, variant="original"),
             )
         )
     return results
@@ -519,9 +519,7 @@ def _summary_version_fields(version: SummaryVersion) -> dict:
     # app/services/summary_generator.py): non porta un "nome fonte"
     # separato. Usiamo l'URL anche come nome finché il generatore non
     # produrrà una struttura più ricca (es. {name, url}).
-    sources_used = [
-        SourceUsedRead(name=url, url=url) for url in payload.get("sources", []) if url
-    ]
+    sources_used = [SourceUsedRead(name=url, url=url) for url in payload.get("sources", []) if url]
     return {
         "generated_at": version.created_at,
         "executive_synthesis": payload.get("summary", ""),
@@ -600,61 +598,41 @@ async def get_record_ai_summary(
 
 @router.post(
     "/{record_id}/ai-summary/regenerate",
-    response_model=RecordAiSummaryRead,
-    status_code=status.HTTP_201_CREATED,
+    response_model=SummaryGenerationJobRead,
+    status_code=status.HTTP_202_ACCEPTED,
 )
 async def regenerate_record_ai_summary(
     record_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_role("admin", "operator")),
-) -> RecordAiSummaryRead:
-    """Rigenera il riepilogo AI del record, salvando una nuova
-    `SummaryVersion` (versionata, non sovrascrive le precedenti).
-
-    Riservato ad admin/operator: rigenerare consuma risorse (in futuro,
-    chiamate a un LLM reale) e va quindi avviato solo da chi ha
-    responsabilità operativa, non dai soli viewer — stesso criterio già
-    applicato a `POST /sources/{id}/scan`.
-
-    Usa `TemplateSummaryGenerator` (vedi `app/services/summary_generator.py`):
-    è l'implementazione placeholder, senza chiamata a un LLM reale — il
-    punto di sostituzione futuro è documentato in quel modulo.
-    """
-    record = await _get_record_or_404(db, record_id)
-
-    ads_result = await db.execute(select(Advertisement).where(Advertisement.record_id == record_id))
-    advertisements = ads_result.scalars().all()
-
-    generator = TemplateSummaryGenerator()
-    # Nessuna pipeline di raccolta forum è implementata: passiamo una lista
-    # vuota di snippet, coerente con lo stato attuale del resto del sistema.
-    payload = generator.generate(record, advertisements, forum_snippets=[])
-
-    last_version = (
-        await db.execute(
-            select(func.max(SummaryVersion.version)).where(SummaryVersion.record_id == record_id)
-        )
-    ).scalar_one()
-    new_version_number = (last_version or 0) + 1
-
-    version = SummaryVersion(
+) -> SummaryGenerationJobRead:
+    """Queue a persistent Celery job; OpenAI is never called in the API process."""
+    await _get_record_or_404(db, record_id)
+    job = SummaryGenerationJob(
         record_id=record_id,
-        version=new_version_number,
-        summary_json=payload.as_dict(),
-        model_name=TemplateSummaryGenerator.MODEL_NAME,
+        requested_by_user_id=user.id,
+        status="pending",
+        model_name=settings.OPENAI_MODEL,
+        prompt_version=settings.OPENAI_PROMPT_VERSION,
+        input_hash="pending-" + uuid.uuid4().hex,
     )
-    db.add(version)
-
-    await log_action(
-        db,
-        user_id=user.id,
-        action="regenerate_ai_summary",
-        entity_type="record",
-        entity_id=str(record_id),
-        details={"version": new_version_number},
-    )
-
+    db.add(job)
     await db.commit()
-    await db.refresh(version)
+    await db.refresh(job)
+    from app.workers.tasks_ai import generate_summary
 
-    return _summary_version_to_schema(version)
+    generate_summary.delay(str(job.id))
+    return SummaryGenerationJobRead.model_validate(job, from_attributes=True)
+
+
+@router.get("/{record_id}/ai-summary/jobs/{job_id}", response_model=SummaryGenerationJobRead)
+async def get_summary_generation_job(
+    record_id: uuid.UUID,
+    job_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> SummaryGenerationJobRead:
+    job = await db.get(SummaryGenerationJob, job_id)
+    if job is None or job.record_id != record_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job AI non trovato.")
+    return SummaryGenerationJobRead.model_validate(job, from_attributes=True)

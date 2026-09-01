@@ -79,7 +79,9 @@ File (immagine/video) associato a un annuncio.
 - `id` UUID PK
 - `advertisement_id` UUID, FK → `advertisements.id` ondelete CASCADE, **index**
 - `original_object_key` Text (chiave oggetto MinIO del file originale)
-- `derived_object_key` Text nullable (thumbnail/versione derivata)
+- `derived_object_key` Text nullable (compatibilità legacy),
+  `display_object_key` e `thumbnail_object_key` Text nullable; l'originale
+  non viene mai sovrascritto
 - `sha256` String(64), **index** (dedup esatto)
 - `perceptual_hash` String(64) nullable, **index** (dedup pHash, TODO in
   `app/services/dedup.py`)
@@ -87,6 +89,11 @@ File (immagine/video) associato a un annuncio.
 - `classification` enum `media_classification` (`explicit` / `safe` /
   `unclassified`), default `unclassified`
 - `classification_confidence` Float nullable, `classifier_version` String nullable
+- `safety_signals` JSONB; `processing_status` enum
+  (`pending`/`processing`/`ready`/`failed`) e `processing_error`
+- `review_status` enum (`not_required`/`required`/`reviewed`), note,
+  reviewer e timestamp
+- `file_size_bytes`, `width`, `height`, `duration_seconds`
 - `created_at`
 
 ### `sources`
@@ -105,6 +112,9 @@ File (immagine/video) associato a un annuncio.
   generico" sotto), unico motore esistente. Nullable: una fonte senza
   `scrape_config` non può essere scansionata (il run fallisce
   esplicitamente finché non viene configurata).
+- `watermark_removal_enabled`, `watermark_authorization_reference` e
+  `watermark_regions` JSONB: configurazione Admin-only, valida solo con
+  autorizzazione e regioni normalizzate.
 - `created_at`, `updated_at`
 
 ### `scrape_runs`
@@ -148,7 +158,17 @@ File (immagine/video) associato a un annuncio.
   forum_information, unverified_claims, sources}`, vedi
   `app/services/summary_generator.py`)
 - `model_name` String(200)
+- `model_provider`, `prompt_version`, `input_hash`; token input/output/cache,
+  `cache_hit` e FK opzionale al job di generazione. L'indice univoco
+  `(record_id, input_hash, model_name, prompt_version)` implementa la cache.
 - `created_at`
+
+### `summary_generation_jobs`
+- `id` UUID PK; FK a `records` e all'utente richiedente
+- stato enum `pending`/`processing`/`completed`/`failed`
+- modello, prompt version, input hash, versione risultante, cache hit ed
+  errore sicuro; timestamp di creazione/avvio/completamento
+- indici su record, utente, stato e input hash
 
 ### `export_jobs`
 - `id` UUID PK

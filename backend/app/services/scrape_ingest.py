@@ -43,9 +43,14 @@ from app.services.canonical import (
     resolve_canonical,
 )
 from app.services.dedup import content_sha256
-from app.services.media_classifier import RuleBasedMediaClassifier
+from app.services.media_processing import MediaValidationError, probe_video, validate_image
 from app.services.media_storage import sniff_mime_type, upload_media_object
-from app.services.phone_crypto import PhoneCryptoError, encrypt_phone, normalize_phone, phone_lookup_hash
+from app.services.phone_crypto import (
+    PhoneCryptoError,
+    encrypt_phone,
+    normalize_phone,
+    phone_lookup_hash,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -81,14 +86,20 @@ async def collect_ads(source: Source) -> CollectionResult:
     `discover()` stesso a fallire, nel qual caso non c'è nulla da fare per
     questa fonte in questo run).
     """
-    scraper = GenericScraper(slug=source.slug, base_url=source.base_url, config=source.scrape_config)
+    scraper = GenericScraper(
+        slug=source.slug, base_url=source.base_url, config=source.scrape_config
+    )
 
     try:
         try:
             ad_urls = await scraper.discover()
         except RobotsDisallowedError as exc:
-            logger.warning("robots.txt vieta l'accesso alla pagina di elenco per '%s': %s", source.slug, exc)
-            return CollectionResult(ads=[], errors=[ScrapeErrorDetail(url=exc.url, message=str(exc))])
+            logger.warning(
+                "robots.txt vieta l'accesso alla pagina di elenco per '%s': %s", source.slug, exc
+            )
+            return CollectionResult(
+                ads=[], errors=[ScrapeErrorDetail(url=exc.url, message=str(exc))]
+            )
         except (httpx.HTTPError, PageFetchError) as exc:
             logger.warning("Errore durante discover() per '%s': %s", source.slug, exc)
             return CollectionResult(
@@ -111,14 +122,18 @@ async def collect_ads(source: Source) -> CollectionResult:
                 # Senza un telefono non c'è modo di deduplicare/collegare
                 # l'annuncio a un Record: lo scartiamo esplicitamente invece di
                 # crearne uno "orfano".
-                errors.append(ScrapeErrorDetail(url=url, message="Nessun numero di telefono estratto."))
+                errors.append(
+                    ScrapeErrorDetail(url=url, message="Nessun numero di telefono estratto.")
+                )
                 continue
 
             media_bytes: list[bytes] = []
             try:
                 media_bytes = await scraper.download_media(normalized)
             except Exception:  # noqa: BLE001 - il download media è "best effort"
-                logger.exception("Download media fallito per l'annuncio %s (annuncio comunque salvato).", url)
+                logger.exception(
+                    "Download media fallito per l'annuncio %s (annuncio comunque salvato).", url
+                )
 
             collected.append(CollectedAd(normalized=normalized, media_bytes=media_bytes))
 
@@ -160,7 +175,9 @@ def _upsert_advertisement(
         )
     ).scalar_one_or_none()
 
-    content_hash = content_sha256(f"{normalized.get('title') or ''}\n{normalized.get('description') or ''}")
+    content_hash = content_sha256(
+        f"{normalized.get('title') or ''}\n{normalized.get('description') or ''}"
+    )
 
     if existing is not None:
         existing.title = normalized.get("title")
@@ -186,44 +203,69 @@ def _upsert_advertisement(
     return advertisement, True
 
 
-def _persist_media(session: Session, record_id: uuid.UUID, advertisement: Advertisement, media_bytes_list: list[bytes]) -> None:
-    classifier = RuleBasedMediaClassifier()
-    for data in media_bytes_list:
-        import hashlib
+def _persist_media(
+    session: Session,
+    record_id: uuid.UUID,
+    advertisement: Advertisement,
+    media_bytes_list: list[bytes],
+) -> list[uuid.UUID]:
+    """Validate and persist originals; expensive processing starts after commit."""
+    import hashlib
 
+    media_ids: list[uuid.UUID] = []
+    for data in media_bytes_list:
         sha256 = hashlib.sha256(data).hexdigest()
         already_exists = session.execute(
-            select(Media.id).where(Media.advertisement_id == advertisement.id, Media.sha256 == sha256)
+            select(Media.id).where(
+                Media.advertisement_id == advertisement.id, Media.sha256 == sha256
+            )
         ).scalar_one_or_none()
         if already_exists:
             continue
 
         mime_type = sniff_mime_type(data)
         try:
+            metadata = (
+                validate_image(data, mime_type)
+                if mime_type.startswith("image/")
+                else probe_video(data, mime_type)
+            )
+        except MediaValidationError:
+            logger.warning("Media rifiutato dalla validazione per annuncio %s.", advertisement.id)
+            continue
+        try:
             object_key = upload_media_object(record_id, data, mime_type)
-        except Exception:  # noqa: BLE001 - MinIO irraggiungibile non deve bloccare l'intero annuncio
-            logger.exception("Upload MinIO fallito per un media dell'annuncio %s.", advertisement.id)
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "Upload MinIO fallito per un media dell'annuncio %s.", advertisement.id
+            )
             continue
 
-        result = classifier.classify(data, mime_type)
-        session.add(
-            Media(
-                advertisement_id=advertisement.id,
-                original_object_key=object_key,
-                sha256=sha256,
-                mime_type=mime_type,
-                classification=result.classification,
-                classification_confidence=result.confidence,
-                classifier_version=result.model_version,
-            )
+        media = Media(
+            advertisement_id=advertisement.id,
+            original_object_key=object_key,
+            sha256=sha256,
+            mime_type=mime_type,
+            classification="unclassified",
+            processing_status="pending",
+            review_status="required",
+            safety_signals={},
+            file_size_bytes=metadata.file_size_bytes,
+            width=metadata.width,
+            height=metadata.height,
+            duration_seconds=metadata.duration_seconds,
         )
+        session.add(media)
+        session.flush()
+        media_ids.append(media.id)
+    return media_ids
 
 
 def _recompute_canonical(session: Session, record: Record) -> None:
     rows = session.execute(
-        select(Advertisement, Source).join(Source, Source.id == Advertisement.source_id).where(
-            Advertisement.record_id == record.id
-        )
+        select(Advertisement, Source)
+        .join(Source, Source.id == Advertisement.source_id)
+        .where(Advertisement.record_id == record.id)
     ).all()
 
     candidates = [
@@ -260,6 +302,7 @@ def persist_collected_ads(session: Session, source: Source, result: CollectionRe
     locale/interno alla rete Docker, non verso la fonte scrapata)."""
     items_new = 0
     persist_errors: list[ScrapeErrorDetail] = []
+    media_ids: list[uuid.UUID] = []
 
     for item in result.ads:
         phone_raw = item.normalized["phone_raw"]
@@ -267,7 +310,9 @@ def persist_collected_ads(session: Session, source: Source, result: CollectionRe
         try:
             phone_normalized = normalize_phone(phone_raw)
         except PhoneCryptoError as exc:
-            persist_errors.append(ScrapeErrorDetail(url=source_url, message=f"Telefono non valido: {exc}"))
+            persist_errors.append(
+                ScrapeErrorDetail(url=source_url, message=f"Telefono non valido: {exc}")
+            )
             continue
 
         lookup_hash = phone_lookup_hash(phone_normalized)
@@ -278,7 +323,7 @@ def persist_collected_ads(session: Session, source: Source, result: CollectionRe
             items_new += 1
 
         if item.media_bytes:
-            _persist_media(session, record.id, advertisement, item.media_bytes)
+            media_ids.extend(_persist_media(session, record.id, advertisement, item.media_bytes))
 
         _recompute_canonical(session, record)
         session.commit()
@@ -289,4 +334,5 @@ def persist_collected_ads(session: Session, source: Source, result: CollectionRe
         "items_new": items_new,
         "errors": all_errors,
         "errors_count": len(all_errors),
+        "media_ids": [str(media_id) for media_id in media_ids],
     }

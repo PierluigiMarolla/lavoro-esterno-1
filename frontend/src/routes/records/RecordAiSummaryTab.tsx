@@ -42,7 +42,16 @@ export default function RecordAiSummaryTab() {
     return <ErrorState error={summary.error} onRetry={() => summary.refetch()} />;
   }
   if (!summary.data) {
-    return <p className="text-body-md text-on-surface-variant">No AI summary available for this record.</p>;
+    return (
+      <div className="space-y-4">
+        <p className="text-body-md text-on-surface-variant">No AI summary available for this record.</p>
+        <Button onClick={() => regenerate.mutate()} disabled={regenerate.isPending}>
+          <Icon name="auto_awesome" size={18} className={regenerate.isPending ? "animate-spin" : undefined} />
+          {regenerate.isPending ? "Generating asynchronously..." : "Generate Summary"}
+        </Button>
+        {regenerate.isError && <ErrorState error={regenerate.error} />}
+      </div>
+    );
   }
 
   const latestVersionNumber = versions.data && versions.data.length > 0 ? versions.data[0].version : null;
@@ -69,6 +78,7 @@ export default function RecordAiSummaryTab() {
           {regenerate.isPending ? "Regenerating..." : "Regenerate Summary"}
         </Button>
       </div>
+      {regenerate.isError && <ErrorState error={regenerate.error} className="mb-4" />}
 
       <div className="grid grid-cols-12 gap-gutter">
         <div className="col-span-12 lg:col-span-8 flex flex-col gap-gutter">

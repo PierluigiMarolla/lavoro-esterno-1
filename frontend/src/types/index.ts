@@ -200,6 +200,26 @@ export interface RecordMedia {
   sensitivity: MediaSensitivity;
   sourceName: string;
   addedAt: string;
+  classification: "safe" | "explicit" | "unclassified";
+  classificationConfidence: number | null;
+  safetySignals: {
+    explicitContent?: boolean;
+    explicitScore?: number;
+    faceVisible?: boolean;
+    faceScore?: number;
+    watermarkPresent?: boolean;
+    possibleMinorReview?: boolean;
+  };
+  reviewStatus: "not_required" | "required" | "reviewed";
+  processingStatus: "pending" | "processing" | "ready" | "failed";
+  displayUrl: string;
+  originalUrl: string;
+}
+
+export interface WatermarkRemovalConfig {
+  enabled: boolean;
+  authorizationReference: string | null;
+  regions: { x: number; y: number; width: number; height: number }[];
 }
 
 export interface RecordHistoryEvent {
@@ -223,6 +243,18 @@ export interface RecordAiSummary {
 // as opposed to RecordAiSummary which is only ever the latest one.
 export interface RecordAiSummaryVersion extends RecordAiSummary {
   version: number;
+}
+
+export interface SummaryGenerationJob {
+  id: string;
+  recordId: string;
+  status: "pending" | "processing" | "completed" | "failed";
+  resultVersion: number | null;
+  cacheHit: boolean;
+  errorMessage: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
 }
 
 export interface ScrapeError {

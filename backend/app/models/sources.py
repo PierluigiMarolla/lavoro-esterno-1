@@ -38,3 +38,6 @@ class Source(UUIDPKMixin, TimestampMixin, Base):
     # in app/scrapers/registry.py non ha bisogno di questa configurazione
     # finché non viene riattivata tramite il motore generico.
     scrape_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    watermark_removal_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    watermark_authorization_reference: Mapped[str | None] = mapped_column(Text, nullable=True)
+    watermark_regions: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)

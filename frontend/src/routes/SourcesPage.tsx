@@ -218,6 +218,9 @@ function SourceFormDialog({
   const [waitSelector, setWaitSelector] = useState("");
   const [waitMs, setWaitMs] = useState<number | "">("");
   const [fieldRows, setFieldRows] = useState<FieldRow[]>(EMPTY_FIELD_ROWS);
+  const [watermarkEnabled, setWatermarkEnabled] = useState(false);
+  const [watermarkAuthorization, setWatermarkAuthorization] = useState("");
+  const [watermarkRegion, setWatermarkRegion] = useState({ x: 0.7, y: 0.85, width: 0.25, height: 0.1 });
   const [formError, setFormError] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<TestConfigResult | null>(null);
 
@@ -247,6 +250,9 @@ function SourceFormDialog({
       setWaitSelector("");
       setWaitMs("");
       setFieldRows(EMPTY_FIELD_ROWS);
+      setWatermarkEnabled(false);
+      setWatermarkAuthorization("");
+      setWatermarkRegion({ x: 0.7, y: 0.85, width: 0.25, height: 0.1 });
     }
     setFormError(null);
     setTestResult(null);
@@ -258,6 +264,10 @@ function SourceFormDialog({
     setBaseUrl(""); // base_url isn't part of Source (list shape); left blank unless re-typed
     setPriority(detail.data.priority);
     const cfg = detail.data.scrapeConfig;
+    const watermark = detail.data.watermarkRemoval;
+    setWatermarkEnabled(watermark.enabled);
+    setWatermarkAuthorization(watermark.authorizationReference ?? "");
+    setWatermarkRegion(watermark.regions[0] ?? { x: 0.7, y: 0.85, width: 0.25, height: 0.1 });
     if (cfg) {
       setStartUrlsText(cfg.startUrls.join("\n"));
       setAdLinkSelector(cfg.adLinkSelector);
@@ -348,13 +358,18 @@ function SourceFormDialog({
     const scrapeConfig = buildScrapeConfig();
 
     try {
+      const watermarkRemoval = {
+        enabled: watermarkEnabled,
+        authorizationReference: watermarkAuthorization.trim() || null,
+        regions: watermarkEnabled ? [watermarkRegion] : [],
+      };
       if (isEdit && editingSource) {
         await updateSource.mutateAsync({
           id: editingSource.id,
-          input: { name, priority, scrapeConfig, ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}) },
+          input: { name, priority, scrapeConfig, watermarkRemoval, ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}) },
         });
       } else {
-        await createSource.mutateAsync({ name, slug, baseUrl, priority, scrapeConfig });
+        await createSource.mutateAsync({ name, slug, baseUrl, priority, scrapeConfig, watermarkRemoval });
       }
       onClose();
     } catch (err) {
@@ -704,6 +719,39 @@ function SourceFormDialog({
             )}
           </div>
         </div>
+
+        <fieldset className="border border-border rounded-lg p-3 space-y-3">
+          <legend className="px-1 text-label-sm text-on-surface">Authorized watermark removal</legend>
+          <label className="flex items-center gap-2 text-body-md text-on-surface-variant">
+            <input type="checkbox" checked={watermarkEnabled} onChange={(event) => setWatermarkEnabled(event.target.checked)} />
+            Enable for this source (originals are always preserved)
+          </label>
+          {watermarkEnabled && (
+            <>
+              <Input
+                required
+                value={watermarkAuthorization}
+                onChange={(event) => setWatermarkAuthorization(event.target.value)}
+                placeholder="Contract/ticket/legal authorization reference"
+              />
+              <div className="grid grid-cols-4 gap-2">
+                {(["x", "y", "width", "height"] as const).map((key) => (
+                  <label key={key} className="text-label-sm text-on-surface-variant">
+                    {key}
+                    <Input
+                      type="number"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                      value={watermarkRegion[key]}
+                      onChange={(event) => setWatermarkRegion((region) => ({ ...region, [key]: Number(event.target.value) }))}
+                    />
+                  </label>
+                ))}
+              </div>
+            </>
+          )}
+        </fieldset>
 
         {formError && <p className="text-body-md text-error">{formError}</p>}
 

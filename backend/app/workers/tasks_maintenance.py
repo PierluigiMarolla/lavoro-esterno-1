@@ -124,3 +124,76 @@ def cleanup_expired_data() -> dict:
         return result
     finally:
         session.close()
+
+
+@celery_app.task(name="app.workers.tasks_maintenance.cleanup_orphan_media_objects")
+def cleanup_orphan_media_objects() -> dict:
+    """Delete only MinIO media objects not referenced by DB after a grace period."""
+    from minio import Minio
+    from sqlalchemy import select
+
+    from app.models.media import Media
+
+    session = SyncSessionLocal()
+    deleted = 0
+    try:
+        rows = session.execute(
+            select(
+                Media.original_object_key,
+                Media.display_object_key,
+                Media.thumbnail_object_key,
+                Media.derived_object_key,
+            )
+        ).all()
+        referenced = {key for row in rows for key in row if key}
+        cutoff = datetime.now(UTC) - timedelta(hours=settings.MEDIA_ORPHAN_GRACE_HOURS)
+        client = Minio(
+            settings.MINIO_ENDPOINT,
+            access_key=settings.MINIO_ACCESS_KEY,
+            secret_key=settings.MINIO_SECRET_KEY,
+            secure=settings.MINIO_SECURE,
+        )
+        if not client.bucket_exists(settings.MINIO_BUCKET):
+            return {"deleted_orphan_media_objects": 0}
+        for item in client.list_objects(settings.MINIO_BUCKET, prefix="media/", recursive=True):
+            if (
+                item.object_name not in referenced
+                and item.last_modified
+                and item.last_modified < cutoff
+            ):
+                client.remove_object(settings.MINIO_BUCKET, item.object_name)
+                deleted += 1
+        return {"deleted_orphan_media_objects": deleted}
+    finally:
+        session.close()
+
+
+@celery_app.task(name="app.workers.tasks_maintenance.configure_media_lifecycle")
+def configure_media_lifecycle() -> dict:
+    """Expire temporary objects and abort incomplete multipart uploads after one day."""
+    from minio import Minio
+    from minio.commonconfig import ENABLED, Filter
+    from minio.lifecycleconfig import (
+        AbortIncompleteMultipartUpload,
+        Expiration,
+        LifecycleConfig,
+        Rule,
+    )
+
+    client = Minio(
+        settings.MINIO_ENDPOINT,
+        access_key=settings.MINIO_ACCESS_KEY,
+        secret_key=settings.MINIO_SECRET_KEY,
+        secure=settings.MINIO_SECURE,
+    )
+    if not client.bucket_exists(settings.MINIO_BUCKET):
+        client.make_bucket(settings.MINIO_BUCKET)
+    rule = Rule(
+        ENABLED,
+        rule_filter=Filter(prefix="tmp/"),
+        rule_id="temporary-media-one-day",
+        expiration=Expiration(days=1),
+        abort_incomplete_multipart_upload=AbortIncompleteMultipartUpload(days_after_initiation=1),
+    )
+    client.set_bucket_lifecycle(settings.MINIO_BUCKET, LifecycleConfig([rule]))
+    return {"configured": True, "temporary_expiry_days": 1}
