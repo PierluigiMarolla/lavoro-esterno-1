@@ -1,5 +1,5 @@
 import { apiRequest } from "./client";
-import type { AdminUser, UserRole } from "@/types";
+import type { AdminUser, ErasureRequest, UserRole } from "@/types";
 
 export function fetchAdminUsers(): Promise<AdminUser[]> {
   return apiRequest<AdminUser[]>("/admin/users");
@@ -7,6 +7,13 @@ export function fetchAdminUsers(): Promise<AdminUser[]> {
 
 export function updateAdminUserRole(id: string, role: UserRole): Promise<AdminUser> {
   return apiRequest<AdminUser>(`/admin/users/${id}`, { method: "PATCH", body: { role } });
+}
+
+export function updateClearPhonePermission(id: string, canViewClearPhone: boolean): Promise<AdminUser> {
+  return apiRequest<AdminUser>(`/admin/users/${id}`, {
+    method: "PATCH",
+    body: { canViewClearPhone },
+  });
 }
 
 export function suspendAdminUser(id: string): Promise<AdminUser> {
@@ -52,4 +59,20 @@ export interface AuditLogEntry {
 
 export function fetchAuditLog(): Promise<AuditLogEntry[]> {
   return apiRequest<AuditLogEntry[]>("/admin/audit-log");
+}
+
+export function fetchErasureRequests(): Promise<ErasureRequest[]> {
+  return apiRequest<ErasureRequest[]>("/privacy/erasure-requests");
+}
+
+export function createErasureRequest(input: {
+  phone: string;
+  reason: string;
+  authorizationReference: string;
+}): Promise<ErasureRequest> {
+  return apiRequest<ErasureRequest>("/privacy/erasure-requests", { method: "POST", body: input });
+}
+
+export function confirmErasureRequest(id: string): Promise<ErasureRequest> {
+  return apiRequest<ErasureRequest>(`/privacy/erasure-requests/${id}/confirm`, { method: "POST" });
 }

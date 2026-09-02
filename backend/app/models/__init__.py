@@ -14,9 +14,10 @@ from app.models.advertisement import Advertisement
 from app.models.audit_log import AuditLog
 from app.models.base import Base
 from app.models.canonical_history import CanonicalHistory
-from app.models.export_jobs import ExportJob
+from app.models.export_jobs import ExportJob, ExportJobRecord
 from app.models.media import Media
 from app.models.media_classification_history import MediaClassificationHistory
+from app.models.privacy import ErasureRequest, SuppressionEntry
 from app.models.record import Record
 from app.models.scrape_errors import ScrapeError
 from app.models.scrape_runs import ScrapeRun
@@ -39,5 +40,8 @@ __all__ = [
     "SummaryVersion",
     "SummaryGenerationJob",
     "ExportJob",
+    "ExportJobRecord",
+    "ErasureRequest",
+    "SuppressionEntry",
     "AuditLog",
 ]

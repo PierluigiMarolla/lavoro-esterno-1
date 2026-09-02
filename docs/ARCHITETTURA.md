@@ -175,3 +175,13 @@ verificato dal vivo, è più preciso su questi punti (vedi PROGETTO.md § 4):
   casuali/non-AI) sceglie quale annuncio rappresenta il record
   "canonico" mostrato di default, mantenendo comunque accesso allo
   storico completo.
+
+- **Export isolati**: una coda/worker `exports` con concorrenza 1 genera
+  ZIP su disco temporaneo e li carica sotto `exports/{job}/package.zip`.
+  Non condivide capacità con media o AI e non include mai originali.
+- **Privacy orchestration**: le cancellazioni confermate passano sulla
+  coda `maintenance`; la soppressione HMAC viene committata prima di
+  eliminare MinIO/DB, rendendo sicuro anche un retry dopo errore parziale.
+- **Retention DB-aware**: il task notturno elimina prima gli oggetti,
+  invalida gli export derivati e solo dopo modifica il database; un errore
+  storage impedisce di dichiarare completata la cancellazione.

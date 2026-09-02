@@ -53,8 +53,9 @@ from app.schemas.records import (
     SummaryGenerationJobRead,
 )
 from app.security.deps import get_current_user, require_role
+from app.services.audit import log_action
 from app.services.media_storage import presigned_media_url
-from app.services.phone_crypto import decrypt_phone, phone_lookup_hash
+from app.services.phone_crypto import decrypt_phone, mask_phone, phone_lookup_hash
 from app.services.record_search import (
     VERIFIED_CONFIDENCE_THRESHOLD,
     confidence_to_status,
@@ -72,6 +73,13 @@ def _safe_decrypt_phone(encrypted: bytes) -> str:
         return decrypt_phone(encrypted)
     except Exception:  # noqa: BLE001 - difesa deliberatamente ampia, vedi docstring
         return "N/D"
+
+
+def _phone_for_user(encrypted: bytes, user: User) -> tuple[str, str]:
+    phone = _safe_decrypt_phone(encrypted)
+    if user.role == "admin" or user.can_view_clear_phone:
+        return phone, "clear"
+    return mask_phone(phone), "masked"
 
 
 async def _get_record_or_404(db: AsyncSession, record_id: uuid.UUID) -> Record:
@@ -92,6 +100,7 @@ async def _get_record_or_404(db: AsyncSession, record_id: uuid.UUID) -> Record:
 # raggiungere questo handler.
 @router.get("/search", response_model=RecordSearchResponseRead)
 async def search_records(
+    response: Response,
     phone: str | None = Query(None, description="Numero di telefono (intero) da cercare."),
     source: str | None = Query(None, description="Slug o nome della fonte."),
     status_filter: str | None = Query(
@@ -102,7 +111,7 @@ async def search_records(
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ) -> RecordSearchResponseRead:
     """Ricerca paginata di record, con filtri combinabili.
 
@@ -202,10 +211,12 @@ async def search_records(
     )
     rows = (await db.execute(page_stmt)).all()
 
+    visibility = "clear" if user.role == "admin" or user.can_view_clear_phone else "masked"
     results = [
         RecordSearchResultRead(
             id=row.id,
-            phone=_safe_decrypt_phone(row.phone_encrypted),
+            phone=_phone_for_user(row.phone_encrypted, user)[0],
+            phone_visibility=visibility,
             canonical_title=row.title or "(Senza titolo)",
             sources_count=row.sources_count or 0,
             occurrences_count=row.occurrences_count or 0,
@@ -215,6 +226,17 @@ async def search_records(
         )
         for row in rows
     ]
+
+    response.headers["Cache-Control"] = "no-store"
+    if visibility == "clear" and results:
+        await log_action(
+            db,
+            user_id=user.id,
+            action="view_clear_phone",
+            entity_type="record_search",
+            details={"record_ids": [str(item.id) for item in results], "count": len(results)},
+        )
+        await db.commit()
 
     return RecordSearchResponseRead(results=results, total=total, page=page, page_size=page_size)
 
@@ -249,8 +271,9 @@ async def search_record_by_phone(
 @router.get("/{record_id}", response_model=RecordOverviewRead)
 async def get_record_overview(
     record_id: uuid.UUID,
+    response: Response,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ) -> RecordOverviewRead:
     """Dettaglio di un Record per la tab "Overview" (vedi
     `frontend/src/routes/records/RecordOverviewTab.tsx`)."""
@@ -273,9 +296,22 @@ async def get_record_overview(
     )
     confidence = canonical_ad.confidence if canonical_ad else None
 
+    phone, visibility = _phone_for_user(record.phone_encrypted, user)
+    response.headers["Cache-Control"] = "no-store"
+    if visibility == "clear":
+        await log_action(
+            db,
+            user_id=user.id,
+            action="view_clear_phone",
+            entity_type="record",
+            entity_id=str(record.id),
+            details={"count": 1},
+        )
+        await db.commit()
     return RecordOverviewRead(
         id=record.id,
-        phone=_safe_decrypt_phone(record.phone_encrypted),
+        phone=phone,
+        phone_visibility=visibility,
         canonical_title=(canonical_ad.title if canonical_ad else None) or "(Senza titolo)",
         canonical_description=(canonical_ad.description if canonical_ad else None) or "",
         confidence_score=round((confidence or 0.0) * 100, 1),

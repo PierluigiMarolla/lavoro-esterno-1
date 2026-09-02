@@ -131,6 +131,21 @@ def remove_object(object_key: str) -> None:
     _client().remove_object(settings.MINIO_BUCKET, object_key)
 
 
+def upload_file(object_key: str, path: str, content_type: str) -> str:
+    client = _client()
+    _ensure_bucket(client)
+    client.fput_object(settings.MINIO_BUCKET, object_key, path, content_type=content_type)
+    return object_key
+
+
+def download_object_to_file(object_key: str, path: str) -> None:
+    _client().fget_object(settings.MINIO_BUCKET, object_key, path)
+
+
+def list_objects(prefix: str):
+    return _client().list_objects(settings.MINIO_BUCKET, prefix=prefix, recursive=True)
+
+
 def presigned_media_url(object_key: str | None) -> str:
     if not object_key:
         return ""
@@ -138,4 +153,13 @@ def presigned_media_url(object_key: str | None) -> str:
         settings.MINIO_BUCKET,
         object_key,
         expires=timedelta(minutes=settings.MINIO_PRESIGNED_TTL_MINUTES),
+    )
+
+
+def presigned_download_url(object_key: str, filename: str) -> str:
+    return _public_client().presigned_get_object(
+        settings.MINIO_BUCKET,
+        object_key,
+        expires=timedelta(minutes=settings.MINIO_PRESIGNED_TTL_MINUTES),
+        response_headers={"response-content-disposition": f'attachment; filename="{filename}"'},
     )

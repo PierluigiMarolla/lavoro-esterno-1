@@ -1008,8 +1008,8 @@ Il codice dei punti 5 e 6 è implementato. Prima di un deploy effettuare:
    positivi minimi; verificare job, usage, cache hit e output redatto.
 4. Verificare lifecycle MinIO e orphan cleanup su oggetti sintetici,
    confermando che gli originali referenziati non vengano eliminati.
-5. Proseguire con `PROGETTO.md` § 7 (generazione export reale), senza
-   confonderlo con i presigned URL media ora completati.
+5. La generazione export reale, la retention e i flussi GDPR sono stati
+   completati nella sessione 6 riportata più avanti in questo documento.
 
 ## File chiave da leggere per ripartire (sessione 5)
 
@@ -1028,3 +1028,260 @@ Il codice dei punti 5 e 6 è implementato. Prima di un deploy effettuare:
 - `backend/tests/test_media_processing.py`
 - `backend/tests/test_summary_ai.py`
 - `PROGETTO.md` § 5-6 e documentazione in `docs/`.
+
+---
+
+# Sessione 6 — 2 settembre 2026: Export e Sicurezza/GDPR
+
+## Risultato
+
+Completata la sezione 7 e i punti 2–5 della sezione 8 di `PROGETTO.md`:
+
+- export ZIP asincroni su coda/worker `exports`, scope obbligatorio,
+  manifest versionato, JSON/CSV e sole varianti media visualizzabili;
+- relazione `export_job_records`, limiti 1.000 record/2 GiB, storage MinIO,
+  presigned download auditato, ownership Operator e cleanup DB/object;
+- retention configurabile per annunci/media/log/audit, con ricalcolo del
+  canonico e invalidazione delle copie export;
+- workflow Admin di cancellazione con anteprima/conferma, job persistente e
+  registro HMAC di soppressione controllato dall'ingestione;
+- telefono completo sempre per Admin e tramite grant individuale per gli
+  altri ruoli, masking predefinito, `Cache-Control: no-store` e audit;
+- security workflow con Bandit, pip-audit, npm audit, dependency review,
+  Trivy e ZAP; report interno in `docs/SECURITY_REVIEW_2026-09-02.md`.
+
+## Migrazione e file chiave
+
+- Head Alembic: `20260902090000_exports_privacy.py`.
+- Nuovi modelli: `privacy.py`; estesi `users.py` ed `export_jobs.py`.
+- Nuovi worker: `tasks_exports.py`, `tasks_privacy.py`; retention riscritta
+  in `tasks_maintenance.py`.
+- Nuova API: `/privacy/erasure-requests`; export e admin estesi.
+- UI: scope/monitoraggio Export, selezione dalla ricerca, grant telefono e
+  tab Admin Privacy/Erasure.
+
+## Verifiche eseguite
+
+- `ruff check`: superato.
+- `pytest`: 121 passed, 5 skipped opzionali.
+- frontend lint: nessun errore (2 warning Fast Refresh preesistenti).
+- frontend build Vite 8.2.2: superata.
+- Bandit: nessun Medium/High.
+- pip-audit e npm audit: zero vulnerabilità note dopo remediation.
+- migrazione applicata realmente su PostgreSQL 17 temporaneo fino a head.
+- build Docker backend/frontend completate; entrambe le immagini usano utenti
+  non privilegiati (`app` e UID 101).
+- Trivy config scan finale senza High/Critical dopo la remediation dei
+  container root.
+- `docker compose config --quiet` superato con `.env.example`; la copia `.env`
+  temporanea usata per il controllo è stata rimossa.
+
+## Gate ancora esterni
+
+- Gli scan completi Trivy immagini e ZAP sono configurati in CI; i report del
+  runner devono essere archiviati prima del go-live.
+- Playwright richiede lo stack persistente e l'account Admin 2FA delle fixture:
+  non è stato rieseguito localmente in questa sessione.
+- Restano obbligatori pentest indipendente autenticato, TLS/HSTS/CSP con i
+  domini definitivi, secret manager e prova di restore staging.
+- I punti 1 (validazione legale fonti) e 6 (DPA/conformità provider LLM)
+  della sezione 8 restano deliberatamente aperti.
+
+---
+
+# Sessione 7 — Stato definitivo e avvio locale su Windows
+
+## Stato consolidato
+
+- La sezione 7 di `PROGETTO.md` è completata: gli export sono job asincroni,
+  usano una relazione DB per congelare lo scope e vengono elaborati dal worker
+  Celery dedicato `worker-exports` sulla coda `exports`.
+- Gli ZIP sono salvati sotto `exports/` in MinIO, hanno manifest versionato,
+  JSON/CSV, hash SHA-256 e includono solo varianti display/thumbnail; gli
+  originali immutabili non vengono esportati.
+- I punti 2–5 della sezione 8 sono completati per la parte interna: retention
+  configurabile, cancellazione GDPR asincrona con registro HMAC di
+  soppressione, permesso individuale per il telefono in chiaro e security
+  review automatizzata/manuale.
+- Il gate di produzione resta separato: pentest esterno, TLS/secret manager,
+  restore verificato e report completi Trivy/ZAP devono essere chiusi prima
+  del go-live.
+- L'head Alembic corrente è `20260902090000` (`exports_privacy`) e deve essere
+  applicato prima di usare le nuove API.
+
+## Avvio rapido con Docker Compose (PowerShell)
+
+Prerequisiti: Docker Desktop avviato con Docker Compose v2. Eseguire i comandi
+dalla directory radice `lavoro-esterno-1`.
+
+### 1. Preparare l'ambiente
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Generare segreti distinti. Eseguire due volte il comando da 32 byte per
+`PHONE_ENCRYPTION_KEY` e `PHONE_HMAC_SECRET`, senza riutilizzare lo stesso
+valore:
+
+```powershell
+[Convert]::ToBase64String(
+  [Security.Cryptography.RandomNumberGenerator]::GetBytes(32)
+)
+```
+
+Generare separatamente il segreto JWT da 64 byte:
+
+```powershell
+[Convert]::ToBase64String(
+  [Security.Cryptography.RandomNumberGenerator]::GetBytes(64)
+)
+```
+
+Aprire `.env` e sostituire almeno tutti i valori `change-me-*`. In particolare:
+
+- assegnare i tre valori appena generati a `PHONE_ENCRYPTION_KEY`,
+  `PHONE_HMAC_SECRET` e `JWT_SECRET_KEY`;
+- dopo aver modificato `POSTGRES_PASSWORD`, riportare la stessa password in
+  `DATABASE_URL` e `DATABASE_URL_SYNC`;
+- mantenere `MINIO_ACCESS_KEY` coerente con `MINIO_ROOT_USER` e
+  `MINIO_SECRET_KEY` coerente con `MINIO_ROOT_PASSWORD`;
+- impostare una password dedicata in `GF_SECURITY_ADMIN_PASSWORD`.
+
+Non committare `.env`. Il riepilogo OpenAI rimane intenzionalmente disabilitato
+se `OPENAI_API_KEY` è vuota oppure se uno tra
+`AI_USER_DAILY_REQUEST_LIMIT`, `AI_GLOBAL_DAILY_TOKEN_BUDGET` e
+`AI_PROVIDER_REQUESTS_PER_MINUTE` è assente o uguale a zero. Per abilitarlo
+servono una chiave valida e valori positivi per tutti e tre i limiti.
+
+### 2. Costruire e avviare lo stack
+
+```powershell
+docker compose up -d --build
+docker compose ps
+```
+
+Attendere che PostgreSQL, Redis e MinIO risultino healthy. L'API e i worker
+dipendono da questi servizi e possono richiedere qualche secondo aggiuntivo al
+primo avvio.
+
+### 3. Applicare le migrazioni
+
+Le migrazioni non vengono applicate automaticamente all'avvio dell'API:
+
+```powershell
+docker compose exec api alembic upgrade head
+docker compose exec api alembic current
+```
+
+Il secondo comando deve riportare `20260902090000 (head)`.
+
+### 4. Creare il primo Admin
+
+La creazione iniziale avviene fuori dall'API perché la gestione utenti richiede
+già un Admin autenticato con 2FA:
+
+```powershell
+docker compose exec api python -m app.scripts.create_admin `
+  --email admin@lavoro.internal `
+  --password "UnaPasswordForte123!"
+```
+
+Sostituire la password di esempio con una password univoca. Aprire poi
+`http://localhost`, accedere con l'account appena creato e completare il setup
+2FA guidato dalla UI. Salvare immediatamente i backup code: vengono mostrati
+una sola volta.
+
+### 5. Indirizzi locali
+
+- Applicazione: `http://localhost`
+- Swagger/OpenAPI: `http://localhost/docs`
+- Console MinIO: `http://localhost:9001`
+- Grafana: `http://localhost:3000`
+- Prometheus: `http://localhost:9090`
+
+### 6. Diagnostica
+
+```powershell
+docker compose ps
+docker compose logs -f api
+docker compose logs -f worker-exports
+docker compose logs -f worker-media
+docker compose logs -f worker-ai
+```
+
+Ogni comando `logs -f` rimane in ascolto; interromperlo con `Ctrl+C` prima di
+passare al successivo. Per esaminare anche scraping, retention e scheduler usare
+rispettivamente `worker-scraper` e `scheduler`.
+
+### 7. Arresto sicuro
+
+```powershell
+docker compose down
+```
+
+Questo arresta i container conservando i volumi PostgreSQL, MinIO e gli altri
+dati locali. La variante `docker compose down -v` elimina i volumi e quindi i
+dati: è un'operazione distruttiva, da usare solo quando la cancellazione
+completa dell'ambiente è esplicitamente voluta e dopo aver verificato eventuali
+backup.
+
+## Troubleshooting Docker Desktop/Windows
+
+### `localhost` restituisce HTTP 500 o resta in attesa
+
+Su Docker Desktop con backend WSL, `localhost` può risolvere prima a `::1` e
+venire intercettato da `wslrelay` senza raggiungere nginx. Le porte nginx sono
+perciò pubblicate esplicitamente su `127.0.0.1`; il browser deve quindi poter
+ripiegare immediatamente su IPv4. Per distinguere un problema del relay da un
+errore applicativo usare:
+
+```powershell
+curl.exe --noproxy "*" -4 -I http://localhost/
+curl.exe --noproxy "*" -4 http://localhost/api/v1/healthz
+```
+
+Entrambe le richieste devono raggiungere nginx; la prima restituisce `200`.
+Come alternativa diagnostica temporanea aprire direttamente
+`http://127.0.0.1`. Dopo una modifica alle porte ricreare soltanto nginx:
+
+```powershell
+docker compose up -d --force-recreate nginx
+```
+
+Se `::1:80` continua a risultare in ascolto dopo la ricreazione, verificare il
+processo con `Get-NetTCPConnection -State Listen -LocalPort 80`: può trattarsi
+di un `wslrelay` rimasto in memoria con il vecchio mapping. In questa sessione
+anche il riavvio di Docker Desktop non lo ha rimosso; il relay è stato
+terminato solo dopo averne controllato PID e tutte le porte inoltrate. Questa
+operazione può interrompere temporaneamente altri servizi WSL e non va eseguita
+alla cieca. Dopo la rimozione del relay stale, `localhost` è tornato a
+ripiegare su `127.0.0.1` e ha risposto HTTP 200.
+
+### I container backup falliscono su `set -eu`
+
+Gli script montati nei container Alpine devono avere terminatori LF. Il file
+`.gitattributes` impone `eol=lf` a tutti i file `.sh`. Il sintomo tipico di un
+checkout CRLF è `set: illegal option -` oppure `set: -\r: invalid option`.
+Dopo un riavvio del motore Docker, se PostgreSQL o MinIO non sono ancora
+raggiungibili, i backup ritentano dopo 60 secondi; un dump PostgreSQL viene
+pubblicato soltanto quando `pg_dump` e la compressione sono entrambi riusciti.
+Dopo aver normalizzato un checkout, ricreare solo i servizi backup:
+
+```powershell
+docker compose up -d --force-recreate backup-postgres backup-minio
+docker compose ps backup-postgres backup-minio
+docker compose logs --tail=50 backup-postgres backup-minio
+```
+
+Questi comandi non eliminano né ricreano i volumi dati.
+
+### Verifica della correzione del 2 settembre 2026
+
+- `backup-minio.sh`, `backup-postgres.sh` e `restore-postgres.sh`: zero byte
+  CR/CRLF;
+- backup PostgreSQL: dump valido completato e rotazione eseguita;
+- backup MinIO: bucket applicativo creato vuoto e mirror completato;
+- `backup-postgres`, `backup-minio` e `nginx`: stato `Up` stabile;
+- `http://localhost/` e `GET /api/v1/healthz`: HTTP 200;
+- nessun volume Docker è stato eliminato o ricreato.

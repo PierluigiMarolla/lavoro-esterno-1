@@ -6,35 +6,37 @@ test.describe("Exports", () => {
     await loginAsAdmin(page);
   });
 
-  test("creating a Text Only export job shows up in the Recent Jobs table", async ({ page }) => {
+  test("an explicit record selection or filter is required", async ({ page }) => {
     await page.goto("/exports");
-
-    await page.getByTestId("export-card-text_only").getByRole("button", { name: "Create Export" }).click();
-
-    // The new job is created with type "text_only" and status "pending"
-    // (nothing valorizes it further yet, see PROGETTO.md § 7 Export TODOs) —
-    // assert on the row appearing at all rather than a specific status,
-    // since the real worker pipeline isn't implemented in this scaffold.
-    const jobsTable = page.locator("table").last();
-    await expect(jobsTable.getByText("Text Only").first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId("export-card-text_only").getByRole("button", { name: "Create Export" })).toBeDisabled();
+    await expect(page.getByText("no scope selected", { exact: true })).toBeVisible();
   });
 
-  test("a Ready job exposes a working Download action", async ({ page }) => {
-    await page.goto("/exports");
-
-    // Depends on at least one job already being "ready" in this environment
-    // (see docs/DATABASE.md § export retention / PROGETTO.md § 7: no real
-    // worker marks jobs ready automatically today). Skip gracefully if none
-    // exist yet, rather than asserting on state this suite doesn't control.
-    const readyRow = page.locator("tr", { has: page.getByText("Ready", { exact: true }) }).first();
-    const hasReadyJob = await readyRow.isVisible().catch(() => false);
-    test.skip(!hasReadyJob, "No 'ready' export job exists in this environment yet.");
-
-    const [popup] = await Promise.all([
-      page.waitForEvent("popup"),
-      readyRow.getByRole("button", { name: /download/i }).click(),
-    ]);
-    await popup.waitForLoadState();
-    expect(popup.url()).not.toBe("about:blank");
+  test("a selected record enables creation and pending-job polling", async ({ page }) => {
+    const recordId = "00000000-0000-4000-8000-000000000001";
+    const response = {
+      id: "00000000-0000-4000-8000-000000000002",
+      type: "text_only",
+      status: "pending",
+      progressPct: 0,
+      requestedBy: "admin@lavoro.internal",
+      requestedAt: new Date().toISOString(),
+      startedAt: null,
+      completedAt: null,
+      expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+      recordCount: 1,
+      estimatedUncompressedBytes: 0,
+      archiveSizeBytes: null,
+      phoneVisibility: "clear",
+      errorMessage: null,
+      downloadUrl: null,
+    };
+    await page.route("**/api/v1/exports", async (route) => {
+      if (route.request().method() === "POST") await route.fulfill({ json: response, status: 202 });
+      else await route.fulfill({ json: [response] });
+    });
+    await page.goto(`/exports?recordIds=${recordId}`);
+    await page.getByTestId("export-card-text_only").getByRole("button", { name: "Create Export" }).click();
+    await expect(page.getByText("pending", { exact: true })).toBeVisible();
   });
 });

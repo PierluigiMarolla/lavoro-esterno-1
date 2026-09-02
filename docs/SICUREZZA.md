@@ -151,11 +151,10 @@ cliente. Principi applicati nell'architettura:
   finalità dichiarata (deduplicazione annunci, non profilazione estesa);
   il numero di telefono è cifrato, non esposto in chiaro se non
   strettamente necessario nell'interfaccia autorizzata.
-- **Retention configurabile**: i dati raccolti (annunci, media, log) non
-  vanno conservati indefinitamente; la durata di retention per ciascuna
-  categoria di dato è **da definire e rendere configurabile** (vedi
-  `PROGETTO.md`), con job di pulizia periodici (analoghi a quello già
-  previsto per `export_jobs.expires_at`).
+- **Retention configurabile**: annunci 365 giorni, media 180, log tecnici
+  90, audit 365 ed export 7 per default. I valori sono configurabili via
+  ambiente; `0` disabilita esplicitamente una categoria DB. Il task
+  notturno elimina gli oggetti prima delle righe e ricalcola il canonico.
 - **Rispetto dei ToS/robots.txt delle fonti scrapate**: ogni connettore
   scraper deve essere validato legalmente prima dell'attivazione in
   produzione (verifica `robots.txt`, termini di servizio della fonte,
@@ -163,11 +162,31 @@ cliente. Principi applicati nell'architettura:
   `sources.robots_txt_checked_at` / `sources.tos_notes`. Questa
   validazione **non è automatizzabile** e richiede revisione
   legale/umana per ciascuna fonte (elenco completo in `PROGETTO.md`).
-- **Diritti dell'interessato**: essendo dati relativi a persone fisiche
-  (numeri di telefono), vanno predisposte procedure di cancellazione su
-  richiesta e limitazione dell'accesso ai soli ruoli autorizzati (RBAC
-  sopra). Le procedure operative complete sono da finalizzare con
-  consulenza legale (vedi `PROGETTO.md`, sezione Sicurezza/GDPR).
+- **Diritti dell'interessato**: l'Admin crea una bozza identificata dal
+  telefono, verifica l'impatto e conferma un job auditato. La procedura
+  invalida gli export, elimina media/record e conserva solo un HMAC keyed
+  nel registro di soppressione per impedire la riacquisizione. Se si elimina
+  un solo annuncio, il record sopravvive con canonico ricalcolato finché
+  esistono altre occorrenze.
+
+### Visualizzazione del telefono
+
+- Admin vede sempre il valore completo. Operator e Viewer lo ricevono
+  mascherato salvo `users.can_view_clear_phone`, assegnabile solo da Admin
+  con 2FA.
+- Ogni risposta che mostra il valore completo genera `view_clear_phone`;
+  gli eventi contengono soltanto record ID e conteggio. Le risposte hanno
+  `Cache-Control: no-store`.
+- Negli ZIP vale il permesso congelato alla richiesta e ricontrollato dal
+  worker. Se viene revocato prima dell'esecuzione, il job fallisce senza
+  downgrade silenzioso.
+
+### Gate di go-live
+
+La review interna è documentata in `docs/SECURITY_REVIEW_2026-09-02.md`.
+Il go-live resta vietato finché non risultano completati anche pentest
+indipendente, TLS/secret manager di produzione, prova di restore backup e
+chiusura di ogni rilievo High/Critical.
 
 ### Provider AI e media sensibili
 

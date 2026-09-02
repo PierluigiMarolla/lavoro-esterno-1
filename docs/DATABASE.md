@@ -310,3 +310,21 @@ Nessuno script di seed per `sources`: si crea una fonte via API/UI (`POST
 /sources`, form "Add Source" nella pagina Sources), con o senza
 `scrape_config`. Vedi `app/scripts/create_admin.py` per il bootstrap del
 primo utente Admin (unico script "una tantum" rimasto).
+
+## 9. Export e cancellazione GDPR
+
+- `export_job_records` materializza lo scope di ogni export e consente di
+  invalidare pacchetti contenenti un record soggetto a retention/oblio.
+- `export_jobs` conserva conteggi, stima non compressa, dimensione ZIP,
+  policy telefono e timestamp di avvio/completamento/scadenza.
+- `erasure_requests` è il workflow persistente bozza -> pending ->
+  processing -> completed/failed. Non espone né registra il telefono.
+- `suppression_entries` contiene soltanto l'HMAC keyed già usato dalla
+  deduplicazione, con vincolo unique. Non scade automaticamente finché
+  continua il trattamento e impedisce allo scraper di ricreare il record.
+- `users.can_view_clear_phone` è false per default; per gli Admin il
+  permesso effettivo deriva dal ruolo e non dal flag.
+
+La retention predefinita è annunci 365 giorni, media 180, scrape run/error
+e Loki 90, audit 365, pacchetti export 7. Il valore `0` disabilita la
+cancellazione automatica della relativa categoria DB.

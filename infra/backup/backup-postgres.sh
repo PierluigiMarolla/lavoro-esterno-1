@@ -18,6 +18,7 @@
 #
 # Questo backup è LOCALE (stesso host Docker della sorgente): non è un
 # backup off-site/disaster-recovery. Quando si sceglie l'hosting definitivo,
+# Questo file deve essere mantenuto con terminatori LF (vedi .gitattributes).
 # aggiungere qui uno step che copia i dump anche su uno storage remoto
 # (S3-compatible, incluso lo stesso MinIO se esterno all'host, o un bucket
 # cloud) — vedi docs/DATABASE.md § Backup.
@@ -31,19 +32,24 @@ export PGPASSWORD="${POSTGRES_PASSWORD}"
 run_backup() {
     timestamp="$(date +%Y%m%d_%H%M%S)"
     dest="${BACKUP_DIR}/lavoro_esterno_${timestamp}.sql.gz"
+    sql_tmp="${BACKUP_DIR}/.lavoro_esterno_${timestamp}.sql.tmp"
     echo "[backup-postgres] Avvio dump verso ${dest}"
 
     # --clean --if-exists: il dump include i DROP necessari prima di ogni
     # CREATE, così il ripristino (restore-postgres.sh) funziona anche
     # contro un database che ha già le tabelle (il caso comune: sostituire
     # lo stato corrente con quello del backup), non solo contro uno vuoto.
-    if pg_dump -h postgres -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" --clean --if-exists \
-        | gzip > "${dest}.tmp"; then
+    # POSIX sh non offre `pipefail`: scrivere prima il dump non compresso
+    # evita che il successo di gzip nasconda un errore di pg_dump.
+    if pg_dump -h postgres -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" \
+        --clean --if-exists > "${sql_tmp}" \
+        && gzip -c "${sql_tmp}" > "${dest}.tmp"; then
         mv "${dest}.tmp" "${dest}"
+        rm -f "${sql_tmp}"
         echo "[backup-postgres] Dump completato: ${dest} ($(du -h "${dest}" | cut -f1))"
     else
         echo "[backup-postgres] ERRORE durante il dump, file temporaneo rimosso" >&2
-        rm -f "${dest}.tmp"
+        rm -f "${sql_tmp}" "${dest}.tmp"
         return 1
     fi
 
@@ -59,6 +65,10 @@ if [ "${1:-}" = "--once" ]; then
 fi
 
 while true; do
-    run_backup || echo "[backup-postgres] Run fallito, riprovo al prossimo ciclo." >&2
-    sleep 86400
+    if run_backup; then
+        sleep 86400
+    else
+        echo "[backup-postgres] Run fallito, riprovo tra 60 secondi." >&2
+        sleep 60
+    fi
 done

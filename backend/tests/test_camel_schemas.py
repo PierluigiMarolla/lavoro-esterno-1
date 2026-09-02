@@ -127,6 +127,7 @@ def test_record_search_result_serializes_camel_case() -> None:
     result = RecordSearchResultRead(
         id=uuid.uuid4(),
         phone="+393331234567",
+        phone_visibility="clear",
         canonical_title="Titolo",
         sources_count=2,
         occurrences_count=5,
@@ -138,6 +139,7 @@ def test_record_search_result_serializes_camel_case() -> None:
     expected_keys = {
         "id",
         "phone",
+        "phoneVisibility",
         "canonicalTitle",
         "sourcesCount",
         "occurrencesCount",
@@ -158,6 +160,8 @@ def test_export_job_out_serializes_camel_case() -> None:
         requested_by="analyst@example.com",
         requested_at=datetime.now(UTC),
         record_count=1,
+        estimated_uncompressed_bytes=0,
+        phone_visibility="masked",
         download_url=None,
     )
     dumped = job.model_dump(mode="json", by_alias=True)

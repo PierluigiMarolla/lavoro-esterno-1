@@ -54,6 +54,7 @@ def _to_admin_user_read(user: User) -> AdminUserRead:
         status=status_from_is_active(user.is_active),
         mfa_enabled=user.totp_enabled,
         last_login_at=None,
+        can_view_clear_phone=user.role == "admin" or user.can_view_clear_phone,
     )
 
 
@@ -97,6 +98,7 @@ async def create_user(
         email=payload.email,
         password_hash=hash_password(payload.password),
         role=payload.role,
+        can_view_clear_phone=payload.can_view_clear_phone if payload.role != "admin" else False,
         is_active=True,
     )
     db.add(user)
@@ -126,7 +128,7 @@ async def update_user(
     sui permessi del sistema, stesso criterio già applicato a
     `POST /admin/users`.
     """
-    if payload.role not in _VALID_ROLES:
+    if payload.role is not None and payload.role not in _VALID_ROLES:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Ruolo non valido: '{payload.role}'. Valori ammessi: {sorted(_VALID_ROLES)}.",
@@ -134,7 +136,13 @@ async def update_user(
 
     target = await _get_user_or_404(db, user_id)
     previous_role = target.role
-    target.role = payload.role
+    previous_phone_permission = target.can_view_clear_phone
+    if payload.role is not None:
+        target.role = payload.role
+    if target.role == "admin":
+        target.can_view_clear_phone = False
+    elif payload.can_view_clear_phone is not None:
+        target.can_view_clear_phone = payload.can_view_clear_phone
     db.add(target)
 
     await log_action(
@@ -143,7 +151,12 @@ async def update_user(
         action="update_user_role",
         entity_type="user",
         entity_id=str(user_id),
-        details={"previous_role": previous_role, "new_role": payload.role},
+        details={
+            "previous_role": previous_role,
+            "new_role": target.role,
+            "previous_clear_phone": previous_phone_permission,
+            "new_clear_phone": target.role == "admin" or target.can_view_clear_phone,
+        },
     )
     await db.commit()
     await db.refresh(target)

@@ -123,6 +123,13 @@ def decrypt_phone(encrypted: bytes) -> str:
     return decrypt_bytes(encrypted).decode("utf-8")
 
 
+def mask_phone(phone: str) -> str:
+    """Mask a normalized phone while preserving only a routing hint."""
+    if len(phone) <= 5:
+        return "*" * len(phone)
+    return f"{phone[:3]}{'*' * (len(phone) - 5)}{phone[-2:]}"
+
+
 def phone_lookup_hash(raw_or_normalized: str) -> str:
     """Calcola l'hash di lookup deterministico (HMAC-SHA256, esadecimale)
     per un numero di telefono, dopo averlo normalizzato.

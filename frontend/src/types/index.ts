@@ -140,6 +140,7 @@ export interface ActivityEvent {
 export interface RecordSearchResult {
   id: string;
   phone: string;
+  phoneVisibility: "clear" | "masked";
   canonicalTitle: string;
   sourcesCount: number;
   occurrencesCount: number;
@@ -168,6 +169,7 @@ export interface RecordSearchResponse {
 export interface RecordOverview {
   id: string;
   phone: string;
+  phoneVisibility: "clear" | "masked";
   canonicalTitle: string;
   canonicalDescription: string;
   confidenceScore: number;
@@ -278,7 +280,15 @@ export interface ScrapeRun {
 }
 
 export type ExportType = "text_only" | "complete_media" | "safe_complete";
-export type ExportStatus = "ready" | "processing" | "failed";
+export type ExportStatus = "pending" | "ready" | "processing" | "failed";
+
+export interface ExportFilters {
+  phone?: string;
+  source?: string;
+  status?: "verified" | "unverified" | "flagged";
+  dateFrom?: string;
+  dateTo?: string;
+}
 
 export interface ExportJob {
   id: string;
@@ -287,7 +297,14 @@ export interface ExportJob {
   progressPct: number;
   requestedBy: string;
   requestedAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  expiresAt: string | null;
   recordCount: number;
+  estimatedUncompressedBytes: number;
+  archiveSizeBytes: number | null;
+  phoneVisibility: "clear" | "masked";
+  errorMessage: string | null;
   downloadUrl: string | null;
 }
 
@@ -299,6 +316,21 @@ export interface AdminUser {
   status: "active" | "suspended" | "invited";
   mfaEnabled: boolean;
   lastLoginAt: string | null;
+  canViewClearPhone: boolean;
+}
+
+export interface ErasureRequest {
+  id: string;
+  recordId: string | null;
+  status: "draft" | "pending" | "processing" | "completed" | "failed";
+  reason: string;
+  authorizationReference: string;
+  impact: Record<string, number>;
+  result: Record<string, unknown> | null;
+  errorMessage: string | null;
+  createdAt: string;
+  confirmedAt: string | null;
+  completedAt: string | null;
 }
 
 export interface Paginated<T> {

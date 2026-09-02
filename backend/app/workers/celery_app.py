@@ -22,6 +22,8 @@ celery_app = Celery(
         "app.workers.tasks_scraper",
         "app.workers.tasks_media",
         "app.workers.tasks_ai",
+        "app.workers.tasks_exports",
+        "app.workers.tasks_privacy",
         "app.workers.tasks_maintenance",
     ],
 )
@@ -36,6 +38,8 @@ celery_app.conf.update(
         "app.workers.tasks_scraper.*": {"queue": "scraping"},
         "app.workers.tasks_media.*": {"queue": "media"},
         "app.workers.tasks_ai.*": {"queue": "ai"},
+        "app.workers.tasks_exports.*": {"queue": "exports"},
+        "app.workers.tasks_privacy.*": {"queue": "maintenance"},
         # I task di manutenzione (pulizia retention) sono leggeri e poco
         # frequenti (una volta al giorno): li instradiamo sulla coda
         # "scraping" già esistente invece di introdurre un servizio Celery

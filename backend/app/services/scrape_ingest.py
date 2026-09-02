@@ -316,6 +316,20 @@ def persist_collected_ads(session: Session, source: Source, result: CollectionRe
             continue
 
         lookup_hash = phone_lookup_hash(phone_normalized)
+        # A completed/confirmed right-to-erasure request must not be undone by
+        # the next scraper run.  Store only the keyed HMAC and aggregate
+        # counters: the clear phone is never copied into the suppression log.
+        from app.models.privacy import SuppressionEntry
+
+        suppression = session.execute(
+            select(SuppressionEntry).where(SuppressionEntry.phone_lookup_hash == lookup_hash)
+        ).scalar_one_or_none()
+        if suppression is not None:
+            suppression.blocked_ingestions += 1
+            suppression.last_blocked_at = datetime.now(UTC)
+            session.add(suppression)
+            session.commit()
+            continue
         record = _get_or_create_record(session, lookup_hash, phone_normalized)
 
         advertisement, is_new = _upsert_advertisement(session, record, source, item.normalized)

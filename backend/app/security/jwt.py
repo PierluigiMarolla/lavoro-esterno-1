@@ -1,4 +1,4 @@
-"""Creazione e validazione di access/refresh JWT (python-jose, HS256).
+"""Creazione e validazione di access/refresh JWT (PyJWT, HS256).
 
 Due token distinti per due scopi distinti:
 - access token: vita breve (default 15 minuti), inviato ad ogni richiesta API,
@@ -16,7 +16,7 @@ from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any
 
-from jose import JWTError, jwt
+import jwt
 
 from app.config import settings
 
@@ -104,7 +104,7 @@ def decode_token(token: str, expected_type: TokenType) -> dict[str, Any]:
     token su un endpoint protetto)."""
     try:
         payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
-    except JWTError as exc:
+    except jwt.PyJWTError as exc:
         raise TokenError(f"Token non valido o scaduto: {exc}") from exc
 
     if payload.get("type") != expected_type.value:

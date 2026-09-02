@@ -1,5 +1,7 @@
 FROM python:3.13-slim
 
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
 # Dipendenze di sistema minime richieste da psycopg2 (build) e Pillow/lxml (parsing/immagini).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -26,7 +28,12 @@ RUN pip install --no-cache-dir -e .
 # Chromium headless per Scrapling DynamicFetcher/StealthyFetcher.
 # DynamicFetcher usa Playwright; StealthyFetcher usa Patchright.
 RUN playwright install --with-deps chromium \
-    && patchright install chromium
+    && patchright install chromium \
+    && groupadd --system app \
+    && useradd --system --gid app --create-home app \
+    && chown -R app:app /app /ms-playwright
+
+USER app
 
 EXPOSE 8000
 

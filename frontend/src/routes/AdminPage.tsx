@@ -6,6 +6,10 @@ import {
   useAuditLog,
   useCreateAdminUser,
   useResetAdminUserTwoFactor,
+  useUpdateClearPhonePermission,
+  useConfirmErasureRequest,
+  useCreateErasureRequest,
+  useErasureRequests,
 } from "@/hooks/useAdmin";
 import { useAuth } from "@/context/AuthContext";
 import { ApiError } from "@/api/client";
@@ -27,10 +31,11 @@ import type { AdminUser, UserRole } from "@/types";
 // router-driven <Tabs> component: /admin is a single flat route (no nested
 // paths per tab in App.tsx), so there is nothing for NavLink to match against.
 
-type AdminTab = "users" | "source-priorities" | "classifiers" | "audit-log";
+type AdminTab = "users" | "privacy" | "source-priorities" | "classifiers" | "audit-log";
 
 const TABS: { key: AdminTab; label: string }[] = [
   { key: "users", label: "Users & Roles" },
+  { key: "privacy", label: "Privacy / Erasure" },
   { key: "source-priorities", label: "Source Priorities" },
   { key: "classifiers", label: "Classifiers" },
   { key: "audit-log", label: "Audit Log" },
@@ -110,6 +115,7 @@ export default function AdminPage() {
       </div>
 
       {tab === "users" && <UsersTab />}
+      {tab === "privacy" && <PrivacyTab />}
       {tab === "source-priorities" && (
         <ComingSoon icon="low_priority" title="Source Priorities" message="Priority configuration for data sources is not yet implemented." />
       )}
@@ -125,6 +131,7 @@ function UsersTab() {
   const users = useAdminUsers();
   const updateRole = useUpdateAdminUserRole();
   const suspend = useSuspendAdminUser();
+  const updatePhonePermission = useUpdateClearPhonePermission();
   const [createOpen, setCreateOpen] = useState(false);
   const [resetTarget, setResetTarget] = useState<AdminUser | null>(null);
 
@@ -147,13 +154,14 @@ function UsersTab() {
               <Th>Status</Th>
               <Th>Last Login</Th>
               <Th className="text-center">MFA</Th>
+              <Th className="text-center">Clear phone</Th>
               <Th className="text-right">Actions</Th>
             </Tr>
           </THead>
           <TBody>
-            {users.isLoading && <LoadingRow colSpan={7} />}
-            {users.isError && <ErrorRow colSpan={7} error={users.error} onRetry={() => users.refetch()} />}
-            {users.data && users.data.length === 0 && <EmptyRow colSpan={7} message="No users found." />}
+            {users.isLoading && <LoadingRow colSpan={8} />}
+            {users.isError && <ErrorRow colSpan={8} error={users.error} onRetry={() => users.refetch()} />}
+            {users.data && users.data.length === 0 && <EmptyRow colSpan={8} message="No users found." />}
             {users.data?.map((user) => (
               <Tr key={user.id}>
                 <Td>
@@ -187,6 +195,19 @@ function UsersTab() {
                   ) : (
                     <Icon name="gpp_maybe" size={18} className="text-outline" />
                   )}
+                </Td>
+                <Td className="text-center">
+                  <input
+                    type="checkbox"
+                    aria-label={`Allow ${user.email} to view clear phone numbers`}
+                    checked={user.canViewClearPhone}
+                    disabled={user.role === "admin" || updatePhonePermission.isPending}
+                    onChange={(event) =>
+                      updatePhonePermission.mutate({ id: user.id, enabled: event.target.checked })
+                    }
+                    title={user.role === "admin" ? "Admins always have this permission" : undefined}
+                    className="h-4 w-4 accent-primary"
+                  />
                 </Td>
                 <Td className="text-right">
                   <div className="flex items-center justify-end gap-3">
@@ -342,6 +363,57 @@ function ResetTwoFactorDialog({ user, onClose }: { user: AdminUser | null; onClo
         </div>
       </div>
     </Dialog>
+  );
+}
+
+function PrivacyTab() {
+  const requests = useErasureRequests();
+  const createRequest = useCreateErasureRequest();
+  const confirmRequest = useConfirmErasureRequest();
+  const [phone, setPhone] = useState("");
+  const [reason, setReason] = useState("");
+  const [reference, setReference] = useState("");
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    createRequest.mutate(
+      { phone, reason, authorizationReference: reference },
+      { onSuccess: () => { setPhone(""); setReason(""); setReference(""); } },
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      <form onSubmit={submit} className="bg-surface-container-lowest border border-border rounded-lg p-5 grid md:grid-cols-3 gap-4">
+        <div className="md:col-span-3">
+          <h3 className="text-headline-sm">New erasure preview</h3>
+          <p className="text-body-md text-on-surface-variant">Creating a draft does not delete data. Review the impact, then confirm explicitly.</p>
+        </div>
+        <input required value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="Phone number" className="rounded border border-border bg-surface p-2" />
+        <input required minLength={3} value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Authorization reference" className="rounded border border-border bg-surface p-2" />
+        <input required minLength={3} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Reason" className="rounded border border-border bg-surface p-2" />
+        <div className="md:col-span-3 flex justify-end"><Button type="submit" disabled={createRequest.isPending}>Create preview</Button></div>
+        {createRequest.isError && <p className="md:col-span-3 text-error">{describeError(createRequest.error).description}</p>}
+      </form>
+
+      <div className="bg-surface-container-lowest border border-border rounded-lg overflow-hidden">
+        <Table><THead><Tr><Th>Created</Th><Th>Reference</Th><Th>Impact</Th><Th>Status</Th><Th className="text-right">Action</Th></Tr></THead>
+          <TBody>
+            {requests.isLoading && <LoadingRow colSpan={5} />}
+            {requests.isError && <ErrorRow colSpan={5} error={requests.error} onRetry={() => requests.refetch()} />}
+            {requests.data?.length === 0 && <EmptyRow colSpan={5} message="No erasure requests." />}
+            {requests.data?.map((request) => (
+              <Tr key={request.id}>
+                <Td>{formatDateTime(request.createdAt)}</Td><Td>{request.authorizationReference}</Td>
+                <Td className="font-mono text-xs">{Object.entries(request.impact).map(([key, value]) => `${key}: ${value}`).join(" · ")}</Td>
+                <Td><Badge tone={request.status === "completed" ? "success" : request.status === "failed" ? "error" : "warning"}>{request.status}</Badge>{request.errorMessage && <div className="text-xs text-error">{request.errorMessage}</div>}</Td>
+                <Td className="text-right">{(request.status === "draft" || request.status === "failed") && <button onClick={() => confirmRequest.mutate(request.id)} disabled={confirmRequest.isPending} className="text-primary font-medium">Confirm deletion</button>}</Td>
+              </Tr>
+            ))}
+          </TBody>
+        </Table>
+      </div>
+    </div>
   );
 }
 

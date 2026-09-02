@@ -38,6 +38,7 @@ class User(UUIDPKMixin, TimestampMixin, Base):
     backup_codes_hash: Mapped[list | None] = mapped_column(JSONB, nullable=True)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    can_view_clear_phone: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # Timestamp di "validità minima" dei token: ogni access/refresh JWT porta
     # con sé il claim `sst` (security stamp), preso da questo campo al momento

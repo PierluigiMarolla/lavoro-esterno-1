@@ -1,4 +1,4 @@
-"""Endpoint per la richiesta e gestione di esportazioni (ExportJob)."""
+"""Asynchronous, explicitly scoped export API."""
 
 from __future__ import annotations
 
@@ -6,206 +6,260 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import false, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.config import settings
 from app.db import get_db
-from app.models.export_jobs import ExportJob
+from app.models.advertisement import Advertisement
+from app.models.export_jobs import ExportJob, ExportJobRecord
+from app.models.media import Media
+from app.models.record import Record
+from app.models.sources import Source
 from app.models.users import User
-from app.schemas.exports import DownloadUrlResponse, ExportJobCreate, ExportJobOut
+from app.schemas.exports import DownloadUrlResponse, ExportFilters, ExportJobCreate, ExportJobOut
 from app.security.deps import require_role
 from app.services.audit import log_action
+from app.services.media_storage import presigned_download_url
+from app.services.phone_crypto import PhoneCryptoError, phone_lookup_hash
+from app.services.record_search import VERIFIED_CONFIDENCE_THRESHOLD
 
 router = APIRouter()
-
-# Numero massimo di job restituiti da GET /exports: il frontend
-# (`fetchExportJobs`) non passa parametri di paginazione, quindi
-# restituiamo semplicemente gli N più recenti invece di ogni job mai creato.
 _RECENT_EXPORTS_LIMIT = 100
 
 
-def _record_count(job: ExportJob) -> int:
-    """Numero di record coperti dal job, per il campo `recordCount` atteso
-    dal frontend. Un job "singolo" ha `record_id` valorizzato (1 record); un
-    job "bulk" conserva l'elenco in `manifest_json["record_ids"]` (vedi
-    `ExportJobCreate`); un bulk basato solo su `filters` (ricerca, non lista
-    esplicita di id) non ha un conteggio noto finché il worker non lo
-    processa: restituiamo 0 in quel caso."""
-    if job.record_id is not None:
-        return 1
-    manifest = job.manifest_json or {}
-    record_ids = manifest.get("record_ids")
-    if isinstance(record_ids, list):
-        return len(record_ids)
-    return 0
+def _can_view_clear_phone(user: User) -> bool:
+    return user.role == "admin" or user.can_view_clear_phone
 
 
-def _download_url(job: ExportJob) -> str | None:
-    """URL di download "placeholder" per un export pronto.
-
-    TODO: la generazione di un vero URL firmato (presigned URL MinIO con
-    scadenza) richiede l'integrazione col client MinIO (vedi le variabili
-    `MINIO_*` in `app/config.py`) e, a monte, un worker che genera
-    effettivamente il pacchetto e valorizza `object_key` — nessuno dei due è
-    ancora implementato in questo scaffold (vedi PROGETTO.md). Qui ci
-    limitiamo a costruire un path deterministico verso l'endpoint MinIO
-    configurato quando `object_key` è già valorizzato, così l'endpoint
-    dedicato (`GET /exports/{id}/download`) ha comunque un comportamento
-    coerente da subito.
-    """
-    if not job.object_key:
+def _expiry_from(now: datetime) -> datetime | None:
+    if settings.EXPORT_RETENTION_DAYS <= 0:
         return None
-    scheme = "https" if settings.MINIO_SECURE else "http"
-    return f"{scheme}://{settings.MINIO_ENDPOINT}/{settings.MINIO_BUCKET}/{job.object_key}"
+    return now + timedelta(days=settings.EXPORT_RETENTION_DAYS)
 
 
-def _to_export_job_out(job: ExportJob, requested_by_email: str) -> ExportJobOut:
+def _to_out(job: ExportJob, email: str) -> ExportJobOut:
     return ExportJobOut(
         id=job.id,
         type=job.type,
         status=job.status,
         progress_pct=job.progress_percent,
-        requested_by=requested_by_email,
+        requested_by=email,
         requested_at=job.requested_at,
-        record_count=_record_count(job),
-        download_url=_download_url(job),
+        started_at=job.started_at,
+        completed_at=job.completed_at,
+        expires_at=job.expires_at,
+        record_count=job.record_count,
+        estimated_uncompressed_bytes=job.estimated_uncompressed_bytes,
+        archive_size_bytes=job.archive_size_bytes,
+        phone_visibility="clear" if job.include_clear_phone else "masked",
+        error_message=job.error_message,
+        # Signed download URLs are issued only by the dedicated audited
+        # endpoint, never as a side effect of listing jobs.
+        download_url=None,
     )
 
 
-@router.post("", response_model=ExportJobOut, status_code=201)
+async def _resolve_scope(
+    db: AsyncSession, record_ids: list[uuid.UUID] | None, filters: ExportFilters | None
+) -> list[uuid.UUID]:
+    if record_ids:
+        rows = (
+            (await db.execute(select(Record.id).where(Record.id.in_(record_ids)))).scalars().all()
+        )
+        if len(rows) != len(record_ids):
+            raise HTTPException(status_code=404, detail="Uno o più record non esistono.")
+        return list(rows)
+
+    assert filters is not None
+    canonical = aliased(Advertisement)
+    stmt = select(Record.id).outerjoin(canonical, canonical.id == Record.canonical_ad_id)
+    if filters.phone:
+        try:
+            lookup = phone_lookup_hash(filters.phone)
+        except PhoneCryptoError as exc:
+            raise HTTPException(status_code=422, detail="Filtro telefono non valido.") from exc
+        stmt = stmt.where(Record.phone_lookup_hash == lookup)
+    if filters.source:
+        source_match = (
+            select(Advertisement.id)
+            .join(Source, Source.id == Advertisement.source_id)
+            .where(
+                Advertisement.record_id == Record.id,
+                or_(Source.slug == filters.source, Source.name == filters.source),
+            )
+        )
+        stmt = stmt.where(source_match.exists())
+    if filters.date_from:
+        stmt = stmt.where(
+            select(Advertisement.id)
+            .where(
+                Advertisement.record_id == Record.id,
+                Advertisement.last_seen_at >= filters.date_from,
+            )
+            .exists()
+        )
+    if filters.date_to:
+        stmt = stmt.where(
+            select(Advertisement.id)
+            .where(
+                Advertisement.record_id == Record.id,
+                Advertisement.first_seen_at <= filters.date_to,
+            )
+            .exists()
+        )
+    if filters.status == "verified":
+        stmt = stmt.where(canonical.confidence >= VERIFIED_CONFIDENCE_THRESHOLD)
+    elif filters.status == "unverified":
+        stmt = stmt.where(
+            or_(canonical.confidence < VERIFIED_CONFIDENCE_THRESHOLD, canonical.id.is_(None))
+        )
+    elif filters.status == "flagged":
+        stmt = stmt.where(false())
+    return list((await db.execute(stmt.limit(settings.EXPORT_MAX_RECORDS + 1))).scalars().all())
+
+
+async def _estimate_media_bytes(db: AsyncSession, record_ids: list[uuid.UUID]) -> int:
+    value = await db.scalar(
+        select(func.coalesce(func.sum(Media.file_size_bytes), 0))
+        .join(Advertisement, Advertisement.id == Media.advertisement_id)
+        .where(Advertisement.record_id.in_(record_ids))
+    )
+    return int(value or 0)
+
+
+async def _get_visible_job(db: AsyncSession, job_id: uuid.UUID, user: User) -> ExportJob:
+    job = await db.get(ExportJob, job_id)
+    if job is None or (user.role != "admin" and job.requested_by_user_id != user.id):
+        raise HTTPException(status_code=404, detail="Export non trovato.")
+    return job
+
+
+@router.post("", response_model=ExportJobOut, status_code=status.HTTP_202_ACCEPTED)
 async def create_export(
     payload: ExportJobCreate,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_role("admin", "operator")),
 ) -> ExportJobOut:
-    """Crea una richiesta di export in stato "pending".
+    ids = await _resolve_scope(db, payload.record_ids, payload.filters)
+    if not ids:
+        raise HTTPException(status_code=422, detail="Lo scope non contiene record.")
+    if len(ids) > settings.EXPORT_MAX_RECORDS:
+        raise HTTPException(status_code=413, detail="Limite massimo di record superato.")
+    estimated = 0 if payload.type == "text_only" else await _estimate_media_bytes(db, ids)
+    if estimated > settings.EXPORT_MAX_UNCOMPRESSED_BYTES:
+        raise HTTPException(status_code=413, detail="Dimensione massima dell'export superata.")
 
-    L'elaborazione effettiva (raccolta dei dati/media, scrittura su MinIO) è
-    delegata a un worker asincrono non ancora implementato in questo
-    scaffold (da aggiungere in app/workers/, analogamente a
-    tasks_media.py/tasks_ai.py); qui ci limitiamo a persistere la richiesta
-    in modo che l'API sia già utilizzabile end-to-end dal punto di vista del
-    client.
-    """
-    record_ids = payload.record_ids or []
-    single_record_id = record_ids[0] if len(record_ids) == 1 else None
-
-    manifest: dict | None = None
-    if len(record_ids) > 1:
-        manifest = {"record_ids": [str(rid) for rid in record_ids]}
-    if payload.filters:
-        manifest = {**(manifest or {}), "filters": payload.filters}
-
+    clear = _can_view_clear_phone(user)
+    now = datetime.now(UTC)
     job = ExportJob(
-        record_id=single_record_id,
+        record_id=ids[0] if len(ids) == 1 else None,
         type=payload.type,
         status="pending",
         progress_percent=0,
         requested_by_user_id=user.id,
-        manifest_json=manifest,
-        # Il pacchetto (quando esisterà davvero, vedi TODO su _download_url)
-        # viene considerato scaduto EXPORT_RETENTION_DAYS dopo la RICHIESTA,
-        # non dal completamento: un job rimasto "pending"/"failed" a lungo
-        # non deve restare "eterno" solo perché non è mai stato completato.
-        expires_at=datetime.now(UTC) + timedelta(days=settings.EXPORT_RETENTION_DAYS),
+        requested_at=now,
+        expires_at=_expiry_from(now),
+        manifest_json={
+            "filters": payload.filters.model_dump(mode="json") if payload.filters else None
+        },
+        record_count=len(ids),
+        estimated_uncompressed_bytes=estimated,
+        include_clear_phone=clear,
     )
     db.add(job)
+    await db.flush()
+    db.add_all([ExportJobRecord(export_job_id=job.id, record_id=record_id) for record_id in ids])
     await log_action(
         db,
         user_id=user.id,
         action="create_export",
         entity_type="export_job",
-        details={"type": payload.type, "record_count": len(record_ids)},
+        entity_id=str(job.id),
+        details={
+            "type": job.type,
+            "record_count": len(ids),
+            "phone_visibility": "clear" if clear else "masked",
+        },
     )
     await db.commit()
     await db.refresh(job)
 
-    return _to_export_job_out(job, requested_by_email=user.email)
+    from app.workers.tasks_exports import generate_export
+    try:
+        generate_export.delay(str(job.id))
+    except Exception:  # broker unavailable: persist a retryable safe state
+        job.status = "failed"
+        job.error_message = "Worker export temporaneamente non disponibile."
+        await db.commit()
+    return _to_out(job, user.email)
 
 
 @router.get("", response_model=list[ExportJobOut])
 async def list_exports(
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(require_role("admin", "operator")),
+    user: User = Depends(require_role("admin", "operator")),
 ) -> list[ExportJobOut]:
-    """Storico dei job di esportazione (i più recenti per primi).
-
-    Riservato ad admin/operator, come la creazione: gli export possono
-    contenere dati personali (numeri di telefono in chiaro nei formati
-    "complete_media") e non sono quindi visibili ai soli viewer.
-    """
-    stmt = (
-        select(ExportJob, User.email)
-        .join(User, User.id == ExportJob.requested_by_user_id)
-        .order_by(ExportJob.requested_at.desc())
-        .limit(_RECENT_EXPORTS_LIMIT)
-    )
-    rows = (await db.execute(stmt)).all()
-    return [_to_export_job_out(job, requested_by_email=email) for job, email in rows]
+    stmt = select(ExportJob, User.email).join(User, User.id == ExportJob.requested_by_user_id)
+    if user.role != "admin":
+        stmt = stmt.where(ExportJob.requested_by_user_id == user.id)
+    rows = (
+        await db.execute(stmt.order_by(ExportJob.requested_at.desc()).limit(_RECENT_EXPORTS_LIMIT))
+    ).all()
+    return [_to_out(job, email) for job, email in rows]
 
 
-async def _get_export_or_404(db: AsyncSession, job_id: uuid.UUID) -> ExportJob:
-    job = await db.get(ExportJob, job_id)
-    if job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export non trovato.")
-    return job
-
-
-@router.post("/{job_id}/retry", response_model=ExportJobOut)
+@router.post("/{job_id}/retry", response_model=ExportJobOut, status_code=status.HTTP_202_ACCEPTED)
 async def retry_export(
     job_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_role("admin", "operator")),
 ) -> ExportJobOut:
-    """Reimposta un export fallito a "pending", pronto per essere
-    ripreso dal worker (non ancora implementato, vedi `create_export`)."""
-    job = await _get_export_or_404(db, job_id)
+    job = await _get_visible_job(db, job_id, user)
     if job.status != "failed":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Solo un export in stato 'failed' può essere ripetuto.",
-        )
-
+        raise HTTPException(status_code=400, detail="Solo un export fallito può essere ripetuto.")
     job.status = "pending"
     job.progress_percent = 0
     job.error_message = None
+    job.started_at = None
     job.completed_at = None
-    # Un retry riparte "da zero": la finestra di retention decorre di nuovo
-    # da ora, altrimenti un job più volte rifiutato potrebbe risultare già
-    # scaduto per il task di pulizia subito dopo essere stato riavviato.
-    job.expires_at = datetime.now(UTC) + timedelta(days=settings.EXPORT_RETENTION_DAYS)
-    db.add(job)
+    job.expires_at = _expiry_from(datetime.now(UTC))
     await log_action(
-        db, user_id=user.id, action="retry_export", entity_type="export_job", entity_id=str(job_id)
+        db, user_id=user.id, action="retry_export", entity_type="export_job", entity_id=str(job.id)
     )
     await db.commit()
-    await db.refresh(job)
-
+    from app.workers.tasks_exports import generate_export
+    try:
+        generate_export.delay(str(job.id))
+    except Exception:
+        job.status = "failed"
+        job.error_message = "Worker export temporaneamente non disponibile."
+        await db.commit()
     requester = await db.get(User, job.requested_by_user_id)
-    requested_by_email = requester.email if requester else "N/D"
-    return _to_export_job_out(job, requested_by_email=requested_by_email)
+    return _to_out(job, requester.email if requester else "N/D")
 
 
 @router.get("/{job_id}/download", response_model=DownloadUrlResponse)
 async def get_export_download_url(
     job_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(require_role("admin", "operator")),
+    user: User = Depends(require_role("admin", "operator")),
 ) -> DownloadUrlResponse:
-    """URL di download del pacchetto di export.
-
-    La generazione reale del pacchetto (worker + upload su MinIO) non è
-    ancora implementata (vedi `_download_url` sopra e PROGETTO.md): finché
-    `object_key` non è valorizzato non esiste alcun pacchetto da scaricare,
-    quindi rispondiamo 409 Conflict con un messaggio esplicito invece di un
-    URL rotto/finto.
-    """
-    job = await _get_export_or_404(db, job_id)
-    url = _download_url(job)
-    if url is None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Il pacchetto di export non è ancora pronto per il download.",
-        )
-    return DownloadUrlResponse(url=url)
+    job = await _get_visible_job(db, job_id, user)
+    if job.status != "ready" or not job.object_key:
+        raise HTTPException(status_code=409, detail="Il pacchetto non è pronto.")
+    if job.expires_at and job.expires_at <= datetime.now(UTC):
+        raise HTTPException(status_code=410, detail="Il pacchetto è scaduto.")
+    await log_action(
+        db,
+        user_id=user.id,
+        action="download_export",
+        entity_type="export_job",
+        entity_id=str(job.id),
+    )
+    await db.commit()
+    return DownloadUrlResponse(
+        url=presigned_download_url(job.object_key, f"export-{job.id}.zip"),
+        expires_at=job.expires_at,
+    )

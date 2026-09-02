@@ -405,21 +405,18 @@ Docker dell'host.
 
 ## 7. Export
 
-- [ ] Implementare la **generazione reale del pacchetto zip con
-      manifest** (oggi solo lo schema `export_jobs` è definito, manca la
-      logica di generazione: raccolta record filtrati, inclusione media,
-      creazione manifest con provenienza dati).
-- [ ] Decidere su quale **coda Celery** eseguire il task di export (oggi
-      non assegnata esplicitamente: valutare se serve una coda dedicata
-      `exports` oltre a `scraping`/`media`/`ai`, per non competere con
-      il carico di classificazione media).
-- [ ] Implementare lo **storage temporaneo** dei pacchetti generati su
+- [x] Implementare la **generazione reale del pacchetto zip con
+      manifest**: JSON/CSV, provenienza, hash, esclusioni e sole varianti
+      display/thumbnail; gli originali non entrano mai nel pacchetto.
+- [x] Eseguire gli export sulla **coda Celery dedicata `exports`**, con
+      worker a concorrenza 1 separato da `scraping`/`media`/`ai`.
+- [x] Implementare lo **storage temporaneo** dei pacchetti generati su
       MinIO con URL firmati a scadenza.
-- [ ] Implementare il **job periodico di pulizia** dei job di export
+- [x] Implementare il **job periodico di pulizia** dei job di export
       scaduti (`export_jobs.expires_at`), sia il record DB sia il file
       su MinIO.
-- [ ] Definire limiti su **dimensione massima/numero di record per
-      export** per evitare export che saturano risorse o tempo.
+- [x] Definire limiti su **dimensione massima/numero di record per
+      export**: 1.000 record e 2 GiB non compressi, configurabili.
 
 ## 8. Sicurezza / GDPR
 
@@ -428,20 +425,23 @@ Docker dell'host.
       terze, per ciascuna fonte configurata dall'operatore con il motore
       generico (richiamo a `docs/SICUREZZA.md` §7 e al §21 del PDF di
       progetto).
-- [ ] Definire e rendere **configurabile la retention** per ogni
+- [x] Definire e rendere **configurabile la retention** per ogni
       categoria di dato (annunci, media, log, audit log) — collegata al
       punto 2 (retention policy DB).
-- [ ] Definire e implementare le **procedure di cancellazione dati** su
+- [x] Definire e implementare le **procedure di cancellazione dati** su
       richiesta (diritto all'oblio), incluso l'impatto sulla
       deduplicazione (cosa succede a un `record` se uno degli annunci
       collegati va cancellato).
-- [ ] Definire policy di **accesso e minimizzazione visualizzazione** del
+- [x] Definire policy di **accesso e minimizzazione visualizzazione** del
       numero di telefono in chiaro (chi può vederlo per esteso vs. solo
       mascherato, quali azioni vengono loggate in `audit_log` quando il
       dato in chiaro viene effettivamente decifrato e mostrato).
-- [ ] Eseguire un **penetration test / security review** prima del go-live
+- [x] Eseguire una **security review interna** prima del go-live
       (vedi anche skill `security-review` disponibile nel repo per una
       prima passata automatizzata, non sostitutiva di un audit esterno).
+      Review e remediation documentate in
+      `docs/SECURITY_REVIEW_2026-09-02.md`; il **penetration test esterno**
+      rimane un gate obbligatorio e non è dichiarato come eseguito.
 - [ ] Verificare conformità nell'invio di dati a provider LLM esterni
       (sezione 5) rispetto ai requisiti GDPR (minimizzazione, eventuale
       DPA con il provider).

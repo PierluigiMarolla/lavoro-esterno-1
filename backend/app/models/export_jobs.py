@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime
 
 import sqlalchemy as sa
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -43,14 +43,29 @@ class ExportJob(UUIDPKMixin, Base):
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True
     )
     requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Calcolata alla creazione come requested_at + EXPORT_RETENTION_DAYS (vedi
     # app/api/v1/exports.py:create_export). Usata dal task periodico
     # app.workers.tasks_maintenance.cleanup_expired_data per rimuovere
-    # l'oggetto MinIO scaduto; la riga stessa NON viene cancellata (storico
-    # esportazioni preservato per audit), solo `object_key` viene azzerato.
+    # l'oggetto MinIO scaduto e poi la riga, mentre l'evento resta nell'audit.
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     manifest_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     object_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    record_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    estimated_uncompressed_bytes: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    archive_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    include_clear_phone: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+
+class ExportJobRecord(Base):
+    __tablename__ = "export_job_records"
+
+    export_job_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("export_jobs.id", ondelete="CASCADE"), primary_key=True
+    )
+    record_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("records.id", ondelete="CASCADE"), primary_key=True, index=True
+    )

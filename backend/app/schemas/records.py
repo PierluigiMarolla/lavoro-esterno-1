@@ -92,6 +92,7 @@ class RecordSearchResultRead(CamelModel):
 
     id: uuid.UUID
     phone: str
+    phone_visibility: str
     canonical_title: str
     sources_count: int
     occurrences_count: int
@@ -116,6 +117,7 @@ class RecordOverviewRead(CamelModel):
 
     id: uuid.UUID
     phone: str
+    phone_visibility: str
     canonical_title: str
     canonical_description: str
     confidence_score: float

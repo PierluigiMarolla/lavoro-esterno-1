@@ -16,6 +16,7 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str
     role: str = "viewer"
+    can_view_clear_phone: bool = False
 
     @model_validator(mode="after")
     def _validate_password_strength(self) -> UserCreate:
@@ -53,13 +54,21 @@ class AdminUserRead(CamelModel):
     status: Literal["active", "suspended", "invited"]
     mfa_enabled: bool
     last_login_at: datetime | None
+    can_view_clear_phone: bool
 
 
 class AdminUserUpdate(CamelModel):
     """Body di `PATCH /admin/users/{id}`: oggi supporta solo il cambio
     ruolo (`frontend/src/api/admin.ts:updateAdminUserRole`)."""
 
-    role: str
+    role: str | None = None
+    can_view_clear_phone: bool | None = None
+
+    @model_validator(mode="after")
+    def require_change(self) -> AdminUserUpdate:
+        if self.role is None and self.can_view_clear_phone is None:
+            raise ValueError("Specificare almeno una modifica.")
+        return self
 
 
 class AuditLogEntryRead(CamelModel):

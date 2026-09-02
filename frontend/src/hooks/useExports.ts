@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient, type Query } from "@tanstack/react-query";
 import * as exportsApi from "@/api/exports";
-import type { ExportJob, ExportType } from "@/types";
+import type { ExportJob } from "@/types";
+import type { CreateExportInput } from "@/api/exports";
 
 const jobsKey = ["exports", "jobs"] as const;
 
@@ -18,7 +19,7 @@ export function useExportJobs() {
       // separate "pending" state in the API today); "processing" is the
       // only non-terminal status, so that's what keeps polling alive.
       const jobs = query.state.data;
-      const hasActiveJob = jobs?.some((job) => job.status === "processing");
+      const hasActiveJob = jobs?.some((job) => job.status === "pending" || job.status === "processing");
       return hasActiveJob ? ACTIVE_POLL_INTERVAL_MS : false;
     },
   });
@@ -27,8 +28,7 @@ export function useExportJobs() {
 export function useCreateExportJob() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ type, recordIds }: { type: ExportType; recordIds?: string[] }) =>
-      exportsApi.createExportJob(type, recordIds),
+    mutationFn: (input: CreateExportInput) => exportsApi.createExportJob(input),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: jobsKey }),
   });
 }

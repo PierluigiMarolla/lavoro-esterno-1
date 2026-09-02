@@ -163,7 +163,7 @@ devono essere presentati dalla UI come sensibili.
 
 | Metodo | Path | Scopo |
 |---|---|---|
-| POST | `/api/v1/exports` | Crea un job di esportazione (`type` + `record_ids` e/o `filters`) -> record in `export_jobs`, stato iniziale `pending`. Riservato ad Admin/Operator. |
+| POST | `/api/v1/exports` | Crea un job asincrono con esattamente uno tra `recordIds` non vuoto e filtri tipizzati. Risponde `202`; massimo 1.000 record/2 GB. |
 | GET | `/api/v1/exports` | Storico dei job di esportazione (i più recenti), con `requestedBy`/`progressPct`/`recordCount`/`downloadUrl` calcolati. Riservato ad Admin/Operator. |
 | POST | `/api/v1/exports/{job_id}/retry` | Reimposta un job `failed` a `pending`. |
 | GET | `/api/v1/exports/{job_id}/download` | URL di download del pacchetto. **TODO**: la generazione reale del pacchetto (worker + upload MinIO) non è implementata; risponde `409` finché `object_key` non è valorizzato, altrimenti un URL placeholder verso l'endpoint MinIO configurato (non ancora un presigned URL vero). |
@@ -203,3 +203,21 @@ devono essere presentati dalla UI come sensibili.
   fase di implementazione) sugli endpoint che restituiscono liste.
 - Tutte le risposte di errore seguono lo schema standard di FastAPI
   (`detail`), consultabile nello schema OpenAPI su `/docs`.
+
+## Export e privacy (settembre 2026)
+
+- Gli export richiedono uno scope esplicito. `recordIds` e `filters` sono
+  mutuamente esclusivi; i filtri supportati sono telefono esatto, fonte,
+  stato e intervallo date. L'elenco risolto viene congelato in
+  `export_job_records` prima dell'accodamento.
+- `GET /exports` mostra tutti i job agli Admin e solo i propri agli
+  Operator. `GET /exports/{id}/download` è l'unico endpoint che emette un
+  URL firmato ed è sempre auditato.
+- `POST /privacy/erasure-requests` crea una bozza con l'impatto stimato;
+  `POST /privacy/erasure-requests/{id}/confirm` avvia la cancellazione.
+  Lista e dettaglio sono disponibili con `GET` sugli stessi path. Tutta
+  l'area è Admin-only e creazione/conferma richiedono 2FA.
+- `PATCH /admin/users/{id}` accetta anche `canViewClearPhone`. Il ruolo
+  Admin ha il permesso in modo intrinseco; per Operator/Viewer è revocabile.
+- Le risposte record espongono `phoneVisibility` (`clear` o `masked`) e
+  hanno `Cache-Control: no-store`.

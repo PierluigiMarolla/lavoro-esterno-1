@@ -230,3 +230,19 @@ Dettagli completi in `docs/DATABASE.md` (§ 5-7). In sintesi:
   docker compose exec backup-postgres sh /scripts/restore-postgres.sh \
       /backups/lavoro_esterno_<timestamp>.sql.gz
   ```
+
+## Verifiche sicurezza
+
+```bash
+cd backend
+uv run bandit -r app -ll -ii
+uv run pip-audit
+
+cd ../frontend
+npm audit --audit-level=high
+```
+
+Il workflow `.github/workflows/security.yml` aggiunge dependency review,
+Trivy su repository/immagini e ZAP baseline/OpenAPI su stack effimero.
+High/Critical bloccano la CI; le scansioni ZAP complete girano su schedule
+o avvio manuale e pubblicano i report come artifact.

@@ -16,6 +16,7 @@
 #
 # ATTENZIONE: questo script SOVRASCRIVE il contenuto del database indicato
 # da POSTGRES_DB/POSTGRES_USER (lo stesso database applicativo, se eseguito
+# Questo file deve essere mantenuto con terminatori LF (vedi .gitattributes).
 # nell'ambiente di sviluppo/staging di default) con quanto contenuto nel
 # dump. Non eseguire contro un database di produzione senza aver prima
 # verificato di puntare all'istanza corretta.

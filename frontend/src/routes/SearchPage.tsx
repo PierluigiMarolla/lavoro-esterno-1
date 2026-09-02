@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useRecordSearch } from "@/hooks/useRecords";
 import { useSources } from "@/hooks/useSources";
@@ -34,6 +34,7 @@ export default function SearchPage() {
   // Filters live in the URL query string (not local state) so a refresh
   // doesn't lose the search and the URL can be shared/bookmarked as-is.
   const [searchParams, setSearchParams] = useSearchParams();
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const phone = searchParams.get("phone") ?? "";
   const source = searchParams.get("source") ?? "";
@@ -93,6 +94,12 @@ export default function SearchPage() {
 
   const total = search.data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const filterExportParams = new URLSearchParams({ scope: "filters" });
+  if (phone) filterExportParams.set("phone", phone);
+  if (source) filterExportParams.set("source", source);
+  if (status) filterExportParams.set("status", status);
+  if (dateFrom) filterExportParams.set("dateFrom", dateFrom);
+  if (dateTo) filterExportParams.set("dateTo", dateTo);
 
   return (
     <div className="space-y-6">
@@ -197,12 +204,31 @@ export default function SearchPage() {
               </span>
             )}
           </div>
+          {hasFilters && search.data && search.data.results.length > 0 && (
+            <div className="flex gap-2">
+              {selectedIds.size > 0 && (
+                <Link
+                  to={`/exports?recordIds=${encodeURIComponent([...selectedIds].join(","))}`}
+                  className="px-3 py-2 rounded bg-surface-container-high text-label-sm text-on-surface"
+                >
+                  Export selected ({selectedIds.size})
+                </Link>
+              )}
+              <Link
+                to={`/exports?${filterExportParams.toString()}`}
+                className="px-3 py-2 rounded bg-primary text-on-primary text-label-sm"
+              >
+                Export all matching
+              </Link>
+            </div>
+          )}
         </div>
 
         <div className="bg-surface-container-lowest border border-border rounded-lg shadow-[0_1px_2px_rgba(0,0,0,0.02)] flex flex-col min-h-[300px]">
           <Table>
             <THead>
               <Tr className="hover:bg-transparent">
+                <Th className="text-center">Select</Th>
                 <Th>Phone Number</Th>
                 <Th>Canonical Title</Th>
                 <Th className="text-right">Sources</Th>
@@ -214,18 +240,34 @@ export default function SearchPage() {
             </THead>
             <TBody>
               {!hasFilters && (
-                <EmptyRow colSpan={7} message="Enter a phone number or apply a filter to search records." />
+                <EmptyRow colSpan={8} message="Enter a phone number or apply a filter to search records." />
               )}
-              {hasFilters && search.isLoading && <LoadingRow colSpan={7} />}
+              {hasFilters && search.isLoading && <LoadingRow colSpan={8} />}
               {hasFilters && search.isError && (
-                <ErrorRow colSpan={7} error={search.error} onRetry={() => search.refetch()} />
+                <ErrorRow colSpan={8} error={search.error} onRetry={() => search.refetch()} />
               )}
               {hasFilters && search.data && search.data.results.length === 0 && (
-                <EmptyRow colSpan={7} message="No records match these filters." />
+                <EmptyRow colSpan={8} message="No records match these filters." />
               )}
               {hasFilters &&
                 search.data?.results.map((record) => (
                   <Tr key={record.id}>
+                    <Td className="text-center">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select record ${record.id}`}
+                        checked={selectedIds.has(record.id)}
+                        onChange={(event) => {
+                          setSelectedIds((current) => {
+                            const next = new Set(current);
+                            if (event.target.checked) next.add(record.id);
+                            else next.delete(record.id);
+                            return next;
+                          });
+                        }}
+                        className="h-4 w-4 accent-primary"
+                      />
+                    </Td>
                     <Td>
                       <div className="flex items-center gap-2">
                         <Icon name="call" size={16} className="text-outline" />
