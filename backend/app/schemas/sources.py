@@ -150,12 +150,26 @@ class ScrapeConfigInput(CamelModel):
     def _require_phone_field(
         cls, value: dict[str, ScrapeFieldConfig]
     ) -> dict[str, ScrapeFieldConfig]:
+        if "image" in value:
+            raise ValueError(
+                "Il campo media deve chiamarsi 'images' (plurale), non 'image'."
+            )
         if "phone" not in value:
             raise ValueError(
                 "La configurazione deve includere un selettore per il campo 'phone': "
                 "senza un numero di telefono estratto, un annuncio non può essere "
                 "collegato a nessun Record (vedi app/services/scrape_ingest.py)."
             )
+        for field_name in ("images", "videos"):
+            media_field = value.get(field_name)
+            if media_field is None:
+                continue
+            if not media_field.multiple:
+                raise ValueError(f"Il campo media '{field_name}' deve avere multiple=true.")
+            if media_field.attribute not in {"src", "href"}:
+                raise ValueError(
+                    f"Il campo media '{field_name}' deve usare l'attributo 'src' o 'href'."
+                )
         return value
 
 
@@ -303,6 +317,7 @@ class TestConfigResult(CamelModel):
     ad_urls_found: int
     sample_url: str | None = None
     extracted_fields: dict | None = None
+    warnings: list[str] = Field(default_factory=list)
     error: str | None = None
 
 

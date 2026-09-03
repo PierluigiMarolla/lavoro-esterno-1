@@ -58,6 +58,11 @@ class Settings(BaseSettings):
         default=None,
         description="Endpoint MinIO raggiungibile dal browser per gli URL presigned.",
     )
+    MINIO_REGION: str = Field(
+        default="us-east-1",
+        min_length=1,
+        description="Regione S3 condivisa da MinIO e client per firmare URL senza I/O.",
+    )
     MINIO_PRESIGNED_TTL_MINUTES: int = Field(default=15, ge=1, le=60)
 
     # --- Media -----------------------------------------------------------

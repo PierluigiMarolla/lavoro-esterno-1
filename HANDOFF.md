@@ -1276,6 +1276,32 @@ docker compose logs --tail=50 backup-postgres backup-minio
 
 Questi comandi non eliminano né ricreano i volumi dati.
 
+### La tab Media restituisce HTTP 500
+
+Se il traceback contiene `HTTPConnectionPool(host='localhost', port=9000)`
+durante `presigned_get_object`, il client MinIO sta tentando di determinare la
+regione interrogando l'endpoint pubblico dall'interno del container API. In
+Docker, `localhost` indica il container stesso. La configurazione corretta
+mantiene separati gli endpoint e specifica la regione:
+
+```dotenv
+MINIO_ENDPOINT=minio:9000
+MINIO_PUBLIC_ENDPOINT=localhost:9000
+MINIO_REGION=us-east-1
+```
+
+`docker-compose.yml` passa lo stesso valore a MinIO come
+`MINIO_SITE_REGION`. Il backend usa la regione esplicita per generare URL
+presigned senza richieste di rete verso `MINIO_PUBLIC_ENDPOINT`. Dopo una
+modifica ricreare soltanto MinIO e API, preservando il volume dati:
+
+```powershell
+docker compose up -d --force-recreate minio
+docker compose up -d --build api
+```
+
+Non usare `docker compose down -v`: eliminerebbe anche i media salvati.
+
 ### Verifica della correzione del 2 settembre 2026
 
 - `backup-minio.sh`, `backup-postgres.sh` e `restore-postgres.sh`: zero byte

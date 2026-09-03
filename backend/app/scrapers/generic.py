@@ -28,18 +28,21 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import logging
 import socket
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import httpx
 
-from app.scrapers.base import Scraper
+from app.scrapers.base import MediaDownloadFailure, MediaDownloadResult, Scraper
 
 _DEFAULT_MAX_PAGES = 3
 _DEFAULT_MAX_ADS_PER_RUN = 50
 _REQUEST_TIMEOUT_SECONDS = 15.0
 _BROWSER_NAVIGATION_TIMEOUT_MS = 20_000
+
+logger = logging.getLogger(__name__)
 
 
 class RobotsDisallowedError(Exception):
@@ -227,23 +230,64 @@ class GenericScraper(Scraper):
             return values
         return values[0] if values else None
 
-    async def download_media(self, ad: dict[str, Any]) -> list[bytes]:
-        image_urls = [*(ad.get("images") or []), *(ad.get("videos") or [])]
-        results: list[bytes] = []
-        for image_url in image_urls:
+    def media_extraction_warnings(self, ad: dict[str, Any]) -> list[str]:
+        """Segnala campi media configurati che non hanno estratto URL."""
+        fields = self._config_value("fields", "fields", {})
+        warnings: list[str] = []
+        for field_name, label in (("images", "immagine"), ("videos", "video")):
+            if field_name in fields and not ad.get(field_name):
+                warnings.append(
+                    f"Nessun URL {label} trovato dal selettore configurato per '{field_name}'."
+                )
+        return warnings
+
+    @staticmethod
+    def _safe_media_error(exc: Exception) -> str:
+        if isinstance(exc, RobotsDisallowedError):
+            return "Download media vietato da robots.txt."
+        if isinstance(exc, httpx.HTTPStatusError):
+            return f"Il server media ha risposto HTTP {exc.response.status_code}."
+        if isinstance(exc, httpx.TimeoutException):
+            return "Timeout durante il download media."
+        if isinstance(exc, httpx.HTTPError):
+            return "Errore HTTP durante il download media."
+        if isinstance(exc, PageFetchError):
+            safe_messages = (
+                "URL media non HTTP(S).",
+                "Host media non risolvibile.",
+                "URL media verso rete privata o riservata bloccato.",
+                "Redirect media senza Location.",
+                "Media oltre il limite massimo.",
+                "Risposta media troncata rispetto a Content-Length.",
+                "Troppi redirect durante il download media.",
+            )
+            message = str(exc)
+            return message if message in safe_messages else "Download media non riuscito."
+        return "Errore inatteso durante il download media."
+
+    async def download_media(self, ad: dict[str, Any]) -> MediaDownloadResult:
+        media_urls = [*(ad.get("images") or []), *(ad.get("videos") or [])]
+        result = MediaDownloadResult(attempted_count=len(media_urls))
+        for media_url in media_urls:
             try:
                 await self._ensure_robots_loaded()
                 from app.services.robots_check import is_allowed
 
-                absolute_url = urljoin(self.base_url, image_url)
+                absolute_url = urljoin(self.base_url, media_url)
                 if not is_allowed(self._robots_txt, absolute_url, self.user_agent):
                     raise RobotsDisallowedError(absolute_url)
 
                 await asyncio.sleep(self.rate_limit_seconds)
-                results.append(await self._download_media_stream(absolute_url))
-            except (RobotsDisallowedError, PageFetchError, Exception):  # noqa: BLE001
-                continue
-        return results
+                result.media_bytes.append(await self._download_media_stream(absolute_url))
+            except Exception as exc:  # noqa: BLE001 - download best-effort per singolo media
+                # Non loggare l'eccezione o l'URL media: possono contenere token.
+                logger.warning(
+                    "Download media fallito per la fonte '%s' (%s).",
+                    self.slug,
+                    type(exc).__name__,
+                )
+                result.failures.append(MediaDownloadFailure(self._safe_media_error(exc)))
+        return result
 
     @staticmethod
     async def _assert_public_url(url: str) -> None:

@@ -128,12 +128,27 @@ async def collect_ads(source: Source) -> CollectionResult:
                 continue
 
             media_bytes: list[bytes] = []
+            media_issues = scraper.media_extraction_warnings(raw)
             try:
-                media_bytes = await scraper.download_media(normalized)
-            except Exception:  # noqa: BLE001 - il download media è "best effort"
-                logger.exception(
-                    "Download media fallito per l'annuncio %s (annuncio comunque salvato).", url
+                media_result = await scraper.download_media(normalized)
+                media_bytes = media_result.media_bytes
+                if media_result.failures:
+                    media_issues.append(
+                        "Download media: "
+                        f"{media_result.failed_count} di {media_result.attempted_count} file "
+                        f"non scaricati. Primo errore: {media_result.failures[0].message}"
+                    )
+            except Exception as exc:  # noqa: BLE001 - protezione best-effort del run
+                # Non serializzare l'eccezione: potrebbe contenere l'URL media.
+                logger.error(
+                    "Download media fallito per un annuncio della fonte '%s' (%s).",
+                    source.slug,
+                    type(exc).__name__,
                 )
+                media_issues.append("Errore inatteso durante il download dei media.")
+
+            if media_issues:
+                errors.append(ScrapeErrorDetail(url=url, message=" ".join(media_issues)))
 
             collected.append(CollectedAd(normalized=normalized, media_bytes=media_bytes))
 

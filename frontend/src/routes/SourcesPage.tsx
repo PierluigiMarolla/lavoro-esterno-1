@@ -384,7 +384,13 @@ function SourceFormDialog({
       const result = await testConfig.mutateAsync(editingSource.id);
       setTestResult(result);
     } catch (err) {
-      setTestResult({ adUrlsFound: 0, sampleUrl: null, extractedFields: null, error: describeError(err).description });
+      setTestResult({
+        adUrlsFound: 0,
+        sampleUrl: null,
+        extractedFields: null,
+        warnings: [],
+        error: describeError(err).description,
+      });
     }
   }
 
@@ -686,6 +692,13 @@ function SourceFormDialog({
                   </div>
                 ))}
               </div>
+              <div className="rounded border border-border bg-surface-container-low p-2 text-label-sm text-on-surface-variant">
+                <p>
+                  Media fields must be named <code>images</code> or <code>videos</code> and have <code>multi</code> enabled.
+                </p>
+                <p className="mt-1 font-mono">Thumbnail: img.full-image + src</p>
+                <p className="font-mono">Original: a:has(img.full-image) + href</p>
+              </div>
             </div>
 
             {isEdit && (
@@ -702,6 +715,13 @@ function SourceFormDialog({
                         <p className="text-on-surface">Found {testResult.adUrlsFound} ad link(s).</p>
                         {testResult.sampleUrl && (
                           <p className="font-mono text-on-surface-variant truncate">Sample: {testResult.sampleUrl}</p>
+                        )}
+                        {testResult.warnings.length > 0 && (
+                          <div className="mt-2 rounded border border-warning/40 bg-warning/10 p-2 text-warning">
+                            {testResult.warnings.map((warning) => (
+                              <p key={warning}>{warning}</p>
+                            ))}
+                          </div>
                         )}
                         {testResult.extractedFields && (
                           <pre className="mt-1 overflow-x-auto text-on-surface-variant">

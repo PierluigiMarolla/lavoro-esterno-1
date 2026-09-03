@@ -87,6 +87,7 @@ export interface TestConfigResult {
   adUrlsFound: number;
   sampleUrl: string | null;
   extractedFields: Record<string, unknown> | null;
+  warnings: string[];
   error: string | null;
 }
 

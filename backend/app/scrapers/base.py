@@ -9,7 +9,32 @@ scraper" passando per lo slug.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from typing import Any
+
+
+@dataclass(frozen=True)
+class MediaDownloadFailure:
+    """Errore sicuro relativo a un singolo URL media.
+
+    Non conserva deliberatamente l'URL: i link media possono contenere token
+    o altri identificatori e non devono finire nei log o nello storico run.
+    """
+
+    message: str
+
+
+@dataclass
+class MediaDownloadResult:
+    """Esito best-effort del download dei media di un annuncio."""
+
+    attempted_count: int = 0
+    media_bytes: list[bytes] = field(default_factory=list)
+    failures: list[MediaDownloadFailure] = field(default_factory=list)
+
+    @property
+    def failed_count(self) -> int:
+        return len(self.failures)
 
 
 class Scraper(ABC):
@@ -44,7 +69,7 @@ class Scraper(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def download_media(self, ad: dict[str, Any]) -> list[bytes]:
+    async def download_media(self, ad: dict[str, Any]) -> MediaDownloadResult:
         """Scarica i file media (immagini/video) referenziati da un annuncio già estratto."""
         raise NotImplementedError
 

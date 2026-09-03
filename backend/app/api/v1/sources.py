@@ -516,7 +516,10 @@ async def test_source_config(
             )
         raw = await scraper.scrape_ad(ad_urls[0])
         return TestConfigResult(
-            ad_urls_found=len(ad_urls), sample_url=ad_urls[0], extracted_fields=raw
+            ad_urls_found=len(ad_urls),
+            sample_url=ad_urls[0],
+            extracted_fields=raw,
+            warnings=scraper.media_extraction_warnings(raw),
         )
     except RobotsDisallowedError as exc:
         return TestConfigResult(ad_urls_found=0, error=f"robots.txt vieta l'accesso: {exc}")

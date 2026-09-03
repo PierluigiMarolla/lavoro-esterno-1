@@ -100,7 +100,8 @@ async def test_download_media_uses_scrapling_http_regardless_of_render_js(
     finally:
         await scraper.aclose()
 
-    assert len(media) == 2
+    assert len(media.media_bytes) == 2
+    assert media.failed_count == 0
     assert all(sniff_mime_type(blob) == "image/jpeg" for blob in media)
 
 

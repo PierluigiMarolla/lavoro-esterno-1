@@ -197,7 +197,10 @@ npm run build
 ```
 
 `MINIO_PUBLIC_ENDPOINT` deve essere raggiungibile dal browser, mentre
-`MINIO_ENDPOINT` resta l'indirizzo interno usato dai container. I task Beat
+`MINIO_ENDPOINT` resta l'indirizzo interno usato dai container.
+`MINIO_REGION` deve coincidere con `MINIO_SITE_REGION` del server (default
+`us-east-1`): specificarla consente di firmare gli URL localmente, senza
+tentare una richiesta dal container verso l'endpoint pubblico. I task Beat
 configurano il lifecycle giornalmente e rimuovono di notte solo oggetti non
 referenziati da oltre `MEDIA_ORPHAN_GRACE_HOURS`.
 

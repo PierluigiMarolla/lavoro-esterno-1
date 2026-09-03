@@ -189,6 +189,27 @@ async def test_scrape_ad_extracts_configured_fields(open_site_url: str) -> None:
     assert raw["images"] == ["/img1.jpg", "/img2.jpg"]
 
 
+@pytest.mark.parametrize(
+    ("selector", "attribute"),
+    [
+        ("img.full-image", "src"),
+        ("a:has(img.full-image)", "href"),
+    ],
+)
+async def test_scrape_ad_extracts_thumbnail_or_original_image_urls(
+    open_site_url: str, selector: str, attribute: str
+) -> None:
+    fields = {
+        **_BASE_CONFIG["fields"],
+        "images": {"selector": selector, "attribute": attribute, "multiple": True},
+    }
+    scraper = _scraper(open_site_url, fields=fields)
+
+    raw = await scraper.scrape_ad(f"{open_site_url}/ad1.html")
+
+    assert raw["images"] == ["/img1.jpg", "/img2.jpg"]
+
+
 async def test_normalize_maps_raw_fields_to_common_shape(open_site_url: str) -> None:
     scraper = _scraper(open_site_url)
     raw = await scraper.scrape_ad(f"{open_site_url}/ad1.html")
@@ -219,8 +240,62 @@ async def test_download_media_fetches_real_bytes_and_sniffs_as_jpeg(open_site_ur
 
     media = await scraper.download_media(normalized)
 
-    assert len(media) == 2
-    assert all(sniff_mime_type(blob) == "image/jpeg" for blob in media)
+    assert media.attempted_count == 2
+    assert media.failed_count == 0
+    assert len(media.media_bytes) == 2
+    assert all(sniff_mime_type(blob) == "image/jpeg" for blob in media.media_bytes)
+
+
+async def test_download_media_reports_failure_without_exposing_media_url(
+    monkeypatch: pytest.MonkeyPatch, open_site_url: str
+) -> None:
+    scraper = _scraper(open_site_url)
+    secret_url = "https://cdn.example.invalid/image.jpg?secret=do-not-log"
+
+    async def fail_download(_url: str) -> bytes:
+        raise RuntimeError(secret_url)
+
+    async def skip_robots() -> None:
+        scraper._robots_fetched = True
+
+    monkeypatch.setattr(scraper, "_ensure_robots_loaded", skip_robots)
+    monkeypatch.setattr("app.services.robots_check.is_allowed", lambda *args: True)
+    monkeypatch.setattr(scraper, "_download_media_stream", fail_download)
+
+    result = await scraper.download_media({"images": [secret_url], "videos": []})
+
+    assert result.attempted_count == 1
+    assert result.failed_count == 1
+    assert result.media_bytes == []
+    assert secret_url not in result.failures[0].message
+    assert result.failures[0].message == "Errore inatteso durante il download media."
+
+
+async def test_download_media_reports_partial_http_failure(open_site_url: str) -> None:
+    scraper = _scraper(open_site_url)
+
+    result = await scraper.download_media(
+        {"images": ["/img1.jpg", "/missing-image.jpg"], "videos": []}
+    )
+
+    assert result.attempted_count == 2
+    assert len(result.media_bytes) == 1
+    assert result.failed_count == 1
+    assert result.failures[0].message == "Il server media ha risposto HTTP 404."
+
+
+def test_media_extraction_warning_only_for_configured_empty_media(open_site_url: str) -> None:
+    scraper = _scraper(open_site_url)
+    assert scraper.media_extraction_warnings({"images": []}) == [
+        "Nessun URL immagine trovato dal selettore configurato per 'images'."
+    ]
+
+    config_without_media = {
+        **_BASE_CONFIG,
+        "fields": {"phone": {"selector": ".phone", "attribute": "text"}},
+    }
+    scraper_without_media = _scraper(open_site_url, **config_without_media)
+    assert scraper_without_media.media_extraction_warnings({}) == []
 
 
 async def test_robots_disallow_blocks_discover_entirely(closed_site_url: str) -> None:

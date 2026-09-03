@@ -37,6 +37,34 @@ def test_scrape_config_accepts_valid_input() -> None:
     assert config.fetch_mode == "http"
 
 
+def test_scrape_config_rejects_singular_image_field() -> None:
+    with pytest.raises(ValidationError, match="images.*plurale"):
+        ScrapeConfigInput(
+            start_urls=["https://example.com/listing"],
+            ad_link_selector=".ad",
+            fields={
+                **_VALID_FIELDS,
+                "image": {"selector": "img", "attribute": "src", "multiple": True},
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    "media_field",
+    [
+        {"selector": "img", "attribute": "src", "multiple": False},
+        {"selector": "img", "attribute": "text", "multiple": True},
+    ],
+)
+def test_scrape_config_rejects_invalid_media_field(media_field: dict) -> None:
+    with pytest.raises(ValidationError):
+        ScrapeConfigInput(
+            start_urls=["https://example.com/listing"],
+            ad_link_selector=".ad",
+            fields={**_VALID_FIELDS, "images": media_field},
+        )
+
+
 def test_scrape_config_maps_legacy_render_js_to_dynamic_fetch_mode() -> None:
     config = ScrapeConfigInput(
         start_urls=["https://example.com/listing"],
