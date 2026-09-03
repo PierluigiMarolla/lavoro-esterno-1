@@ -1148,11 +1148,10 @@ Aprire `.env` e sostituire almeno tutti i valori `change-me-*`. In particolare:
   `MINIO_SECRET_KEY` coerente con `MINIO_ROOT_PASSWORD`;
 - impostare una password dedicata in `GF_SECURITY_ADMIN_PASSWORD`.
 
-Non committare `.env`. Il riepilogo OpenAI rimane intenzionalmente disabilitato
-se `OPENAI_API_KEY` è vuota oppure se uno tra
-`AI_USER_DAILY_REQUEST_LIMIT`, `AI_GLOBAL_DAILY_TOKEN_BUDGET` e
-`AI_PROVIDER_REQUESTS_PER_MINUTE` è assente o uguale a zero. Per abilitarlo
-servono una chiave valida e valori positivi per tutti e tre i limiti.
+Non committare `.env`. Generare anche `AI_CREDENTIAL_ENCRYPTION_KEY` con 32
+byte casuali in base64 prima di inserire API key dalla pagina Impostazioni.
+Il riepilogo predefinito usa Ollama locale e non richiede una API key. I
+provider cloud richiedono credenziale, test riuscito e budget token positivo.
 
 ### 2. Costruire e avviare lo stack
 
@@ -1161,9 +1160,10 @@ docker compose up -d --build
 docker compose ps
 ```
 
-Attendere che PostgreSQL, Redis e MinIO risultino healthy. L'API e i worker
-dipendono da questi servizi e possono richiedere qualche secondo aggiuntivo al
-primo avvio.
+Attendere che PostgreSQL, Redis, MinIO e Ollama risultino healthy. Al primo
+avvio `ollama-init` scarica circa 7,2 GB per `gemma4:e2b`; `worker-ai` resta in
+attesa senza bloccare frontend/API. Gli altri servizi possono richiedere
+qualche secondo aggiuntivo al primo avvio.
 
 ### 3. Applicare le migrazioni
 
@@ -1311,3 +1311,62 @@ Non usare `docker compose down -v`: eliminerebbe anche i media salvati.
 - `backup-postgres`, `backup-minio` e `nginx`: stato `Up` stabile;
 - `http://localhost/` e `GET /api/v1/healthz`: HTTP 200;
 - nessun volume Docker è stato eliminato o ricreato.
+
+# Sessione 8 — 3 settembre 2026: AI multiprovider
+
+- Migrazione `20260903090000` con `ai_settings`, `ai_provider_configs` e
+  snapshot provider/revisione nei job. Le versioni precedenti restano
+  consultabili; la cache distingue anche il provider.
+- Default `ollama` + `gemma4:e2b`, limite 20 richieste/giorno per utente e 10
+  richieste/minuto. Il budget cloud parte da zero e non blocca il provider
+  locale.
+- Provider disponibili: Ollama, OpenAI, Anthropic/Claude, Google Gemini,
+  Groq, Mistral, OpenRouter e custom OpenAI-compatible. Nessun fallback
+  silenzioso; output sempre validato contro lo schema del riepilogo.
+- Nuova pagina Admin `/settings/ai` con catalogo modelli live, ID manuale,
+  test connessione, attivazione, limiti e credenziali write-only cifrate.
+- Nuovi servizi `ollama` e `ollama-init`, volume `ollama-data`; la porta non è
+  pubblica e il worker AI usa concorrenza 1.
+
+Per configurare provider cloud, generare la chiave dedicata:
+
+```powershell
+[Convert]::ToBase64String(
+  [Security.Cryptography.RandomNumberGenerator]::GetBytes(32)
+)
+```
+
+Usare il risultato come `AI_CREDENTIAL_ENCRYPTION_KEY`, ricreare `api` e
+`worker-ai`, quindi inserire la chiave del provider da `/settings/ai`. Per
+gli ambienti reali conservarne una copia nel secret manager/backup protetto:
+senza questa chiave le credenziali provider cifrate non sono recuperabili. Per
+diagnosticare Ollama:
+
+```powershell
+docker compose ps ollama ollama-init worker-ai
+docker compose logs -f ollama-init
+docker compose exec ollama ollama list
+```
+
+Il primo download è voluminoso ma non viene ripetuto se il modello è già
+presente nel volume. Non usare `docker compose down -v`, che cancellerebbe
+anche `ollama-data` oltre ai dati applicativi.
+
+Verifica conclusiva del 3 settembre 2026:
+
+- migrazione applicata: `20260903090000 (head)`;
+- Ollama healthy, `gemma4:e2b` presente (7,2 GB), secondo avvio di
+  `ollama-init` concluso con `model already present`;
+- generazione sintetica reale conforme a `SummaryPayload`, con token usage
+  restituito da Ollama;
+- `worker-ai` operativo sulla sola coda `ai` con concorrenza 1;
+- backend: Ruff verde e `150 passed` (inclusi i test Chromium prima saltati);
+- frontend: lint senza errori, build completata e Playwright AI settings
+  `1 passed`;
+- homepage e `/api/v1/healthz`: HTTP 200; endpoint impostazioni senza sessione:
+  HTTP 401 come previsto.
+
+Nel `.env` locale `AI_CREDENTIAL_ENCRYPTION_KEY` resta volutamente senza un
+valore generato dal repository: Ollama funziona comunque, mentre prima di
+salvare credenziali cloud l'operatore deve impostare una chiave casuale come
+descritto sopra e ricreare `api` e `worker-ai`.

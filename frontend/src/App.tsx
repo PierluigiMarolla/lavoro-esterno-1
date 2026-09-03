@@ -8,6 +8,7 @@ import SearchPage from "@/routes/SearchPage";
 import SourcesPage from "@/routes/SourcesPage";
 import ExportsPage from "@/routes/ExportsPage";
 import AdminPage from "@/routes/AdminPage";
+import AISettingsPage from "@/routes/AISettingsPage";
 import RecordDetailLayout from "@/routes/records/RecordDetailLayout";
 import RecordOverviewTab from "@/routes/records/RecordOverviewTab";
 import RecordOccurrencesTab from "@/routes/records/RecordOccurrencesTab";
@@ -44,6 +45,7 @@ export default function App() {
           <Route path="/sources" element={<SourcesPage />} />
           <Route path="/exports" element={<ExportsPage />} />
           <Route path="/admin" element={<AdminPage />} />
+          <Route path="/settings/ai" element={<AISettingsPage />} />
         </Route>
       </Route>
 

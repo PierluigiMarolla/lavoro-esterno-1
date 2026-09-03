@@ -1,5 +1,8 @@
 import { apiRequest } from "./client";
-import type { AdminUser, ErasureRequest, UserRole } from "@/types";
+import type {
+  AdminUser, AIModelCatalog, AIProviderConfig, AIProviderName,
+  AIProviderTestResult, AISettings, ErasureRequest, UserRole,
+} from "@/types";
 
 export function fetchAdminUsers(): Promise<AdminUser[]> {
   return apiRequest<AdminUser[]>("/admin/users");
@@ -75,4 +78,46 @@ export function createErasureRequest(input: {
 
 export function confirmErasureRequest(id: string): Promise<ErasureRequest> {
   return apiRequest<ErasureRequest>(`/privacy/erasure-requests/${id}/confirm`, { method: "POST" });
+}
+
+export function fetchAISettings(): Promise<AISettings> {
+  return apiRequest<AISettings>("/admin/ai-settings");
+}
+
+export function updateAISettings(input: {
+  activeProvider?: AIProviderName;
+  userDailyRequestLimit?: number;
+  providerRequestsPerMinute?: number;
+  globalDailyTokenBudget?: number;
+  expectedRevision: number;
+}): Promise<AISettings> {
+  return apiRequest<AISettings>("/admin/ai-settings", { method: "PATCH", body: input });
+}
+
+export function updateAIProvider(
+  provider: AIProviderName,
+  input: {
+    model?: string;
+    enabled?: boolean;
+    baseUrl?: string;
+    apiKey?: string;
+    clearCredential?: boolean;
+    options?: Record<string, string>;
+    expectedRevision: number;
+  },
+): Promise<AIProviderConfig> {
+  return apiRequest<AIProviderConfig>(`/admin/ai-settings/providers/${provider}`, {
+    method: "PATCH", body: input,
+  });
+}
+
+export function fetchAIProviderModels(provider: AIProviderName, refresh = false): Promise<AIModelCatalog> {
+  const suffix = refresh ? "?refresh=true" : "";
+  return apiRequest<AIModelCatalog>(`/admin/ai-settings/providers/${provider}/models${suffix}`);
+}
+
+export function testAIProvider(provider: AIProviderName): Promise<AIProviderTestResult> {
+  return apiRequest<AIProviderTestResult>(`/admin/ai-settings/providers/${provider}/test`, {
+    method: "POST",
+  });
 }

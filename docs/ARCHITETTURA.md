@@ -144,6 +144,9 @@ verificato dal vivo, è più preciso su questi punti (vedi PROGETTO.md § 4):
   (lo scraping è I/O-bound e sensibile al rate limiting delle fonti, la
   classificazione media è CPU/GPU-bound, l'AI è sensibile a costi/rate
   limit del provider LLM).
+- **`ollama` / `ollama-init`**: runtime LLM interno e inizializzazione
+  idempotente di `gemma4:e2b`. Il modello vive nel volume `ollama-data`, la
+  porta 11434 non è pubblicata sull'host e `worker-ai` usa concorrenza 1.
 - **`scheduler`**: unico processo Celery Beat che pianifica periodicamente
   i run di scraping per fonte e i task di manutenzione ricorrenti.
 - **`postgres`**: unica fonte di verità relazionale, mai raggiungibile da
@@ -175,6 +178,10 @@ verificato dal vivo, è più preciso su questi punti (vedi PROGETTO.md § 4):
   casuali/non-AI) sceglie quale annuncio rappresenta il record
   "canonico" mostrato di default, mantenendo comunque accesso allo
   storico completo.
+- **Provider AI runtime**: `ai_settings` sceglie il provider globale e
+  `ai_provider_configs` conserva modello, stato, revisione e credenziale
+  AES-256-GCM. Ogni job congela provider/modello/revisione; un cambio durante
+  l'attesa fa fallire il job esplicitamente invece di cambiarne il modello.
 
 - **Export isolati**: una coda/worker `exports` con concorrenza 1 genera
   ZIP su disco temporaneo e li carica sotto `exports/{job}/package.zip`.

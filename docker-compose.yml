@@ -12,8 +12,42 @@ volumes:
   # off-site, vedi infra/backup/ e docs/DATABASE.md § Backup.
   postgres-backups:
   minio-backups:
+  ollama-data:
 
 services:
+  # Inferenza LLM locale. La porta resta solo sulla rete Docker.
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama-data:/root/.ollama
+    expose:
+      - "11434"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    networks:
+      - lavoro-esterno-net
+
+  # Scarica Gemma una sola volta; ai riavvii il volume evita un nuovo download.
+  ollama-init:
+    image: ollama/ollama:latest
+    restart: "no"
+    entrypoint: ["/bin/sh", "/scripts/init.sh"]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_DEFAULT_MODEL: ${OLLAMA_DEFAULT_MODEL:-gemma4:e2b}
+    volumes:
+      - ./infra/ollama:/scripts:ro
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks:
+      - lavoro-esterno-net
+
   # ---------------------------------------------------------------------
   # Database - PostgreSQL 17. Resta esclusivamente sulla rete interna,
   # nessuna porta pubblicata verso l'host in produzione (usare "expose"
@@ -216,7 +250,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
-    command: ["celery", "-A", "app.workers.celery_app", "worker", "-Q", "ai", "-n", "worker-ai@%h", "--loglevel=info"]
+    command: ["celery", "-A", "app.workers.celery_app", "worker", "-Q", "ai", "-n", "worker-ai@%h", "--loglevel=info", "--concurrency=1"]
     env_file:
       - .env
     depends_on:
@@ -226,6 +260,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
     networks:
       - lavoro-esterno-net
 

@@ -34,6 +34,8 @@ class SummaryGenerationJob(UUIDPKMixin, Base):
         SummaryGenerationStatus, default="pending", nullable=False, index=True
     )
     model_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    model_provider: Mapped[str] = mapped_column(String(50), default="openai", nullable=False)
+    provider_config_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
     prompt_version: Mapped[str] = mapped_column(String(100), nullable=False)
     input_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     result_version: Mapped[int | None] = mapped_column(Integer, nullable=True)

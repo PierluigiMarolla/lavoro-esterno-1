@@ -240,6 +240,8 @@ export interface RecordAiSummary {
   unverifiedClaims: string[];
   forumChatter: string[];
   sourcesUsed: { name: string; url: string }[];
+  provider: string;
+  model: string;
 }
 
 // A single entry in the full version history (GET /records/{id}/ai-summary/versions),
@@ -252,12 +254,56 @@ export interface SummaryGenerationJob {
   id: string;
   recordId: string;
   status: "pending" | "processing" | "completed" | "failed";
+  provider: string;
+  model: string;
+  providerConfigRevision: number | null;
   resultVersion: number | null;
   cacheHit: boolean;
   errorMessage: string | null;
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;
+}
+
+export type AIProviderName =
+  | "ollama" | "openai" | "anthropic" | "google" | "groq"
+  | "mistral" | "openrouter" | "custom_openai";
+
+export interface AIProviderConfig {
+  provider: AIProviderName;
+  displayName: string;
+  model: string;
+  enabled: boolean;
+  active: boolean;
+  baseUrl: string | null;
+  credentialConfigured: boolean;
+  options: Record<string, string>;
+  revision: number;
+  lastTestedAt: string | null;
+  lastTestSuccess: boolean | null;
+}
+
+export interface AISettings {
+  activeProvider: AIProviderName;
+  promptVersion: string;
+  userDailyRequestLimit: number;
+  providerRequestsPerMinute: number;
+  globalDailyTokenBudget: number;
+  revision: number;
+  providers: AIProviderConfig[];
+}
+
+export interface AIModelCatalog {
+  provider: AIProviderName;
+  models: string[];
+  cached: boolean;
+}
+
+export interface AIProviderTestResult {
+  provider: AIProviderName;
+  success: boolean;
+  latencyMs: number;
+  message: string;
 }
 
 export interface ScrapeError {

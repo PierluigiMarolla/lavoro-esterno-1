@@ -9,6 +9,7 @@ scraper" passando per lo slug.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -35,6 +36,13 @@ class MediaDownloadResult:
     @property
     def failed_count(self) -> int:
         return len(self.failures)
+
+    def __iter__(self) -> Iterator[bytes]:
+        """Compatibilità con i consumer storici che iteravano la lista di byte."""
+        return iter(self.media_bytes)
+
+    def __len__(self) -> int:
+        return len(self.media_bytes)
 
 
 class Scraper(ABC):

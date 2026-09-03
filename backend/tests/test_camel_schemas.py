@@ -115,11 +115,15 @@ def test_record_ai_summary_version_read_serializes_camel_case() -> None:
         unverified_claims=["claim"],
         forum_chatter=[],
         sources_used=[],
+        provider="ollama",
+        model="gemma4:e2b",
     )
     dumped = version.model_dump(mode="json", by_alias=True)
     assert dumped["version"] == 3
     assert dumped["executiveSynthesis"] == "Sintesi"
     assert dumped["unverifiedClaims"] == ["claim"]
+    assert dumped["provider"] == "ollama"
+    assert dumped["model"] == "gemma4:e2b"
 
 
 def test_record_search_result_serializes_camel_case() -> None:

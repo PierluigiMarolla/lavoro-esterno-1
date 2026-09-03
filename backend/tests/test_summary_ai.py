@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.models.ai_settings import AISettings
 from app.services.summary_generator import OpenAISummaryGenerator, _StructuredSummary
 from app.workers.tasks_ai import (
     AIDisabledError,
@@ -77,11 +78,10 @@ def test_provider_input_omits_phone_and_urls_and_hash_is_deterministic():
     assert summary_input_hash(payload) == summary_input_hash(json.loads(encoded))
 
 
-def test_ai_is_disabled_without_explicit_limits(monkeypatch):
-    monkeypatch.setattr("app.workers.tasks_ai.settings.OPENAI_API_KEY", "test-key")
-    monkeypatch.setattr("app.workers.tasks_ai.settings.AI_USER_DAILY_REQUEST_LIMIT", 0)
+def test_ai_is_disabled_without_explicit_limits():
+    ai = AISettings(user_daily_request_limit=0, provider_requests_per_minute=10)
     with pytest.raises(AIDisabledError, match="disabilitata"):
-        _reserve_budget(uuid.uuid4(), 100)
+        _reserve_budget(uuid.uuid4(), 100, ai, "ollama")
 
 
 def test_redacted_evaluation_dataset_has_stable_shape_and_internal_sources():

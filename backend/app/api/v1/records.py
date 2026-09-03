@@ -26,9 +26,9 @@ from sqlalchemy import and_, false, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
-from app.config import settings
 from app.db import get_db
 from app.models.advertisement import Advertisement
+from app.models.ai_settings import AIProviderConfig, AISettings
 from app.models.audit_log import AuditLog
 from app.models.canonical_history import CanonicalHistory
 from app.models.media import Media
@@ -562,6 +562,8 @@ def _summary_version_fields(version: SummaryVersion) -> dict:
         "unverified_claims": payload.get("unverified_claims", []),
         "forum_chatter": forum_chatter,
         "sources_used": sources_used,
+        "provider": version.model_provider,
+        "model": version.model_name,
     }
 
 
@@ -642,14 +644,26 @@ async def regenerate_record_ai_summary(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_role("admin", "operator")),
 ) -> SummaryGenerationJobRead:
-    """Queue a persistent Celery job; OpenAI is never called in the API process."""
+    """Accoda un job persistente; nessun provider viene chiamato dal processo API."""
     await _get_record_or_404(db, record_id)
+    ai = await db.get(AISettings, 1)
+    if ai is None:
+        raise HTTPException(status_code=503, detail="Configurazione AI non inizializzata.")
+    provider = (
+        await db.execute(
+            select(AIProviderConfig).where(AIProviderConfig.provider == ai.active_provider)
+        )
+    ).scalar_one_or_none()
+    if provider is None or not provider.enabled or not provider.model_name:
+        raise HTTPException(status_code=503, detail="Provider AI attivo non disponibile.")
     job = SummaryGenerationJob(
         record_id=record_id,
         requested_by_user_id=user.id,
         status="pending",
-        model_name=settings.OPENAI_MODEL,
-        prompt_version=settings.OPENAI_PROMPT_VERSION,
+        model_name=provider.model_name,
+        model_provider=provider.provider,
+        provider_config_revision=provider.revision,
+        prompt_version=ai.prompt_version,
         input_hash="pending-" + uuid.uuid4().hex,
     )
     db.add(job)

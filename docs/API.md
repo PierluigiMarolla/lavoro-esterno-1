@@ -191,6 +191,11 @@ devono essere presentati dalla UI come sensibili.
 | POST | `/api/v1/admin/users/{user_id}/suspend` | Sospende un utente (`is_active=false`), impedendo nuovi login. Richiede Admin con 2FA attiva. |
 | POST | `/api/v1/admin/users/{user_id}/reset-2fa` | Recovery account: disattiva la 2FA dell'utente (nessun servizio email nel progetto per un reset self-service), che dovrà rifare il setup obbligatorio al prossimo login. Risponde `{ id, mfa_enabled }` (snake_case, NON CamelModel — mappato esplicitamente in `frontend/src/api/admin.ts:resetAdminUserTwoFactor`, stesso stile di `auth.ts`). Richiede Admin con 2FA attiva. |
 | GET | `/api/v1/admin/audit-log` | Consultazione dell'audit log (azioni sensibili: login/logout, export, modifiche utenti/fonti, rigenerazione riepilogo AI...). Solo Admin. |
+| GET | `/api/v1/admin/ai-settings` | Configurazione globale e provider AI; non restituisce mai le API key. Solo Admin. |
+| PATCH | `/api/v1/admin/ai-settings` | Modifica provider attivo e limiti con revisione ottimistica. Admin con 2FA. |
+| PATCH | `/api/v1/admin/ai-settings/providers/{provider}` | Salva modello, endpoint custom, opzioni e credenziale cifrata write-only. Admin con 2FA. |
+| GET | `/api/v1/admin/ai-settings/providers/{provider}/models` | Catalogo modelli live con cache Redis di cinque minuti. Solo Admin. |
+| POST | `/api/v1/admin/ai-settings/providers/{provider}/test` | Test reale di connettività e output strutturato; può consumare quota cloud. Admin con 2FA. |
 | GET | `/api/v1/admin/system/health` | Stato aggregato dei componenti (DB, Redis, MinIO, ultimo run scheduler). *(Non ancora implementato.)* |
 
 ## Convenzioni generali

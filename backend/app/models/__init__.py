@@ -11,6 +11,7 @@ audit/derivate dopo) per leggibilità.
 """
 
 from app.models.advertisement import Advertisement
+from app.models.ai_settings import AIProviderConfig, AISettings
 from app.models.audit_log import AuditLog
 from app.models.base import Base
 from app.models.canonical_history import CanonicalHistory
@@ -28,6 +29,8 @@ from app.models.users import User
 
 __all__ = [
     "Base",
+    "AISettings",
+    "AIProviderConfig",
     "User",
     "Source",
     "Record",

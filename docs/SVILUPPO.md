@@ -175,13 +175,14 @@ FFmpeg è installato nell'immagine backend/worker. In locale verificare con
 `ffmpeg -version`; la suite genera un MP4 sintetico e controlla transcodifica,
 thumbnail e frame senza includere materiale sensibile nel repository.
 
-L'AI è fail-closed: per abilitarla servono contemporaneamente
-`OPENAI_API_KEY`, `AI_USER_DAILY_REQUEST_LIMIT`,
-`AI_GLOBAL_DAILY_TOKEN_BUDGET` e `AI_PROVIDER_REQUESTS_PER_MINUTE` con valori
-positivi. Il test live provider deve essere separato e opt-in; non usare
-budget di produzione. Il prompt corrente è `summary-v1`: modificarne il
-contenuto richiede una nuova versione e il superamento dei test/dataset in
-`backend/tests/fixtures/summary_eval.json`.
+Il default è Ollama locale con `gemma4:e2b`: `ollama-init` scarica il modello
+nel volume persistente al primo avvio e il worker AI parte solo al termine.
+La configurazione è disponibile in `/settings/ai`. I provider cloud richiedono
+una credenziale salvata, un test riuscito e budget token positivo; budget zero
+non blocca Ollama. Prima di salvare credenziali generare una chiave AES da 32
+byte in base64 e impostarla come `AI_CREDENTIAL_ENCRYPTION_KEY`. Il prompt
+corrente è `summary-v1`: modificarlo richiede una nuova versione e il
+superamento dei test/dataset in `backend/tests/fixtures/summary_eval.json`.
 
 Comandi locali di verifica:
 

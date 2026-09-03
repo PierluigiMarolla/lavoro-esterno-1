@@ -160,15 +160,33 @@ File (immagine/video) associato a un annuncio.
 - `model_name` String(200)
 - `model_provider`, `prompt_version`, `input_hash`; token input/output/cache,
   `cache_hit` e FK opzionale al job di generazione. L'indice univoco
-  `(record_id, input_hash, model_name, prompt_version)` implementa la cache.
+  `(record_id, input_hash, model_provider, model_name, prompt_version)`
+  implementa la cache senza collisioni tra provider.
 - `created_at`
 
 ### `summary_generation_jobs`
 - `id` UUID PK; FK a `records` e all'utente richiedente
 - stato enum `pending`/`processing`/`completed`/`failed`
-- modello, prompt version, input hash, versione risultante, cache hit ed
-  errore sicuro; timestamp di creazione/avvio/completamento
+- provider, modello, revisione congelata della configurazione, prompt version,
+  input hash, versione risultante, cache hit ed errore sicuro; timestamp di
+  creazione/avvio/completamento
 - indici su record, utente, stato e input hash
+
+### `ai_settings`
+- singleton con PK `id = 1`
+- `active_provider`, `prompt_version`
+- limiti runtime: richieste giornaliere per utente, richieste/minuto per
+  provider e budget token cloud giornaliero
+- `revision` per aggiornamenti ottimistici e timestamp
+
+### `ai_provider_configs`
+- `provider` univoco tra Ollama, OpenAI, Anthropic, Google, Groq, Mistral,
+  OpenRouter e custom OpenAI-compatible
+- modello, stato abilitato, endpoint opzionale e opzioni non sensibili JSONB
+- credenziale opzionale in `api_key_encrypted`, cifrata AES-256-GCM con la
+  chiave separata `AI_CREDENTIAL_ENCRYPTION_KEY`
+- revisione, esito/istante dell'ultimo test e timestamp; l'API espone solo il
+  booleano `credentialConfigured`, mai ciphertext o chiave
 
 ### `export_jobs`
 - `id` UUID PK

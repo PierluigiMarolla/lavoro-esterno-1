@@ -74,14 +74,24 @@ class Settings(BaseSettings):
     MEDIA_EXPLICIT_THRESHOLD: float = Field(default=0.65, ge=0, le=1)
     MEDIA_SAFE_THRESHOLD: float = Field(default=0.20, ge=0, le=1)
 
-    # --- Riepiloghi OpenAI ----------------------------------------------
+    # --- Riepiloghi AI --------------------------------------------------
+    AI_CREDENTIAL_ENCRYPTION_KEY: str | None = Field(
+        default=None,
+        description="Chiave AES-256 base64 dedicata alle credenziali dei provider AI.",
+    )
+    OLLAMA_ENDPOINT: str = Field(default="http://ollama:11434")
+    AI_CUSTOM_ENDPOINT_ALLOWLIST: str = Field(
+        default="",
+        description="Host custom privati consentiti, separati da virgola; vuoto blocca la LAN.",
+    )
+    AI_MODEL_CATALOG_TTL_SECONDS: int = Field(default=300, ge=30, le=3600)
+    AI_MAX_OUTPUT_TOKENS: int = Field(default=2000, ge=100, le=10000)
+    AI_PROVIDER_TIMEOUT_SECONDS: float = Field(default=60.0, gt=0, le=300)
+    # Compatibilita temporanea: non sono piu la fonte runtime dei provider.
     OPENAI_API_KEY: str | None = Field(default=None, description="API key OpenAI server-side.")
     OPENAI_MODEL: str = Field(default="gpt-5.6-luna")
     OPENAI_PROMPT_VERSION: str = Field(default="summary-v1")
     OPENAI_TIMEOUT_SECONDS: float = Field(default=60.0, gt=0, le=300)
-    AI_USER_DAILY_REQUEST_LIMIT: int = Field(default=0, ge=0)
-    AI_GLOBAL_DAILY_TOKEN_BUDGET: int = Field(default=0, ge=0)
-    AI_PROVIDER_REQUESTS_PER_MINUTE: int = Field(default=0, ge=0)
     AI_MAX_INPUT_CHARS: int = Field(default=100_000, ge=1)
 
     # --- JWT (autenticazione) -------------------------------------------

@@ -190,6 +190,8 @@ class RecordAiSummaryRead(CamelModel):
     unverified_claims: list[str] = Field(default_factory=list)
     forum_chatter: list[str] = Field(default_factory=list)
     sources_used: list[SourceUsedRead] = Field(default_factory=list)
+    provider: str = "openai"
+    model: str = "legacy"
 
 
 class RecordAiSummaryVersionRead(RecordAiSummaryRead):
@@ -205,6 +207,9 @@ class SummaryGenerationJobRead(CamelModel):
     id: uuid.UUID
     record_id: uuid.UUID
     status: str
+    provider: str = Field(validation_alias="model_provider", serialization_alias="provider")
+    model: str = Field(validation_alias="model_name", serialization_alias="model")
+    provider_config_revision: int | None = None
     result_version: int | None = None
     cache_hit: bool = False
     error_message: str | None = None

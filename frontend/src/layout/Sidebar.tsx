@@ -9,13 +9,14 @@ const NAV_ITEMS = [
   { to: "/records", label: "Records", icon: "database" },
   { to: "/sources", label: "Sources", icon: "source" },
   { to: "/exports", label: "Exports", icon: "cloud_download" },
-  { to: "/admin", label: "Admin", icon: "settings" },
+  { to: "/settings/ai", label: "Impostazioni", icon: "tune", adminOnly: true },
+  { to: "/admin", label: "Admin", icon: "admin_panel_settings", adminOnly: true },
 ];
 
 // Persistent left navigation (fixed width per DESIGN.md sidebar-width token).
 // Highlights the active section using NavLink's isActive state.
 export default function Sidebar() {
-  const { logout } = useAuth();
+  const { logout, user } = useAuth();
 
   return (
     <nav className="fixed left-0 top-0 h-screen w-sidebar-width bg-surface-container-lowest border-r border-border flex flex-col py-4 z-50 shadow-[0_0_15px_rgba(0,0,0,0.02)]">
@@ -25,7 +26,7 @@ export default function Sidebar() {
       </div>
 
       <ul className="flex-1 px-4 space-y-1">
-        {NAV_ITEMS.map((item) => (
+        {NAV_ITEMS.filter((item) => !item.adminOnly || user?.role === "admin").map((item) => (
           <li key={item.to}>
             <NavLink
               to={item.to}

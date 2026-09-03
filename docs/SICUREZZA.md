@@ -197,6 +197,14 @@ chiusura di ogni rilievo High/Critical.
   vengono usati per training salvo opt-in; i log di abuse monitoring possono
   essere conservati fino a 30 giorni. Zero Data Retention richiede idoneità e
   approvazione separate e non va presunta da questa configurazione.
+- Il provider predefinito è Ollama locale con `gemma4:e2b`. Le API key dei
+  provider remoti sono write-only e cifrate con la chiave dedicata
+  `AI_CREDENTIAL_ENCRYPTION_KEY`, distinta dalle chiavi telefono e JWT.
+  La chiave master deve essere custodita e inclusa nel backup sicuro dei
+  segreti: perderla rende irrecuperabili le credenziali provider già cifrate.
+- Gli endpoint dei provider noti sono fissi. L'endpoint OpenAI-compatible
+  custom richiede HTTPS e DNS pubblico; host privati sono ammessi soltanto
+  tramite `AI_CUSTOM_ENDPOINT_ALLOWLIST` e rivalidati anche nel worker.
 - I media `unclassified`, con elaborazione fallita o revisione richiesta
   sono sempre sensibili nella UI. `possibleMinorReview` non è una stima di
   età: segnala soltanto la coesistenza prudenziale di nudità e volto.

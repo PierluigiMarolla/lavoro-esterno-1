@@ -7,6 +7,7 @@ import json
 import logging
 import re
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import redis
@@ -15,11 +16,13 @@ from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
 from app.models.advertisement import Advertisement
+from app.models.ai_settings import AIProviderConfig, AISettings
 from app.models.audit_log import AuditLog
 from app.models.sources import Source
 from app.models.summary_generation_jobs import SummaryGenerationJob
 from app.models.summary_versions import SummaryVersion
-from app.services.summary_generator import OpenAISummaryGenerator
+from app.services.ai_config import REMOTE_PROVIDERS, runtime_config
+from app.services.summary_generator import ProviderError, create_summary_provider
 from app.workers.celery_app import celery_app
 from app.workers.tasks_scraper import SyncSessionLocal
 
@@ -37,31 +40,32 @@ def _redis() -> redis.Redis:
     return redis.from_url(settings.REDIS_URL, decode_responses=True)
 
 
-def _reserve_budget(user_id: uuid.UUID, estimated_tokens: int) -> tuple[str, int]:
-    if (
-        not settings.OPENAI_API_KEY
-        or settings.AI_USER_DAILY_REQUEST_LIMIT <= 0
-        or settings.AI_GLOBAL_DAILY_TOKEN_BUDGET <= 0
-        or settings.AI_PROVIDER_REQUESTS_PER_MINUTE <= 0
-    ):
-        raise AIDisabledError("OpenAI disabilitata: configurare chiave e budget AI.")
+def _reserve_budget(
+    user_id: uuid.UUID, estimated_tokens: int, ai: AISettings, provider: str
+) -> tuple[str, int] | None:
+    if ai.user_daily_request_limit <= 0 or ai.provider_requests_per_minute <= 0:
+        raise AIDisabledError("AI disabilitata: configurare limiti operativi positivi.")
+    if provider in REMOTE_PROVIDERS and ai.global_daily_token_budget <= 0:
+        raise AIDisabledError("Provider cloud disabilitato: configurare il budget token.")
     client = _redis()
     day = datetime.now(UTC).strftime("%Y%m%d")
     minute = datetime.now(UTC).strftime("%Y%m%d%H%M")
     user_key = f"ai:user:{user_id}:{day}"
-    rpm_key = f"ai:rpm:{minute}"
-    token_key = f"ai:tokens:{day}"
+    rpm_key = f"ai:rpm:{provider}:{minute}"
+    token_key = f"ai:tokens:cloud:{day}"
     user_count = client.incr(user_key)
     client.expire(user_key, 172800)
     rpm_count = client.incr(rpm_key)
     client.expire(rpm_key, 120)
-    if user_count > settings.AI_USER_DAILY_REQUEST_LIMIT:
+    if user_count > ai.user_daily_request_limit:
         raise AIDisabledError("Limite giornaliero per utente esaurito.")
-    if rpm_count > settings.AI_PROVIDER_REQUESTS_PER_MINUTE:
-        raise AIDisabledError("Rate limit OpenAI applicativo raggiunto.")
+    if rpm_count > ai.provider_requests_per_minute:
+        raise AIDisabledError("Rate limit AI applicativo raggiunto.")
+    if provider not in REMOTE_PROVIDERS:
+        return None
     reserved = client.incrby(token_key, estimated_tokens)
     client.expire(token_key, 172800)
-    if reserved > settings.AI_GLOBAL_DAILY_TOKEN_BUDGET:
+    if reserved > ai.global_daily_token_budget:
         client.decrby(token_key, estimated_tokens)
         raise AIDisabledError("Budget token AI giornaliero esaurito.")
     return token_key, estimated_tokens
@@ -73,7 +77,9 @@ def _release_reservation(reservation: tuple[str, int] | None) -> None:
 
 
 def _is_retryable_provider_error(exc: Exception) -> bool:
-    """Retry only transient OpenAI transport, timeout, 429 and 5xx failures."""
+    """Retry transient network, timeout, throttling and provider 5xx failures."""
+    if isinstance(exc, ProviderError):
+        return exc.retryable
     try:
         from openai import APIConnectionError, APIStatusError, APITimeoutError, RateLimitError
     except ImportError:  # pragma: no cover - dependency is mandatory in production
@@ -110,10 +116,16 @@ def _redact_external_identifiers(value: str) -> str:
     return _PHONE_RE.sub("[PHONE REDACTED]", value)
 
 
-def summary_input_hash(payload: dict) -> str:
+def summary_input_hash(
+    payload: dict,
+    provider: str | None = None,
+    model: str | None = None,
+    prompt_version: str | None = None,
+) -> str:
     envelope = {
-        "model": settings.OPENAI_MODEL,
-        "prompt_version": settings.OPENAI_PROMPT_VERSION,
+        "provider": provider or "openai",
+        "model": model or settings.OPENAI_MODEL,
+        "prompt_version": prompt_version or settings.OPENAI_PROMPT_VERSION,
         "payload": payload,
     }
     return hashlib.sha256(
@@ -143,16 +155,34 @@ def generate_summary(self, job_id: str) -> dict:
             .where(Advertisement.record_id == job.record_id)
             .order_by(Advertisement.scraped_at, Advertisement.id)
         ).all()
+        ai = session.get(AISettings, 1)
+        provider_row = session.execute(
+            select(AIProviderConfig).where(AIProviderConfig.provider == job.model_provider)
+        ).scalar_one_or_none()
+        if ai is None or provider_row is None or not provider_row.enabled:
+            raise AIDisabledError("Il provider AI del job non e piu abilitato.")
+        if job.provider_config_revision != provider_row.revision:
+            raise AIDisabledError("La configurazione AI e cambiata: rilanciare il riepilogo.")
+        provider_config = replace(
+            runtime_config(provider_row),
+            model=job.model_name,
+            options={**(provider_row.config_json or {}), "prompt_version": job.prompt_version},
+        )
+        if job.model_provider in REMOTE_PROVIDERS and not provider_config.api_key:
+            raise AIDisabledError("Credenziale del provider AI non configurata.")
         payload, source_urls = _sanitized_input(rows)
-        input_hash = summary_input_hash(payload)
+        input_hash = summary_input_hash(
+            payload, job.model_provider, job.model_name, job.prompt_version
+        )
         job.input_hash = input_hash
 
         cached = session.execute(
             select(SummaryVersion).where(
                 SummaryVersion.record_id == job.record_id,
                 SummaryVersion.input_hash == input_hash,
-                SummaryVersion.model_name == settings.OPENAI_MODEL,
-                SummaryVersion.prompt_version == settings.OPENAI_PROMPT_VERSION,
+                SummaryVersion.model_provider == job.model_provider,
+                SummaryVersion.model_name == job.model_name,
+                SummaryVersion.prompt_version == job.prompt_version,
             )
         ).scalar_one_or_none()
         if cached is not None:
@@ -164,8 +194,22 @@ def generate_summary(self, job_id: str) -> dict:
             return {"status": "completed", "job_id": job_id, "cache_hit": True}
 
         estimated_tokens = max(1, len(json.dumps(payload, ensure_ascii=False)) // 4) + 2000
-        token_reservation = _reserve_budget(job.requested_by_user_id, estimated_tokens)
-        generated = OpenAISummaryGenerator().generate_structured(payload)
+        token_reservation = _reserve_budget(
+            job.requested_by_user_id, estimated_tokens, ai, job.model_provider
+        )
+        generator = create_summary_provider(provider_config)
+        for attempt in range(2):
+            try:
+                generated = generator.generate_structured(payload)
+                if not set(generated.payload.sources) <= set(source_urls):
+                    raise ProviderError(
+                        "Il provider ha restituito riferimenti a fonti non validi.",
+                        validation=True,
+                    )
+                break
+            except ProviderError as exc:
+                if not exc.validation or attempt == 1:
+                    raise
         result_payload = generated.payload.as_dict()
         result_payload["sources"] = [
             source_urls[ref] for ref in generated.payload.sources if ref in source_urls
@@ -183,9 +227,9 @@ def generate_summary(self, job_id: str) -> dict:
             record_id=job.record_id,
             version=version_number,
             summary_json=result_payload,
-            model_provider="openai",
-            model_name=settings.OPENAI_MODEL,
-            prompt_version=settings.OPENAI_PROMPT_VERSION,
+            model_provider=job.model_provider,
+            model_name=job.model_name,
+            prompt_version=job.prompt_version,
             input_hash=input_hash,
             input_tokens=generated.input_tokens,
             output_tokens=generated.output_tokens,
@@ -204,8 +248,9 @@ def generate_summary(self, job_id: str) -> dict:
                 entity_id=str(job.record_id),
                 details_json={
                     "version": version_number,
-                    "model": settings.OPENAI_MODEL,
-                    "prompt_version": settings.OPENAI_PROMPT_VERSION,
+                    "provider": job.model_provider,
+                    "model": job.model_name,
+                    "prompt_version": job.prompt_version,
                     "input_tokens": generated.input_tokens,
                     "output_tokens": generated.output_tokens,
                 },
@@ -219,8 +264,9 @@ def generate_summary(self, job_id: str) -> dict:
                 select(SummaryVersion).where(
                     SummaryVersion.record_id == job.record_id,
                     SummaryVersion.input_hash == input_hash,
-                    SummaryVersion.model_name == settings.OPENAI_MODEL,
-                    SummaryVersion.prompt_version == settings.OPENAI_PROMPT_VERSION,
+                    SummaryVersion.model_provider == job.model_provider,
+                    SummaryVersion.model_name == job.model_name,
+                    SummaryVersion.prompt_version == job.prompt_version,
                 )
             ).scalar_one()
             job = session.get(SummaryGenerationJob, job_uuid)

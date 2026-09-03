@@ -348,27 +348,28 @@ priorità. Corretto aggiungendo `priority` allo schema `SourceRead`.
       Operator possono effettuare override motivato tramite
       `POST /media/{id}/review`; autore, note, history e audit sono
       persistiti. È disponibile anche `POST /media/{id}/reprocess`.
-- [x] **Riepiloghi OpenAI asincroni** tramite Responses API, Structured
-      Outputs, `store=false` e modello configurabile (default
-      `gpt-5.6-luna`). Il POST di rigenerazione restituisce un job 202 e la
-      UI ne segue `pending/processing/completed/failed` via polling. Non
-      esiste fallback silenzioso al vecchio template o ad altri modelli.
+- [x] **Riepiloghi asincroni multiprovider** con Ollama locale, OpenAI,
+      Anthropic/Claude, Google Gemini, Groq, Mistral, OpenRouter e un endpoint
+      OpenAI-compatible personalizzato. Il default è `gemma4:e2b` locale;
+      provider, modello, credenziali cifrate e limiti sono amministrabili da
+      `/settings/ai`. OpenAI conserva Responses API, Structured Outputs e
+      `store=false`. Non esistono fallback silenziosi tra modelli/provider.
 - [x] **Minimizzazione e gestione costi**: telefoni e URL vengono redatti
       anche dai campi testuali; immagini e URL sorgente non sono inviati
       al provider e i riferimenti interni vengono rimappati localmente.
-      Redis applica limite giornaliero utente, budget token globale e
-      requests/minute con prenotazione e riconciliazione. Chiave assente o
-      qualunque limite a zero mantiene l'AI disabilitata.
+      Redis applica limite giornaliero utente e requests/minute per provider;
+      per i provider cloud applica anche budget token con prenotazione e
+      riconciliazione. Budget cloud zero blocca solo i provider remoti, non
+      Ollama locale.
 - [x] **Cache/versioning/evaluation**: `summary-v1`, provider, modello,
       hash deterministico, token input/output/cache e job sono salvati in
       `summary_versions`; un vincolo univoco evita versioni duplicate e
       abilita cache hit senza chiamata. Dataset sintetico/redatto e test
       verificano schema, riferimenti interni, minimizzazione e stabilità.
 
-Verifica locale: inferenza NudeNet reale su immagine innocua, client OpenAI
-simulato e suite automatica completati. Il test live OpenAI resta volutamente
-opt-in: richiede una API key e budget non nulli e non è stato eseguito con
-credenziali fittizie.
+Verifica automatica: inferenza NudeNet reale su immagine innocua, adapter AI
+simulati, cifratura credenziali, schema Ollama e suite completa. I test live
+dei provider cloud restano opt-in e richiedono credenziali e budget dedicati.
 
 ## 6. Storage / media
 

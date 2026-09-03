@@ -72,6 +72,9 @@ export default function RecordAiSummaryTab() {
             <Icon name="schedule" size={16} />
             <span>Generated: {formatDateTime(data.generatedAt)}</span>
           </div>
+          <p className="text-label-sm text-on-surface-variant mt-1">
+            Provider: {data.provider} · Model: <span className="font-mono">{data.model}</span>
+          </p>
         </div>
         <Button onClick={() => regenerate.mutate()} disabled={regenerate.isPending}>
           <Icon name="autorenew" size={18} className={regenerate.isPending ? "animate-spin" : undefined} />

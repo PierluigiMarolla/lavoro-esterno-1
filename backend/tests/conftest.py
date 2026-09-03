@@ -13,5 +13,6 @@ import os
 
 os.environ.setdefault("PHONE_ENCRYPTION_KEY", base64.b64encode(b"0" * 32).decode("ascii"))
 os.environ.setdefault("PHONE_HMAC_SECRET", "test-hmac-secret-not-for-production")
+os.environ.setdefault("AI_CREDENTIAL_ENCRYPTION_KEY", base64.b64encode(b"1" * 32).decode("ascii"))
 os.environ.setdefault("JWT_SECRET_KEY", "test-jwt-secret-not-for-production")
 os.environ.setdefault("ENVIRONMENT", "test")

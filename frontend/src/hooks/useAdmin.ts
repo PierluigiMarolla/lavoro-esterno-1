@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as adminApi from "@/api/admin";
-import type { UserRole } from "@/types";
+import type { AIProviderName, UserRole } from "@/types";
 
 const usersKey = ["admin", "users"] as const;
 
@@ -79,5 +79,60 @@ export function useConfirmErasureRequest() {
   return useMutation({
     mutationFn: adminApi.confirmErasureRequest,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: erasureKey }),
+  });
+}
+
+const aiSettingsKey = ["admin", "ai-settings"] as const;
+
+export function useAISettings() {
+  return useQuery({ queryKey: aiSettingsKey, queryFn: adminApi.fetchAISettings });
+}
+
+export function useUpdateAISettings() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: adminApi.updateAISettings,
+    onSuccess: (data) => queryClient.setQueryData(aiSettingsKey, data),
+  });
+}
+
+export function useUpdateAIProvider() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ provider, input }: {
+      provider: AIProviderName;
+      input: Parameters<typeof adminApi.updateAIProvider>[1];
+    }) => adminApi.updateAIProvider(provider, input),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: aiSettingsKey }),
+  });
+}
+
+export function useAIProviderModels(provider: AIProviderName) {
+  const queryClient = useQueryClient();
+  const queryKey = ["admin", "ai-settings", provider, "models"] as const;
+  const query = useQuery({
+    queryKey,
+    queryFn: () => adminApi.fetchAIProviderModels(provider),
+    enabled: provider === "ollama",
+    refetchInterval: (query) =>
+      provider === "ollama" && (query.state.data?.models.length ?? 0) === 0 ? 5_000 : false,
+  });
+  const refresh = useMutation({
+    mutationFn: () => adminApi.fetchAIProviderModels(provider, true),
+    onSuccess: (result) => queryClient.setQueryData(queryKey, result),
+  });
+  return {
+    ...query,
+    refreshLive: refresh.mutate,
+    isRefreshing: refresh.isPending,
+    refreshError: refresh.error,
+  };
+}
+
+export function useTestAIProvider() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: adminApi.testAIProvider,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: aiSettingsKey }),
   });
 }
