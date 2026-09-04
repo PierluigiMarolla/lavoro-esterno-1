@@ -32,6 +32,8 @@ dependencies = [
     "email-validator>=2.2.0",
     "openai>=2.0.0",
     "nudenet==3.4.2",
+    "prometheus-client>=0.26.0,<0.27.0",
+    "prometheus-fastapi-instrumentator>=8.1.0,<9.0.0",
 ]
 
 [dependency-groups]

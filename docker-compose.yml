@@ -8,6 +8,7 @@ volumes:
   grafana-data:
   prometheus-data:
   loki-data:
+  alloy-data:
   # Backup locali (stesso host Docker): non sostituiscono un backup
   # off-site, vedi infra/backup/ e docs/DATABASE.md § Backup.
   postgres-backups:
@@ -353,10 +354,11 @@ services:
   # /metrics (vedi infra/prometheus/prometheus.yml).
   # ---------------------------------------------------------------------
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.14.0
     restart: unless-stopped
     volumes:
       - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/prometheus/rules.yml:/etc/prometheus/rules.yml:ro
       - prometheus-data:/prometheus
     ports:
       - "9090:9090"
@@ -368,7 +370,7 @@ services:
   # automaticamente all'avvio (infra/grafana/provisioning).
   # ---------------------------------------------------------------------
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:13.2.1
     restart: unless-stopped
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD}
@@ -380,16 +382,16 @@ services:
       - "3000:3000"
     depends_on:
       - prometheus
+      - loki
     networks:
       - lavoro-esterno-net
 
   # ---------------------------------------------------------------------
-  # Observability - Loki, log aggregation single-binary (config minimale
-  # in infra/loki/loki-config.yml). In produzione l'API/i worker vanno
-  # configurati per inviare log via Promtail/driver Docker verso Loki.
+  # Observability - Loki, log aggregation single-binary. Grafana Alloy
+  # raccoglie stdout/stderr Docker e li inoltra a questa istanza.
   # ---------------------------------------------------------------------
   loki:
-    image: grafana/loki:latest
+    image: grafana/loki:3.7.7
     restart: unless-stopped
     command: ["-config.file=/etc/loki/loki-config.yml"]
     volumes:
@@ -397,5 +399,96 @@ services:
       - loki-data:/loki
     ports:
       - "3100:3100"
+    networks:
+      - lavoro-esterno-net
+
+  # Raccoglie gli eventi Celery dal broker senza esporre porte sull'host.
+  celery-exporter:
+    build:
+      context: .
+      dockerfile: infra/celery-exporter/Dockerfile
+    image: lavoro-esterno/celery-exporter:0.12.2-d45a395e
+    restart: unless-stopped
+    command:
+      - --broker-url=${REDIS_URL:-redis://redis:6379/0}
+      - --retry-interval=5
+      - --queues=scraping,maintenance,media,ai,exports
+      - --generic-hostname-task-sent-metric
+    expose:
+      - "9808"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - lavoro-esterno-net
+
+  # Metriche PostgreSQL (connessioni, transazioni, dimensioni e stato).
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.20.1
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_URI: postgres:5432/${POSTGRES_DB}?sslmode=disable
+      DATA_SOURCE_USER: ${POSTGRES_USER}
+      DATA_SOURCE_PASS: ${POSTGRES_PASSWORD}
+      PG_EXPORTER_COLLECTION_TIMEOUT: 10s
+    expose:
+      - "9187"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - lavoro-esterno-net
+
+  # Metriche del broker/cache Redis; nessuna porta viene pubblicata.
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.90.0
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: ${REDIS_URL:-redis://redis:6379/0}
+    expose:
+      - "9121"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - lavoro-esterno-net
+
+  # Il filesystem collector misura lo spazio dei due volumi dati montati
+  # read-only. Non accede al contenuto e non puo modificarlo.
+  volume-exporter:
+    image: prom/node-exporter:v1.12.1
+    restart: unless-stopped
+    command:
+      - --collector.disable-defaults
+      - --collector.filesystem
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|etc)($$|/)
+    volumes:
+      - postgres-data:/volumes/postgres:ro
+      - minio-data:/volumes/minio:ro
+    expose:
+      - "9100"
+    networks:
+      - lavoro-esterno-net
+
+  # Alloy sostituisce Promtail e inoltra a Loki i log stdout/stderr dei soli
+  # container appartenenti a questo progetto Compose.
+  alloy:
+    image: grafana/alloy:v1.19.2
+    restart: unless-stopped
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy
+      - /etc/alloy/config.alloy
+    environment:
+      ALLOY_COMPOSE_PROJECT: ${OBSERVABILITY_COMPOSE_PROJECT:-lavoro-esterno-1}
+    volumes:
+      - ./infra/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - alloy-data:/var/lib/alloy
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    expose:
+      - "12345"
+    depends_on:
+      - loki
     networks:
       - lavoro-esterno-net

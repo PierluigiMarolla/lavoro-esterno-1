@@ -25,6 +25,11 @@ Lo stack è containerizzato con Docker Compose ed è composto da:
 | `prometheus` | Raccolta metriche (scrape di `api:8000/metrics`). |
 | `grafana` | Dashboard e visualizzazione metriche/log, datasource Prometheus+Loki provisionati automaticamente. |
 | `loki` | Aggregazione log centralizzata. |
+| `alloy` | Discovery dei container del progetto e invio dei log Docker a Loki. |
+| `celery-exporter` | Eventi, worker, profondità code e tempi dei task Celery in formato Prometheus. |
+| `postgres-exporter` | Metriche operative PostgreSQL. |
+| `redis-exporter` | Metriche del broker/cache Redis. |
+| `volume-exporter` | Spazio totale/libero dei volumi PostgreSQL e MinIO, montati in sola lettura. |
 
 Tutti i servizi comunicano sulla rete Docker dedicata `lavoro-esterno-net`.
 Solo `nginx` (80/443) e `minio` (9000/9001, da restringere in produzione)
@@ -163,6 +168,29 @@ verificato dal vivo, è più preciso su questi punti (vedi PROGETTO.md § 4):
 - **`prometheus` / `grafana` / `loki`**: stack di osservabilità operativo,
   separato dal dominio applicativo, utile per monitorare salute dei
   worker, tempi di risposta API, errori scraper.
+- **Exporter e Alloy**: Prometheus interroga gli exporter interni per Celery,
+  PostgreSQL, Redis e volumi; Alloy legge stdout/stderr tramite il socket
+  Docker in sola lettura e li inoltra a Loki. Il socket conferisce visibilità
+  sui metadati/log di tutti i container dell'host: il filtro
+  `OBSERVABILITY_COMPOSE_PROJECT` limita la raccolta a questo progetto, ma in
+  produzione l'agente va comunque trattato come componente privilegiato.
+
+### 3.1 Osservabilità e flusso dei segnali
+
+- `GET /metrics` è un endpoint interno, fuori da `/api/v1`, escluso da nginx
+  e dall'OpenAPI. Espone metriche HTTP per route normalizzata e aggregati
+  DB-backed di `scrape_runs`; un errore DB porta il collector a zero senza
+  rendere indisponibili le metriche HTTP.
+- Celery pubblica gli eventi `sent`, `started`, `succeeded`, `failed` e
+  `retried`; `celery-exporter` li trasforma in contatori/istogrammi e legge la
+  profondità delle cinque code dal broker Redis. L'immagine è riprodotta dal
+  sorgente 0.12.2 fissato al commit `d45a395e` e verificato via SHA-256, che
+  include anche l'istogramma del tempo di attesa in coda.
+- Grafana carica automaticamente le dashboard **API Health**, **Celery
+  Workers** e **Scraping Sources** e le regole di alert presenti sotto
+  `infra/grafana/provisioning/`.
+- Le label applicative usano solo UUID/slug della fonte e nomi tecnici di
+  servizio/coda: URL, telefoni e messaggi di errore non diventano label.
 
 ## 4. Note architetturali specifiche
 

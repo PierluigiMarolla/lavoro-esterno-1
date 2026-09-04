@@ -7,9 +7,14 @@ ricerca e l'esportazione controllata.
 
 Stack: React + Vite + TypeScript + Tailwind (frontend), FastAPI su
 Python 3.13 con SQLAlchemy 2/Alembic (backend), worker Celery dedicati
-per coda (`scraping`, `media`, `ai`) più uno scheduler (Celery Beat),
+per coda (`scraping`, `maintenance`, `media`, `ai`, `exports`) più uno scheduler (Celery Beat),
 PostgreSQL 17, Redis, MinIO (storage media S3-compatible), Nginx come
 reverse proxy, Prometheus/Grafana/Loki per l'osservabilità.
+
+L'osservabilità include tre dashboard provisionate (API, worker Celery e
+scraping per fonte), alert Grafana, exporter PostgreSQL/Redis/Celery/volumi e
+raccolta dei log Docker tramite Grafana Alloy verso Loki. `/metrics` resta
+interno alla rete Docker e non viene pubblicato da nginx.
 
 ## Documentazione
 
@@ -80,6 +85,7 @@ frontend con hot reload) vedi [`docs/SVILUPPO.md`](docs/SVILUPPO.md).
 │   ├── prometheus/prometheus.yml
 │   ├── grafana/provisioning/
 │   ├── loki/loki-config.yml
+│   ├── alloy/config.alloy
 │   └── backup/                # Script backup/restore Postgres + MinIO
 ├── .github/workflows/ci.yml   # Pipeline CI (lint, test, build immagini)
 ├── backend/                   # API FastAPI, worker Celery, migrazioni Alembic

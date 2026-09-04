@@ -35,6 +35,11 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
+    # Eventi necessari a celery-exporter per stato worker, code, tempi di
+    # attesa/esecuzione e risultati dei task.
+    worker_send_task_events=True,
+    task_send_sent_event=True,
+    task_track_started=True,
     task_routes={
         "app.workers.tasks_scraper.*": {"queue": "scraping"},
         "app.workers.tasks_media.*": {"queue": "media"},

@@ -59,6 +59,10 @@ Servizi raggiungibili dopo l'avvio:
   `GF_SECURITY_ADMIN_PASSWORD`)
 - Prometheus: `http://localhost:9090`
 
+Grafana carica automaticamente le dashboard del folder **Lavoro Esterno** e
+gli alert. L'endpoint `http://api:8000/metrics` è deliberatamente interno: una
+richiesta host a `/metrics` raggiunge il frontend, non FastAPI.
+
 In sviluppo attivo sul frontend, è comune eseguire `npm run dev` in
 locale (porta 5173 con hot reload di Vite) invece di ricostruire il
 container ad ogni modifica, puntando `VITE_API_URL` all'API esposta dal
@@ -250,3 +254,55 @@ Il workflow `.github/workflows/security.yml` aggiunge dependency review,
 Trivy su repository/immagini e ZAP baseline/OpenAPI su stack effimero.
 High/Critical bloccano la CI; le scansioni ZAP complete girano su schedule
 o avvio manuale e pubblicano i report come artifact.
+
+## 9. Observability
+
+Prometheus raccoglie API, Celery, PostgreSQL, Redis, spazio dei volumi, Loki e
+Alloy ogni 15 secondi. Le dashboard e le regole sono versionate in
+`infra/grafana/provisioning`; non vanno create manualmente dalla UI, perché una
+modifica manuale verrebbe sostituita dal provisioning.
+
+Il Celery exporter resta alla versione applicativa 0.12.2, costruita dal commit
+`d45a395e` con archivio verificato tramite SHA-256: rispetto alla vecchia image
+Docker Hub espone anche `celery_task_queue_wait_time`, usata dalla dashboard.
+Alloy assegna ai log le label stabili `compose_project`, `service`, `container`
+e `stream=docker`; stdout e stderr sono letti dalla stessa API log Docker.
+
+Alloy seleziona i container tramite la label Compose del progetto. Il default
+è `lavoro-esterno-1`; se lo stack viene avviato, ad esempio, con
+`docker compose -p staging up`, impostare nello stesso ambiente:
+
+```dotenv
+OBSERVABILITY_COMPOSE_PROJECT=staging
+```
+
+Il mount read-only di `/var/run/docker.sock` non consente ad Alloy di
+modificare direttamente i file dell'host, ma l'API Docker resta un'interfaccia
+privilegiata. In produzione limitare l'accesso al container Alloy e non
+pubblicare la sua porta.
+
+Diagnostica rapida:
+
+```bash
+# Stato dei target e regole Prometheus
+curl http://localhost:9090/api/v1/targets
+curl http://localhost:9090/api/v1/rules
+
+# Metriche API dall'interno della rete Docker
+docker compose exec prometheus wget -qO- http://api:8000/metrics
+
+# Verifica raccolta log e servizi di osservabilità
+docker compose logs --tail=50 alloy loki prometheus grafana
+docker compose ps celery-exporter postgres-exporter redis-exporter volume-exporter
+```
+
+Gli alert bilanciati scattano per API down (2 minuti), coda oltre 100 task
+(10 minuti), coda non vuota senza avanzamento (15 minuti), tre fallimenti
+scraping consecutivi e spazio libero PostgreSQL/MinIO sotto il 15% (15
+minuti). Non è configurato alcun contact point esterno: gli stati firing e
+resolved sono consultabili nella sezione Alerting di Grafana.
+
+La retention Loki è di 90 giorni (`2160h`), coerente con
+`TECHNICAL_LOG_RETENTION_DAYS`. I dati Prometheus e le posizioni Alloy vivono
+nei volumi `prometheus-data` e `alloy-data`; non usare `docker compose down
+-v`, che eliminerebbe anche questi dati oltre ai volumi applicativi.

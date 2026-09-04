@@ -1,4 +1,6 @@
+import { useState } from "react";
 import { useDashboardKpis, useRecentActivity, useScrapingActivity, useSourceHealth } from "@/hooks/useDashboard";
+import SystemStatusDialog from "@/components/operations/SystemStatusDialog";
 import Icon from "@/components/ui/Icon";
 import Badge, { type BadgeTone } from "@/components/ui/Badge";
 import ProgressBar from "@/components/ui/ProgressBar";
@@ -49,6 +51,7 @@ interface KpiCardConfig {
 }
 
 export default function DashboardPage() {
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const kpis = useDashboardKpis();
   const activity = useScrapingActivity();
   const health = useSourceHealth();
@@ -222,7 +225,10 @@ export default function DashboardPage() {
               <HealthRow label="Error State" value={health.data.error} total={health.data.total} tone="error" />
             </div>
           )}
-          <button className="w-full mt-5 py-2 border border-border rounded text-label-sm text-on-surface hover:bg-surface-container-lowest transition-colors flex items-center justify-center gap-2">
+          <button
+            onClick={() => setDiagnosticsOpen(true)}
+            className="w-full mt-5 py-2 border border-border rounded text-label-sm text-on-surface hover:bg-surface-container-lowest transition-colors flex items-center justify-center gap-2"
+          >
             View Detailed Diagnostics
             <Icon name="arrow_forward" size={16} />
           </button>
@@ -258,6 +264,7 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+      <SystemStatusDialog open={diagnosticsOpen} onClose={() => setDiagnosticsOpen(false)} />
     </div>
   );
 }

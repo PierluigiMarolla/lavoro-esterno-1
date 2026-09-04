@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import Icon from "@/components/ui/Icon";
-import Dialog from "@/components/ui/Dialog";
+import SystemStatusDialog from "@/components/operations/SystemStatusDialog";
 import { useTheme } from "@/context/ThemeContext";
-import { useMarkAllNotificationsRead, useMarkNotificationRead, useNotifications, useSystemStatus } from "@/hooks/useOperations";
+import { useMarkAllNotificationsRead, useMarkNotificationRead, useNotifications } from "@/hooks/useOperations";
 
 const SEGMENT_LABELS: Record<string, string> = {
   dashboard: "Dashboard",
@@ -35,7 +35,6 @@ export default function Topbar() {
   const notifications = useNotifications();
   const markRead = useMarkNotificationRead();
   const markAll = useMarkAllNotificationsRead();
-  const system = useSystemStatus(statusOpen);
 
   return (
     <header className="flex justify-between items-center px-gutter w-full sticky top-0 z-40 bg-surface h-topbar-height shadow-[0_1px_3px_rgba(0,0,0,0.05)] border-b border-border">
@@ -106,14 +105,7 @@ export default function Topbar() {
           <Icon name="person" size={16} />
         </Link>
       </div>
-      <Dialog open={statusOpen} onClose={() => setStatusOpen(false)} title="System status">
-        <div className="space-y-3">
-          <div className="flex justify-between"><span>Stato complessivo</span><strong className="capitalize">{system.data?.status ?? "checking"}</strong></div>
-          {system.isError && <p className="text-error text-sm">Impossibile verificare lo stato dei servizi.</p>}
-          {system.data?.components.map((component) => <div key={component.name} className="flex justify-between gap-4 border-t border-border pt-2"><div><p className="font-medium">{component.name}</p>{component.message && <p className="text-xs text-on-surface-variant">{component.message}</p>}</div><div className="text-right"><span className="capitalize text-sm">{component.status}</span>{component.latencyMs !== null && <p className="text-xs font-mono">{component.latencyMs} ms</p>}</div></div>)}
-          <button onClick={() => system.refetch()} className="text-sm text-primary">Aggiorna stato</button>
-        </div>
-      </Dialog>
+      <SystemStatusDialog open={statusOpen} onClose={() => setStatusOpen(false)} />
     </header>
   );
 }

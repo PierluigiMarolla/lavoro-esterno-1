@@ -468,23 +468,23 @@ Docker dell'host.
 
 ## 9. Observability
 
-- [ ] Costruire le **dashboard Grafana specifiche** del progetto (oggi
+- [x] Costruire le **dashboard Grafana specifiche** del progetto (oggi
       solo il provisioning datasource è predisposto, nessuna dashboard
       esiste ancora): almeno (a) salute API (latenze, error rate,
       richieste/minuto), (b) stato worker Celery per coda (lunghezza
       coda, task falliti, tempo di esecuzione), (c) stato scraping per
       fonte (successo/fallimento run, nuovi annunci trovati).
-- [ ] Implementare l'**endpoint `/metrics`** lato API (oggi solo
+- [x] Implementare l'**endpoint `/metrics`** lato API (oggi solo
       referenziato in `infra/prometheus/prometheus.yml`, da implementare
       nel backend, es. via `prometheus-fastapi-instrumentator`).
-- [ ] Configurare l'**invio dei log applicativi a Loki** (oggi Loki gira
+- [x] Configurare l'**invio dei log applicativi a Loki** (oggi Loki gira
       ma nulla scrive log verso di lui: serve un driver/agent, es.
       Promtail o driver di logging Docker, oppure logging diretto via
       client HTTP Loki dal backend).
-- [ ] Definire **alerting** (Grafana Alerting o Alertmanager) su almeno:
+- [x] Definire **alerting** (Grafana Alerting o Alertmanager) su almeno:
       API down, coda Celery bloccata/troppo lunga, run di scraping
       falliti ripetutamente per una fonte, spazio disco MinIO/Postgres.
-- [ ] Valutare l'aggiunta di **postgres_exporter** (già predisposto come
+- [x] Valutare l'aggiunta di **postgres_exporter** (già predisposto come
       job commentato in `infra/prometheus/prometheus.yml`) e di un
       eventuale exporter per Redis/Celery.
 

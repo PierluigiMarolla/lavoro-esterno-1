@@ -289,6 +289,7 @@ function CreateUserDialog({ open, onClose }: { open: boolean; onClose: () => voi
           </label>
           <input
             id="create-user-email"
+            data-dialog-initial-focus
             type="email"
             required
             value={email}

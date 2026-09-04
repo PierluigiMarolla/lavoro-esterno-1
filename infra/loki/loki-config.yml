@@ -37,8 +37,8 @@ schema_config:
 ruler:
   alertmanager_url: http://localhost:9093
 
-# Retention log di default: 14 giorni. Da rivedere in base ai requisiti di
-# audit/GDPR definiti in docs/SICUREZZA.md.
+# Retention log tecnici: 90 giorni (2160 ore), allineata al default
+# TECHNICAL_LOG_RETENTION_DAYS e alla policy in docs/SICUREZZA.md.
 limits_config:
   retention_period: 2160h
   reject_old_samples: true

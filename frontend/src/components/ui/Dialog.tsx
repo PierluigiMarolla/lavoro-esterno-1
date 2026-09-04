@@ -27,6 +27,11 @@ export default function Dialog({
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     if (!open) return;
@@ -34,11 +39,12 @@ export default function Dialog({
     previouslyFocused.current = document.activeElement as HTMLElement | null;
     const dialogEl = dialogRef.current;
     const focusable = dialogEl?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR);
-    (focusable?.[0] ?? dialogEl)?.focus();
+    const initialFocus = dialogEl?.querySelector<HTMLElement>("[data-dialog-initial-focus]");
+    (initialFocus ?? focusable?.[0] ?? dialogEl)?.focus();
 
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (e.key !== "Tab" || !dialogEl) return;
@@ -62,7 +68,7 @@ export default function Dialog({
       document.removeEventListener("keydown", onKeyDown);
       previouslyFocused.current?.focus();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 

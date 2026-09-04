@@ -12,6 +12,9 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+rule_files:
+  - /etc/prometheus/rules.yml
+
 scrape_configs:
   # Metriche applicative dell'API (richieste HTTP, latenze, task Celery
   # inoltrati, ecc.). Il nome host "api" corrisponde al servizio
@@ -28,12 +31,26 @@ scrape_configs:
     static_configs:
       - targets: ["localhost:9090"]
 
-  # ---------------------------------------------------------------------
-  # Opzionale: metriche PostgreSQL via postgres_exporter. Per abilitarlo
-  # aggiungere al docker-compose un servizio "postgres-exporter" (immagine
-  # prometheuscommunity/postgres-exporter) collegato allo stesso DSN del
-  # database applicativo, quindi scommentare il job sottostante.
-  # ---------------------------------------------------------------------
-  # - job_name: "postgres-exporter"
-  #   static_configs:
-  #     - targets: ["postgres-exporter:9187"]
+  - job_name: "celery-exporter"
+    static_configs:
+      - targets: ["celery-exporter:9808"]
+
+  - job_name: "postgres-exporter"
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+
+  - job_name: "redis-exporter"
+    static_configs:
+      - targets: ["redis-exporter:9121"]
+
+  - job_name: "volume-exporter"
+    static_configs:
+      - targets: ["volume-exporter:9100"]
+
+  - job_name: "loki"
+    static_configs:
+      - targets: ["loki:3100"]
+
+  - job_name: "alloy"
+    static_configs:
+      - targets: ["alloy:12345"]

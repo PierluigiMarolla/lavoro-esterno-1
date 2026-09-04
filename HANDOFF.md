@@ -1449,3 +1449,47 @@ Durante il test è comparso un warning perché il `JWT_SECRET_KEY` dell'ambiente
 locale corrente è lungo 20 byte. Non è stato ruotato automaticamente, perché
 la rotazione invalida le sessioni: prima di un uso reale sostituirlo con il
 valore casuale da 64 byte già indicato nel runbook Windows.
+
+# Sessione 11 — 4 settembre 2026: observability completa
+
+Completata e collaudata dal vivo l'intera sezione 9. L'API espone ora
+`GET /metrics` solo sulla rete Docker, fuori da `/api/v1`, senza autenticazione
+e senza comparire nell'OpenAPI. `prometheus-fastapi-instrumentator` raccoglie
+richieste, status, latenza per route normalizzata e richieste attive; un
+collector DB-backed pubblica, per UUID e slug della fonte, run 24h/7d, nuovi
+annunci, ultimo stato/successo, fallimenti consecutivi e durata dei run attivi.
+Un errore PostgreSQL lascia disponibili le metriche HTTP e porta la gauge del
+collector a zero.
+
+Lo stack include Prometheus 3.14, Grafana 13.2, Loki 3.7, Alloy 1.19,
+postgres_exporter 0.20.1, redis_exporter 1.90.0, node_exporter 1.12.1 e Celery
+Exporter 0.12.2. Quest'ultimo è costruito dal commit `d45a395e`, verificato con
+SHA-256, perché include anche l'istogramma del tempo di attesa in coda. Celery
+emette gli eventi completi e tutte le code `scraping`, `maintenance`, `media`,
+`ai`, `exports` sono monitorate. Alloy legge il socket Docker in sola lettura,
+filtra il progetto Compose, esclude se stesso e invia a Loki log etichettati
+con `compose_project`, `service`, `container` e `stream`; retention 90 giorni.
+
+Grafana provisiona nel folder **Lavoro Esterno** le dashboard **API Health**,
+**Celery Workers** e **Scraping Sources**, più sette regole senza contact point:
+API down, target observability down, coda lunga, coda senza avanzamento,
+fallimenti scraping consecutivi, collector scraping down e spazio libero dei
+volumi PostgreSQL/MinIO sotto il 15%. Tutte dichiarano esplicitamente gli stati
+NoData ed errore di valutazione.
+
+Collaudo finale:
+
+- backend: Ruff verde e suite completa `160 passed`; lock `uv` aggiornato;
+- `docker compose config`, Prometheus config/rules, Alloy format/config,
+  provisioning YAML e JSON dashboard validi;
+- tutti gli otto target Prometheus `UP`, cinque recording rule `ok`,
+  `pg_up=1`, `redis_up=1`, collector scraping `=1` e metriche spazio presenti
+  per entrambi i mount;
+- task Celery controllato osservato come sent/received/started/succeeded, con
+  runtime e queue wait; log API e worker interrogabili in Loki;
+- tre dashboard e sette alert caricati automaticamente, regole tutte healthy;
+- prova reale dell'alert API: `inactive → pending → firing → inactive` dopo il
+  ripristino; API nuovamente `UP`;
+- tutti i servizi Compose operativi (il container one-shot `ollama-init` è
+  terminato correttamente con exit code 0). Nessun volume è stato eliminato o
+  ricreato durante il collaudo.
