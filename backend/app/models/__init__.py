@@ -18,6 +18,12 @@ from app.models.canonical_history import CanonicalHistory
 from app.models.export_jobs import ExportJob, ExportJobRecord
 from app.models.media import Media
 from app.models.media_classification_history import MediaClassificationHistory
+from app.models.operations import (
+    MediaClassifierSettings,
+    NotificationEvent,
+    NotificationRead,
+    SourcePriorityRecalculationJob,
+)
 from app.models.privacy import ErasureRequest, SuppressionEntry
 from app.models.record import Record
 from app.models.scrape_errors import ScrapeError
@@ -40,6 +46,10 @@ __all__ = [
     "ScrapeRun",
     "ScrapeError",
     "MediaClassificationHistory",
+    "MediaClassifierSettings",
+    "SourcePriorityRecalculationJob",
+    "NotificationEvent",
+    "NotificationRead",
     "SummaryVersion",
     "SummaryGenerationJob",
     "ExportJob",

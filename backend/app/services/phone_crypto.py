@@ -79,9 +79,7 @@ def normalize_phone(raw: str) -> str:
 def _encryption_key() -> bytes:
     key = base64.b64decode(settings.PHONE_ENCRYPTION_KEY)
     if len(key) != 32:
-        raise PhoneCryptoError(
-            "PHONE_ENCRYPTION_KEY deve decodificare a 32 byte (AES-256)."
-        )
+        raise PhoneCryptoError("PHONE_ENCRYPTION_KEY deve decodificare a 32 byte (AES-256).")
     return key
 
 

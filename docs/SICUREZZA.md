@@ -216,3 +216,16 @@ chiusura di ogni rilievo High/Critical.
 > validazione legale/normativa completa (in particolare relativa allo
 > scraping di dati personali da fonti terze) resta un'attività separata,
 > tracciata come attività aperta in `PROGETTO.md`.
+
+## 8. Console account e operative
+
+- Sospensione e riattivazione utenti richiedono Admin con 2FA e aggiornano il
+  security stamp. Sono vietate auto-sospensione e sospensione dell'ultimo
+  Admin attivo.
+- Cambio soglie del classificatore, reprocess bulk e cambio priorità fonti
+  richiedono Admin con 2FA e producono audit senza dati personali.
+- Le notifiche rispettano il ruolo: Admin tutte, Operator operative e job
+  propri, Viewer soltanto indisponibilità generali. I messaggi sono
+  sanitizzati e non includono telefoni, URL media o contenuti remoti.
+- Lo stato sistema espone solo nome logico, stato e latenza; indirizzi interni,
+  credenziali ed eccezioni restano nei log server-side.

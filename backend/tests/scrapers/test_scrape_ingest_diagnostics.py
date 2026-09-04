@@ -35,13 +35,10 @@ async def test_collect_ads_surfaces_empty_media_selector_and_keeps_ad(
     # ad1 e ad2 hanno un telefono e vengono mantenuti; ad2 non ha immagini.
     assert len(result.ads) == 2
     assert any(
-        error.url.endswith("/ad2.html")
-        and "Nessun URL immagine trovato" in error.message
+        error.url.endswith("/ad2.html") and "Nessun URL immagine trovato" in error.message
         for error in result.errors
     )
     assert any(
-        error.url.endswith("/ad3.html")
-        and error.message == "Nessun numero di telefono estratto."
+        error.url.endswith("/ad3.html") and error.message == "Nessun numero di telefono estratto."
         for error in result.errors
     )
-

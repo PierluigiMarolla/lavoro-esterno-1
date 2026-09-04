@@ -57,6 +57,7 @@ def run_scrape_source(self, source_id: str) -> dict:
     from app.models.scrape_errors import ScrapeError
     from app.models.scrape_runs import ScrapeRun  # import locale per evitare import circolari
     from app.models.sources import Source
+    from app.services.notifications import create_notification
     from app.services.scrape_ingest import collect_ads, persist_collected_ads
 
     source_uuid = uuid.UUID(source_id)
@@ -118,6 +119,32 @@ def run_scrape_source(self, source_id: str) -> dict:
 
         run.finished_at = datetime.now(UTC)
         session.add(run)
+        if run.status == "failed":
+            source.status = "degraded"
+            create_notification(
+                session,
+                kind="scrape_failed",
+                severity="error",
+                title="Scraping non riuscito",
+                message=f"La fonte {source.name} non ha completato l'ultimo scan.",
+                link=f"/sources?source={source.id}",
+                audience="operator",
+                dedup_key=f"scrape_failed:{run.id}",
+            )
+        elif run.errors_count:
+            source.status = "degraded"
+            create_notification(
+                session,
+                kind="source_degraded",
+                severity="warning",
+                title="Fonte degradata",
+                message=f"La fonte {source.name} ha completato lo scan con errori.",
+                link=f"/sources?source={source.id}",
+                audience="operator",
+                dedup_key=f"source_degraded:{run.id}",
+            )
+        else:
+            source.status = "healthy"
         session.commit()
 
         if source.scrape_config:

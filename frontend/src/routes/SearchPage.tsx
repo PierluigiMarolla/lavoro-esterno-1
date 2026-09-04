@@ -82,7 +82,7 @@ export default function SearchPage() {
   const search = useRecordSearch(filters);
   // The hook is gated (enabled: only once a filter is set) — mirror that here
   // so we can show a distinct "type something" state before any query has run.
-  const hasFilters = Boolean(phone || source || status || dateFrom);
+  const phoneReady = !phone || phone.replace(/\D/g, "").length >= 9;
 
   function clearAll() {
     setSearchParams({}, { replace: true });
@@ -103,12 +103,12 @@ export default function SearchPage() {
 
   return (
     <div className="space-y-6">
-      {/* Search Header & Input */}
+      {/* Records header and filters */}
       <section className="space-y-4">
         <div>
-          <h2 className="text-headline-md text-on-surface">Global Entity Search</h2>
+          <h2 className="text-headline-md text-on-surface">Records</h2>
           <p className="text-body-md text-on-surface-variant mt-1">
-            Search records across all synchronized sources by phone number, canonical ID, or keyword.
+            Browse and filter records collected from all synchronized sources.
           </p>
         </div>
         <div className="max-w-3xl">
@@ -197,14 +197,14 @@ export default function SearchPage() {
       <section className="space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <h3 className="text-headline-sm text-on-surface">Search Results</h3>
+            <h3 className="text-headline-sm text-on-surface">Record list</h3>
             {search.data && (
               <span className="bg-surface-container-high text-on-surface-variant text-label-sm px-2 py-0.5 rounded-full border border-border">
                 {total.toLocaleString()} found
               </span>
             )}
           </div>
-          {hasFilters && search.data && search.data.results.length > 0 && (
+          {phoneReady && search.data && search.data.results.length > 0 && (
             <div className="flex gap-2">
               {selectedIds.size > 0 && (
                 <Link
@@ -239,17 +239,17 @@ export default function SearchPage() {
               </Tr>
             </THead>
             <TBody>
-              {!hasFilters && (
-                <EmptyRow colSpan={8} message="Enter a phone number or apply a filter to search records." />
+              {!phoneReady && (
+                <EmptyRow colSpan={8} message="Enter at least 9 digits to search by phone number." />
               )}
-              {hasFilters && search.isLoading && <LoadingRow colSpan={8} />}
-              {hasFilters && search.isError && (
+              {phoneReady && search.isLoading && <LoadingRow colSpan={8} />}
+              {phoneReady && search.isError && (
                 <ErrorRow colSpan={8} error={search.error} onRetry={() => search.refetch()} />
               )}
-              {hasFilters && search.data && search.data.results.length === 0 && (
+              {phoneReady && search.data && search.data.results.length === 0 && (
                 <EmptyRow colSpan={8} message="No records match these filters." />
               )}
-              {hasFilters &&
+              {phoneReady &&
                 search.data?.results.map((record) => (
                   <Tr key={record.id}>
                     <Td className="text-center">
@@ -303,7 +303,7 @@ export default function SearchPage() {
             </TBody>
           </Table>
 
-          {hasFilters && search.data && total > 0 && (
+          {phoneReady && search.data && total > 0 && (
             <div className="border-t border-border px-4 py-3 flex items-center justify-between">
               <div className="text-label-sm text-on-surface-variant">
                 Showing {(page - 1) * PAGE_SIZE + 1} to {Math.min(page * PAGE_SIZE, total)} of {total.toLocaleString()} results

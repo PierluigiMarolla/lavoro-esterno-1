@@ -34,22 +34,21 @@ def _ad(
     )
 
 
-def test_prefers_bakeca_incontri_when_present() -> None:
+def test_configured_priority_replaces_bakeca_special_case() -> None:
     bakeca = _source(BAKECA_INCONTRI_SLUG, SourcePriority.low)
     other = _source("megaescort", SourcePriority.high)
 
-    # L'annuncio più recente è su "other", ma bakeca_incontri deve comunque
-    # vincere perché è la fonte di riferimento privilegiata.
+    # Nessuno slug è privilegiato: la priorità configurata è il primo criterio.
     ad_other_recent = _ad(other, minutes_ago=1)
     ad_bakeca_older = _ad(bakeca, minutes_ago=60)
 
     resolution = resolve_canonical([ad_other_recent, ad_bakeca_older])
 
-    assert resolution.chosen.id == ad_bakeca_older.id
-    assert BAKECA_INCONTRI_SLUG in resolution.reason
+    assert resolution.chosen.id == ad_other_recent.id
+    assert "high" in resolution.reason
 
 
-def test_picks_most_recent_bakeca_incontri_ad() -> None:
+def test_same_priority_picks_most_recent_regardless_of_slug() -> None:
     bakeca = _source(BAKECA_INCONTRI_SLUG)
     older = _ad(bakeca, minutes_ago=120)
     newer = _ad(bakeca, minutes_ago=5)
@@ -59,7 +58,7 @@ def test_picks_most_recent_bakeca_incontri_ad() -> None:
     assert resolution.chosen.id == newer.id
 
 
-def test_falls_back_to_most_recent_active_when_no_bakeca_incontri() -> None:
+def test_same_priority_picks_most_recent_active() -> None:
     source_a = _source("megaescort")
     source_b = _source("moscarossa")
 
@@ -69,7 +68,7 @@ def test_falls_back_to_most_recent_active_when_no_bakeca_incontri() -> None:
     resolution = resolve_canonical([older, newer])
 
     assert resolution.chosen.id == newer.id
-    assert "Nessun annuncio attivo" in resolution.reason
+    assert "medium" in resolution.reason
 
 
 def test_ignores_non_active_advertisements() -> None:

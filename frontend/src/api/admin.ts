@@ -64,6 +64,10 @@ export function fetchAuditLog(): Promise<AuditLogEntry[]> {
   return apiRequest<AuditLogEntry[]>("/admin/audit-log");
 }
 
+export function activateAdminUser(id: string): Promise<AdminUser> {
+  return apiRequest<AdminUser>(`/admin/users/${id}/activate`, { method: "POST" });
+}
+
 export function fetchErasureRequests(): Promise<ErasureRequest[]> {
   return apiRequest<ErasureRequest[]>("/privacy/erasure-requests");
 }

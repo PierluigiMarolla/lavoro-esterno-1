@@ -55,9 +55,10 @@ def cleanup_expired_data() -> dict:
     from app.models.audit_log import AuditLog
     from app.models.export_jobs import ExportJob
     from app.models.media import Media
+    from app.models.operations import NotificationEvent
     from app.models.record import Record
     from app.models.scrape_runs import ScrapeRun
-    from app.services.scrape_ingest import _recompute_canonical
+    from app.services.scrape_ingest import recompute_canonical
 
     now = datetime.now(UTC)
     session = SyncSessionLocal()
@@ -68,6 +69,7 @@ def cleanup_expired_data() -> dict:
         "deleted_advertisements": 0,
         "deleted_records": 0,
         "deleted_exports": 0,
+        "deleted_notifications": 0,
     }
     try:
         if settings.MEDIA_RETENTION_DAYS > 0:
@@ -136,7 +138,7 @@ def cleanup_expired_data() -> dict:
                         session.delete(record)
                         result["deleted_records"] += 1
                     else:
-                        _recompute_canonical(session, record)
+                        recompute_canonical(session, record)
             result["deleted_advertisements"] = len(ads)
 
         if settings.TECHNICAL_LOG_RETENTION_DAYS > 0:
@@ -151,6 +153,12 @@ def cleanup_expired_data() -> dict:
             cutoff = now - timedelta(days=settings.AUDIT_LOG_RETENTION_DAYS)
             result["deleted_audit_log"] = session.execute(
                 delete(AuditLog).where(AuditLog.created_at < cutoff)
+            ).rowcount
+
+        if settings.NOTIFICATION_RETENTION_DAYS > 0:
+            cutoff = now - timedelta(days=settings.NOTIFICATION_RETENTION_DAYS)
+            result["deleted_notifications"] = session.execute(
+                delete(NotificationEvent).where(NotificationEvent.created_at < cutoff)
             ).rowcount
 
         expired = list(

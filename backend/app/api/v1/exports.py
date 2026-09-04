@@ -187,6 +187,7 @@ async def create_export(
     await db.refresh(job)
 
     from app.workers.tasks_exports import generate_export
+
     try:
         generate_export.delay(str(job.id))
     except Exception:  # broker unavailable: persist a retryable safe state
@@ -230,6 +231,7 @@ async def retry_export(
     )
     await db.commit()
     from app.workers.tasks_exports import generate_export
+
     try:
         generate_export.delay(str(job.id))
     except Exception:

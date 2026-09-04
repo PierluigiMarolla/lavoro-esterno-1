@@ -284,6 +284,18 @@ def generate_summary(self, job_id: str) -> dict:
         if job:
             job.status, job.error_message = "failed", str(exc)
             job.completed_at = datetime.now(UTC)
+            from app.services.notifications import create_notification
+
+            create_notification(
+                session,
+                kind="ai_failed",
+                severity="warning",
+                title="Riepilogo AI non generato",
+                message="Il job di riepilogo non è stato completato.",
+                link=f"/records/{job.record_id}/ai-summary",
+                owner_user_id=job.requested_by_user_id,
+                dedup_key=f"ai_failed:{job.id}",
+            )
             session.commit()
         return {"status": "failed", "job_id": job_id, "reason": str(exc)}
     except Exception as exc:
@@ -296,6 +308,18 @@ def generate_summary(self, job_id: str) -> dict:
             job.status = "failed"
             job.error_message = "Generazione AI non riuscita; consultare i log del worker."
             job.completed_at = datetime.now(UTC)
+            from app.services.notifications import create_notification
+
+            create_notification(
+                session,
+                kind="ai_failed",
+                severity="error",
+                title="Riepilogo AI non riuscito",
+                message="Il worker AI non ha completato il riepilogo.",
+                link=f"/records/{job.record_id}/ai-summary",
+                owner_user_id=job.requested_by_user_id,
+                dedup_key=f"ai_failed:{job.id}",
+            )
             session.commit()
         logger.exception("Generazione riepilogo fallita per job %s", job_id)
         return {"status": "failed", "job_id": job_id}

@@ -3,6 +3,7 @@ import {
   useAdminUsers,
   useUpdateAdminUserRole,
   useSuspendAdminUser,
+  useActivateAdminUser,
   useAuditLog,
   useCreateAdminUser,
   useResetAdminUserTwoFactor,
@@ -24,6 +25,8 @@ import ErrorState from "@/components/ui/ErrorState";
 import { EmptyRow, ErrorRow, LoadingRow, Table, TBody, Td, Th, THead, Tr } from "@/components/ui/Table";
 import { cn } from "@/lib/cn";
 import type { AdminUser, UserRole } from "@/types";
+import type { SourcePriority } from "@/types";
+import { useClassifierSettings, useReprocessClassifierMedia, useSourcePriorities, useUpdateClassifierSettings, useUpdateSourcePriority } from "@/hooks/useOperations";
 
 // Replicates desing/admin_lavoro_esterno/code.html.
 //
@@ -117,10 +120,10 @@ export default function AdminPage() {
       {tab === "users" && <UsersTab />}
       {tab === "privacy" && <PrivacyTab />}
       {tab === "source-priorities" && (
-        <ComingSoon icon="low_priority" title="Source Priorities" message="Priority configuration for data sources is not yet implemented." />
+        <SourcePrioritiesTab />
       )}
       {tab === "classifiers" && (
-        <ComingSoon icon="category" title="Classifiers" message="Classifier management is not yet implemented." />
+        <ClassifiersTab />
       )}
       {tab === "audit-log" && <AuditLogTab />}
     </div>
@@ -131,6 +134,7 @@ function UsersTab() {
   const users = useAdminUsers();
   const updateRole = useUpdateAdminUserRole();
   const suspend = useSuspendAdminUser();
+  const activate = useActivateAdminUser();
   const updatePhonePermission = useUpdateClearPhonePermission();
   const [createOpen, setCreateOpen] = useState(false);
   const [resetTarget, setResetTarget] = useState<AdminUser | null>(null);
@@ -143,6 +147,11 @@ function UsersTab() {
           Create user
         </Button>
       </div>
+      {(suspend.isError || activate.isError) && (
+        <p className="rounded border border-error/30 bg-error/10 p-3 text-error">
+          {describeError(suspend.error ?? activate.error).description}
+        </p>
+      )}
 
       <div className="bg-surface-container-lowest border border-border rounded-lg shadow-[0_1px_2px_rgba(0,0,0,0.02)] flex flex-col">
         <Table>
@@ -220,11 +229,16 @@ function UsersTab() {
                       Reset 2FA
                     </button>
                     <button
-                      onClick={() => suspend.mutate(user.id)}
-                      disabled={suspend.isPending || user.status === "suspended"}
-                      className="text-label-sm font-medium text-on-surface-variant hover:text-error transition-colors disabled:opacity-40 disabled:pointer-events-none"
+                      onClick={() => {
+                        const action = user.status === "suspended" ? "riattivare" : "sospendere";
+                        if (!window.confirm(`Vuoi ${action} ${user.email}?`)) return;
+                        if (user.status === "suspended") activate.mutate(user.id);
+                        else suspend.mutate(user.id);
+                      }}
+                      disabled={suspend.isPending || activate.isPending}
+                      className="text-label-sm font-medium text-on-surface-variant hover:text-error transition-colors disabled:opacity-40"
                     >
-                      Suspend
+                      {user.status === "suspended" ? "Reactivate" : "Suspend"}
                     </button>
                   </div>
                 </Td>
@@ -523,14 +537,25 @@ function AuditLogTab() {
   );
 }
 
-function ComingSoon({ icon, title, message }: { icon: string; title: string; message: string }) {
-  return (
-    <div className="bg-surface-container-lowest border border-border rounded-lg shadow-[0_1px_2px_rgba(0,0,0,0.02)] flex flex-col items-center justify-center gap-3 py-20 text-center">
-      <div className="w-12 h-12 rounded-full bg-surface-container-low flex items-center justify-center text-on-surface-variant">
-        <Icon name={icon} size={24} />
-      </div>
-      <h3 className="text-headline-sm text-on-surface">{title}</h3>
-      <p className="text-body-md text-on-surface-variant max-w-sm">{message}</p>
-    </div>
-  );
+function SourcePrioritiesTab() {
+  const priorities = useSourcePriorities();
+  const update = useUpdateSourcePriority();
+  return <div className="bg-surface-container-lowest border border-border rounded-lg overflow-hidden"><Table><THead><Tr><Th>Source</Th><Th>Status</Th><Th>Priority</Th><Th>Records</Th><Th>Recalculation</Th></Tr></THead><TBody>
+    {priorities.isLoading && <LoadingRow colSpan={5} />}
+    {priorities.isError && <ErrorRow colSpan={5} error={priorities.error} onRetry={() => priorities.refetch()} />}
+    {priorities.data?.map((source) => <Tr key={source.sourceId}><Td><strong>{source.name}</strong><div className="text-xs text-on-surface-variant">{source.code}</div></Td><Td><Badge tone={source.status === "healthy" ? "success" : "warning"}>{source.status}</Badge></Td><Td><Select value={source.priority} disabled={update.isPending} onChange={(e) => update.mutate({ sourceId: source.sourceId, priority: e.target.value as SourcePriority })}>{["high", "medium", "low"].map((p) => <option key={p} value={p}>{p}</option>)}</Select></Td><Td>{source.affectedRecords}</Td><Td>{source.latestJob ? <div className="text-xs"><Badge tone={source.latestJob.status === "completed" ? "success" : source.latestJob.status === "failed" ? "error" : "warning"}>{source.latestJob.status}</Badge><div>{source.latestJob.recordsProcessed}/{source.latestJob.recordsTotal} · {source.latestJob.canonicalsChanged} changed</div></div> : "—"}</Td></Tr>)}
+  </TBody></Table></div>;
+}
+
+function ClassifiersTab() {
+  const config = useClassifierSettings();
+  const update = useUpdateClassifierSettings();
+  const reprocess = useReprocessClassifierMedia();
+  const [safe, setSafe] = useState("");
+  const [explicit, setExplicit] = useState("");
+  const currentSafe = config.data?.safeThreshold ?? Number(safe);
+  const currentExplicit = config.data?.explicitThreshold ?? Number(explicit);
+  if (config.isLoading) return <div className="h-40 animate-pulse bg-surface-container-low rounded" />;
+  if (config.isError || !config.data) return <ErrorState error={config.error} onRetry={() => config.refetch()} />;
+  return <div className="space-y-5"><section className="bg-surface-container-lowest border border-border rounded-lg p-5"><h3 className="text-headline-sm">{config.data.modelName}</h3><p className="font-mono text-sm text-on-surface-variant">{config.data.modelVersion} · revision {config.data.revision}</p><form className="grid sm:grid-cols-3 gap-4 mt-4" onSubmit={(e) => { e.preventDefault(); update.mutate({ safeThreshold: Number(safe || currentSafe), explicitThreshold: Number(explicit || currentExplicit), expectedRevision: config.data.revision }); }}><label className="text-sm">Safe threshold<input type="number" min="0" max="1" step="0.01" defaultValue={currentSafe} onChange={(e) => setSafe(e.target.value)} className="block w-full rounded border border-border bg-surface p-2" /></label><label className="text-sm">Explicit threshold<input type="number" min="0" max="1" step="0.01" defaultValue={currentExplicit} onChange={(e) => setExplicit(e.target.value)} className="block w-full rounded border border-border bg-surface p-2" /></label><div className="self-end"><Button type="submit" disabled={update.isPending}>Save thresholds</Button></div></form>{update.isError && <p className="text-error mt-2">{describeError(update.error).description}</p>}</section><section className="grid md:grid-cols-3 gap-4">{Object.entries(config.data.stats).map(([group, values]) => <div key={group} className="bg-surface-container-lowest border border-border rounded-lg p-4"><h4 className="font-semibold capitalize mb-2">{group}</h4>{Object.entries(values).map(([key, value]) => <div key={key} className="flex justify-between text-sm"><span>{key}</span><strong>{value}</strong></div>)}</div>)}</section><div className="flex gap-3"><Button variant="secondary" onClick={() => reprocess.mutate("failed")}>Reprocess failed</Button><Button variant="secondary" onClick={() => reprocess.mutate("needs_review")}>Reprocess needs review</Button>{reprocess.data && <span className="self-center text-sm">Queued: {reprocess.data.queued}</span>}</div></div>;
 }

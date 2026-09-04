@@ -53,6 +53,14 @@ export function useAuditLog() {
   return useQuery({ queryKey: ["admin", "audit-log"], queryFn: adminApi.fetchAuditLog });
 }
 
+export function useActivateAdminUser() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: adminApi.activateAdminUser,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: usersKey }),
+  });
+}
+
 const erasureKey = ["admin", "erasure-requests"] as const;
 
 export function useErasureRequests() {

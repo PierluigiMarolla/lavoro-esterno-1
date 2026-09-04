@@ -151,9 +151,7 @@ class ScrapeConfigInput(CamelModel):
         cls, value: dict[str, ScrapeFieldConfig]
     ) -> dict[str, ScrapeFieldConfig]:
         if "image" in value:
-            raise ValueError(
-                "Il campo media deve chiamarsi 'images' (plurale), non 'image'."
-            )
+            raise ValueError("Il campo media deve chiamarsi 'images' (plurale), non 'image'.")
         if "phone" not in value:
             raise ValueError(
                 "La configurazione deve includere un selettore per il campo 'phone': "

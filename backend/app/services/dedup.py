@@ -54,7 +54,8 @@ def normalize_url(raw_url: str) -> str:
         path = path.rstrip("/")
 
     query_pairs = [
-        (k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True)
+        (k, v)
+        for k, v in parse_qsl(parsed.query, keep_blank_values=True)
         if k.lower() not in _TRACKING_QUERY_PARAMS
     ]
     query = urlencode(sorted(query_pairs))

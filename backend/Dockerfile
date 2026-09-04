@@ -15,21 +15,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-COPY pyproject.toml ./
-# Copiamo il codice prima dell'installazione editable perché il progetto usa
-# `packages = ["app"]` in hatchling: senza la cartella app/ presente, `pip install -e .`
-# fallirebbe nel risolvere il pacchetto.
-COPY app ./app
-COPY migrations ./migrations
-COPY alembic.ini ./alembic.ini
+COPY pyproject.toml uv.lock ./
 
-RUN pip install --no-cache-dir -e .
+# Installiamo dal lock senza il progetto locale: il codice viene copiato dopo,
+# così una modifica Python non forza il download dell'intero stack ONNX e
+# Playwright. uv usa inoltre molta meno memoria del resolver pip su Docker
+# Desktop, evitando i crash osservati con Python 3.13.
+RUN pip install --no-cache-dir uv \
+    && uv export --frozen --no-dev --no-emit-project --format requirements-txt \
+       --output-file /tmp/requirements.txt \
+    && uv pip install --system --no-cache --requirement /tmp/requirements.txt \
+    && rm /tmp/requirements.txt
 
 # Chromium headless per Scrapling DynamicFetcher/StealthyFetcher.
 # DynamicFetcher usa Playwright; StealthyFetcher usa Patchright.
 RUN playwright install --with-deps chromium \
-    && patchright install chromium \
-    && groupadd --system app \
+    && patchright install chromium
+
+COPY app ./app
+COPY migrations ./migrations
+COPY alembic.ini ./alembic.ini
+
+RUN groupadd --system app \
     && useradd --system --gid app --create-home app \
     && chown -R app:app /app /ms-playwright
 

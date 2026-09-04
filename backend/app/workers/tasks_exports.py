@@ -280,6 +280,18 @@ def generate_export(job_id: str) -> dict:
             job.progress_percent = 0
             job.error_message = _safe_error(exc)
             job.completed_at = datetime.now(UTC)
+            from app.services.notifications import create_notification
+
+            create_notification(
+                session,
+                kind="export_failed",
+                severity="error",
+                title="Export non riuscito",
+                message="Il pacchetto richiesto non è stato creato.",
+                link="/exports",
+                owner_user_id=job.requested_by_user_id,
+                dedup_key=f"export_failed:{job.id}",
+            )
             session.commit()
         raise
     finally:

@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import AppShell from "@/layout/AppShell";
 import ProtectedRoute from "@/routes/ProtectedRoute";
 import LoginPage from "@/routes/LoginPage";
@@ -9,6 +9,7 @@ import SourcesPage from "@/routes/SourcesPage";
 import ExportsPage from "@/routes/ExportsPage";
 import AdminPage from "@/routes/AdminPage";
 import AISettingsPage from "@/routes/AISettingsPage";
+import AccountPage from "@/routes/AccountPage";
 import RecordDetailLayout from "@/routes/records/RecordDetailLayout";
 import RecordOverviewTab from "@/routes/records/RecordOverviewTab";
 import RecordOccurrencesTab from "@/routes/records/RecordOccurrencesTab";
@@ -30,10 +31,10 @@ export default function App() {
         <Route element={<AppShell />}>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<DashboardPage />} />
-          <Route path="/search" element={<SearchPage />} />
+          <Route path="/search" element={<LegacySearchRedirect />} />
           {/* "Records" nav entry lands on the same search experience — there is
               no separate unfiltered browse view in the mockups. */}
-          <Route path="/records" element={<Navigate to="/search" replace />} />
+          <Route path="/records" element={<SearchPage />} />
           <Route path="/records/:id" element={<RecordDetailLayout />}>
             <Route index element={<Navigate to="overview" replace />} />
             <Route path="overview" element={<RecordOverviewTab />} />
@@ -46,10 +47,16 @@ export default function App() {
           <Route path="/exports" element={<ExportsPage />} />
           <Route path="/admin" element={<AdminPage />} />
           <Route path="/settings/ai" element={<AISettingsPage />} />
+          <Route path="/account" element={<AccountPage />} />
         </Route>
       </Route>
 
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>
   );
+}
+
+function LegacySearchRedirect() {
+  const { search } = useLocation();
+  return <Navigate to={`/records${search}`} replace />;
 }

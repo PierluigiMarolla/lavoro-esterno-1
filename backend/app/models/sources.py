@@ -24,9 +24,8 @@ class Source(UUIDPKMixin, TimestampMixin, Base):
     slug: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False)
     base_url: Mapped[str] = mapped_column(Text, nullable=False)
 
-    # Priorità usata come tie-break nella selezione dell'annuncio canonico
-    # (vedi app/services/canonical.py): a parità di altri criteri, vince la
-    # fonte con priorità più alta.
+    # Primo criterio nella selezione dell'annuncio canonico: vince la fonte
+    # con priorità più alta, poi completezza, recenza e ID deterministico.
     priority: Mapped[str] = mapped_column(SourcePriority, default="medium", nullable=False)
     status: Mapped[str] = mapped_column(SourceStatus, default="healthy", nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

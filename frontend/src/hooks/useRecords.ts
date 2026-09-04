@@ -6,9 +6,12 @@ export function useRecordSearch(filters: RecordSearchFilters) {
   return useQuery({
     queryKey: ["records", "search", filters],
     queryFn: () => recordsApi.searchRecords(filters),
-    // Search is opt-in: only run once a phone or at least one filter has been provided,
-    // so the page doesn't fire an unbounded query on first render.
-    enabled: Boolean(filters.phone || filters.source || filters.status || filters.dateFrom),
+    // A partial phone is held client-side until it can be normalized safely; an
+    // empty filter set intentionally loads the complete paginated record list.
+    enabled:
+      !filters.phone ||
+      filters.phone.replace(/\D/g, "").length >= 9 ||
+      Boolean(filters.source || filters.status || filters.dateFrom || filters.dateTo),
     placeholderData: (previous) => previous,
   });
 }

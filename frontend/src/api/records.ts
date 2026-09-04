@@ -43,8 +43,8 @@ export function fetchRecordHistory(id: string): Promise<RecordHistoryEvent[]> {
   return apiRequest<RecordHistoryEvent[]>(`/records/${id}/history`);
 }
 
-export function fetchRecordAiSummary(id: string): Promise<RecordAiSummary> {
-  return apiRequest<RecordAiSummary>(`/records/${id}/ai-summary`);
+export async function fetchRecordAiSummary(id: string): Promise<RecordAiSummary | null> {
+  return (await apiRequest<RecordAiSummary | undefined>(`/records/${id}/ai-summary`)) ?? null;
 }
 
 // Full version history, most recent first — lets the UI offer a version

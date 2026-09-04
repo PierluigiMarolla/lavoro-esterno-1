@@ -25,6 +25,7 @@ celery_app = Celery(
         "app.workers.tasks_exports",
         "app.workers.tasks_privacy",
         "app.workers.tasks_maintenance",
+        "app.workers.tasks_operations",
     ],
 )
 
@@ -46,6 +47,7 @@ celery_app.conf.update(
         # dedicato solo per questo in docker-compose.yml (vedi
         # worker-scraper: `-Q scraping,maintenance`).
         "app.workers.tasks_maintenance.*": {"queue": "maintenance"},
+        "app.workers.tasks_operations.*": {"queue": "maintenance"},
     },
 )
 

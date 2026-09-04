@@ -182,6 +182,12 @@ verificato dal vivo, è più preciso su questi punti (vedi PROGETTO.md § 4):
   `ai_provider_configs` conserva modello, stato, revisione e credenziale
   AES-256-GCM. Ogni job congela provider/modello/revisione; un cambio durante
   l'attesa fa fallire il job esplicitamente invece di cambiarne il modello.
+- **Priorità e canonici**: la priorità della fonte è il primo criterio, seguita
+  da completezza, recenza e ID. Ogni variazione crea un job sulla coda
+  `maintenance`; job duplicati o superati non applicano configurazioni stale.
+- **Console operativa**: notifiche persistenti e stato sistema sono esposti da
+  endpoint autenticati. I controlli usano timeout brevi, una cache di 10
+  secondi e non restituiscono host, credenziali o eccezioni interne.
 
 - **Export isolati**: una coda/worker `exports` con concorrenza 1 genera
   ZIP su disco temporaneo e li carica sotto `exports/{job}/package.zip`.

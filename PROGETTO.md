@@ -243,6 +243,25 @@ reali (dettagli nelle note dei singoli punti e in `docs/API.md`).
       questo ambiente, atteso finché il worker reale non è implementato,
       vedi § 7).
 
+### Aggiornamento interfaccia e console operative — 4 settembre 2026
+
+- [x] Record e Search unificati in `/records`; `/search` resta un redirect
+      compatibile che conserva la query string. L'elenco è paginato anche
+      senza filtri e “All Sources” non blocca più la richiesta.
+- [x] AI Summary interpreta correttamente `204 No Content` come assenza del
+      riepilogo, senza passare `undefined` a React Query.
+- [x] Utenti sospesi riattivabili da Admin con 2FA e revoca delle vecchie
+      sessioni; protette auto-sospensione e sospensione dell'ultimo Admin.
+- [x] Pagina `/account` collegata dall'header con cambio password, setup 2FA e
+      rigenerazione monouso dei backup code. Profile e Support sono rimossi.
+- [x] Console Source Priorities con job asincrono persistente e scelta canonica
+      basata su priorità, completezza, recenza e ID, senza eccezioni per slug.
+- [x] Console Classifiers con soglie NudeNet revisionate, statistiche e
+      riaccodamento bulk che preserva gli override manuali.
+- [x] Notifiche operative persistenti con RBAC, deduplicazione, ricevute di
+      lettura e retention di 90 giorni; pannello System Status con timeout,
+      cache breve e risultati sanitizzati.
+
 ## 4. Scraper per fonte
 
 **Cambio di approccio rispetto alla formulazione originale di questa

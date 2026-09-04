@@ -13,6 +13,7 @@ from app.models.advertisement import Advertisement
 from app.models.audit_log import AuditLog
 from app.models.media import Media
 from app.models.media_classification_history import MediaClassificationHistory
+from app.models.operations import MediaClassifierSettings
 from app.models.sources import Source
 from app.services.media_classifier import NudeNetOnnxMediaClassifier, aggregate_results
 from app.services.media_processing import (
@@ -22,6 +23,7 @@ from app.services.media_processing import (
     validate_image,
 )
 from app.services.media_storage import get_object_bytes, put_object_bytes
+from app.services.notifications import create_notification
 from app.workers.celery_app import celery_app
 from app.workers.tasks_scraper import SyncSessionLocal
 
@@ -57,8 +59,16 @@ def process_media(self, media_id: str, force: bool = False) -> dict:
             .join(Advertisement, Advertisement.source_id == Source.id)
             .where(Advertisement.id == media.advertisement_id)
         ).scalar_one()
+        record_id = session.execute(
+            select(Advertisement.record_id).where(Advertisement.id == media.advertisement_id)
+        ).scalar_one()
         original = get_object_bytes(media.original_object_key)
-        classifier = NudeNetOnnxMediaClassifier()
+        classifier_config = session.get(MediaClassifierSettings, 1)
+        classifier = NudeNetOnnxMediaClassifier(
+            safe_threshold=classifier_config.safe_threshold if classifier_config else None,
+            explicit_threshold=classifier_config.explicit_threshold if classifier_config else None,
+            config_revision=classifier_config.revision if classifier_config else None,
+        )
         base = media.original_object_key.rsplit("/", 1)[0]
         watermark = bool(source.watermark_removal_enabled and source.watermark_regions)
         regions = source.watermark_regions or []
@@ -124,6 +134,17 @@ def process_media(self, media_id: str, force: bool = False) -> dict:
                         "regions_count": len(regions),
                     },
                 )
+            )
+        if media.review_status == "required":
+            create_notification(
+                session,
+                kind="media_review",
+                severity="warning",
+                title="Media da revisionare",
+                message="Una classificazione media richiede revisione umana.",
+                link=f"/records/{record_id}/media",
+                audience="operator",
+                dedup_key=f"media_review:{media.id}:{classifier.config_revision or 0}",
             )
         session.commit()
         return {"status": "ready", "media_id": media_id}

@@ -20,10 +20,26 @@ _hasher = PasswordHasher()
 # Pwned top passwords"): un controllo di buon senso a costo zero, non un
 # sostituto di una vera verifica contro un dataset di password compromesse.
 _COMMON_PASSWORDS = {
-    "123456", "123456789", "qwerty", "password", "12345", "12345678",
-    "111111", "1234567", "sunshine", "iloveyou", "1234567890", "123123",
-    "000000", "abc123", "password1", "qwerty123", "letmein", "monkey",
-    "dragon", "football",
+    "123456",
+    "123456789",
+    "qwerty",
+    "password",
+    "12345",
+    "12345678",
+    "111111",
+    "1234567",
+    "sunshine",
+    "iloveyou",
+    "1234567890",
+    "123123",
+    "000000",
+    "abc123",
+    "password1",
+    "qwerty123",
+    "letmein",
+    "monkey",
+    "dragon",
+    "football",
 }
 
 

@@ -276,7 +276,7 @@ def _persist_media(
     return media_ids
 
 
-def _recompute_canonical(session: Session, record: Record) -> None:
+def recompute_canonical(session: Session, record: Record) -> bool:
     rows = session.execute(
         select(Advertisement, Source)
         .join(Source, Source.id == Advertisement.source_id)
@@ -299,15 +299,16 @@ def _recompute_canonical(session: Session, record: Record) -> None:
     try:
         resolution = resolve_canonical(candidates)
     except ValueError:
-        return  # nessun annuncio "active": nulla da fare (caso limite)
+        return False  # nessun annuncio "active": nulla da fare (caso limite)
 
     if record.canonical_ad_id == resolution.chosen.id:
-        return
+        return False
 
     entry = build_history_entry(record.id, record.canonical_ad_id, resolution)
     session.add(CanonicalHistory(**entry))
     record.canonical_ad_id = resolution.chosen.id
     session.add(record)
+    return True
 
 
 def persist_collected_ads(session: Session, source: Source, result: CollectionResult) -> dict:
@@ -354,7 +355,7 @@ def persist_collected_ads(session: Session, source: Source, result: CollectionRe
         if item.media_bytes:
             media_ids.extend(_persist_media(session, record.id, advertisement, item.media_bytes))
 
-        _recompute_canonical(session, record)
+        recompute_canonical(session, record)
         session.commit()
 
     all_errors = result.errors + persist_errors

@@ -16,7 +16,7 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
@@ -174,7 +174,20 @@ async def suspend_user(
     `app/api/v1/auth.py:login`, che rifiuta esplicitamente gli utenti con
     `is_active=False`), senza cancellarne i dati/lo storico."""
     target = await _get_user_or_404(db, user_id)
+    if target.id == admin.id:
+        raise HTTPException(status_code=409, detail="Non puoi sospendere il tuo account.")
+    if target.role == "admin" and target.is_active:
+        active_admins = (
+            await db.execute(
+                select(func.count())
+                .select_from(User)
+                .where(User.role == "admin", User.is_active.is_(True))
+            )
+        ).scalar_one()
+        if active_admins <= 1:
+            raise HTTPException(status_code=409, detail="Deve rimanere almeno un Admin attivo.")
     target.is_active = False
+    target.security_stamp_at = datetime.now(UTC)
     db.add(target)
 
     await log_action(
@@ -183,6 +196,25 @@ async def suspend_user(
     await db.commit()
     await db.refresh(target)
 
+    return _to_admin_user_read(target)
+
+
+@router.post("/users/{user_id}/activate", response_model=AdminUserRead)
+async def activate_user(
+    user_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin_with_2fa),
+) -> AdminUserRead:
+    """Riattiva un account sospeso senza rendere nuovamente validi vecchi token."""
+    target = await _get_user_or_404(db, user_id)
+    target.is_active = True
+    target.security_stamp_at = datetime.now(UTC)
+    db.add(target)
+    await log_action(
+        db, user_id=admin.id, action="activate_user", entity_type="user", entity_id=str(user_id)
+    )
+    await db.commit()
+    await db.refresh(target)
     return _to_admin_user_read(target)
 
 

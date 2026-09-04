@@ -380,6 +380,38 @@ export interface ErasureRequest {
   completedAt: string | null;
 }
 
+export interface SourcePriorityJob {
+  id: string; sourceId: string; previousPriority: SourcePriority; requestedPriority: SourcePriority;
+  status: "pending" | "processing" | "completed" | "failed" | "superseded";
+  recordsTotal: number; recordsProcessed: number; canonicalsChanged: number;
+  errorMessage: string | null; createdAt: string; startedAt: string | null; completedAt: string | null;
+}
+
+export interface SourcePriorityConfig {
+  sourceId: string; name: string; code: string; status: SourceStatus; priority: SourcePriority;
+  affectedRecords: number; latestJob: SourcePriorityJob | null;
+}
+
+export interface ClassifierSettings {
+  modelName: string; modelVersion: string; safeThreshold: number; explicitThreshold: number; revision: number;
+  stats: { classifications: Record<string, number>; processing: Record<string, number>; reviews: Record<string, number> };
+}
+
+export interface OperationalNotification {
+  id: string; kind: string; severity: "info" | "warning" | "error";
+  title: string; message: string; link: string | null; isRead: boolean; createdAt: string;
+}
+
+export interface NotificationList { items: OperationalNotification[]; unreadCount: number }
+
+export interface SystemComponent {
+  name: string; status: "healthy" | "degraded" | "unavailable"; latencyMs: number | null; message: string | null;
+}
+
+export interface SystemStatus {
+  status: "healthy" | "degraded" | "unavailable"; checkedAt: string; components: SystemComponent[];
+}
+
 export interface Paginated<T> {
   results: T[];
   total: number;

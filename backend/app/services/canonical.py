@@ -1,21 +1,9 @@
 """Selezione dell'annuncio "canonico" per un Record.
 
-Regola deterministica (in quest'ordine di applicazione):
-
-1. Se esistono annunci con status "active" provenienti dalla fonte con slug
-   "bakeca_incontri" per il record, il canonico è il più RECENTE tra questi
-   (per `scraped_at`). bakeca_incontri è trattata come fonte "di riferimento"
-   privilegiata a prescindere dalla sua priorità configurata, perché nel
-   dominio applicativo è la fonte più affidabile/aggiornata storicamente.
-2. Altrimenti, il canonico è il più recente annuncio "active" tra TUTTE le
-   fonti.
-3. Tie-break (a parità di `scraped_at`, o quando serve un criterio
-   aggiuntivo per scegliere in modo stabile):
-   a. maggior numero di campi "informativi" non nulli/non vuoti
-      (title, description, source_url + eventuali extra forniti);
-   b. priorità della fonte (high > medium > low);
-   c. come ultima risorsa, l'id dell'annuncio (per garantire determinismo
-      assoluto anche a parità di tutto il resto).
+Regola deterministica (in quest'ordine): priorità della fonte
+(`high > medium > low`), completezza dei campi, recenza dello scraping e ID
+dell'annuncio. Sono eleggibili soltanto annunci attivi e nessuno slug riceve
+un trattamento speciale.
 
 Il modulo è volutamente privo di dipendenze da SQLAlchemy/DB: la funzione di
 risoluzione opera su semplici dataclass, così è testabile in isolamento e
@@ -32,14 +20,15 @@ from enum import IntEnum
 
 
 class SourcePriority(IntEnum):
-    """Priorità numerica crescente: usata per confrontare direttamente le
-    priorità delle fonti nel tie-break (high vince su medium vince su low)."""
+    """Priorità numerica crescente usata come primo criterio di scelta."""
 
     low = 0
     medium = 1
     high = 2
 
 
+# Kept as an import-compatible identifier for integrations; it no longer has
+# special precedence in the canonical selection policy.
 BAKECA_INCONTRI_SLUG = "bakeca_incontri"
 
 
@@ -89,13 +78,11 @@ def _non_empty_field_count(ad: CandidateAdvertisement) -> int:
 
 
 def _tie_break_key(ad: CandidateAdvertisement) -> tuple:
-    """Chiave di ordinamento per il tie-break, decrescente su tutti i criteri
-    (usata con `max()`): più campi popolati, poi priorità fonte più alta,
-    infine id come discriminante finale e deterministico."""
+    """Chiave decrescente usata con ``max()`` per la scelta canonica."""
     return (
-        ad.scraped_at,
-        _non_empty_field_count(ad),
         int(ad.source.priority),
+        _non_empty_field_count(ad),
+        ad.scraped_at,
         str(ad.id),
     )
 
@@ -118,20 +105,10 @@ def resolve_canonical(
             "un canonico."
         )
 
-    bakeca_ads = [ad for ad in active_ads if ad.source.slug == BAKECA_INCONTRI_SLUG]
-
-    if bakeca_ads:
-        chosen = max(bakeca_ads, key=_tie_break_key)
-        reason = (
-            f"Selezionato come canonico l'annuncio più recente dalla fonte di riferimento "
-            f"'{BAKECA_INCONTRI_SLUG}' (scraped_at={chosen.scraped_at.isoformat()})."
-        )
-        return CanonicalResolution(chosen=chosen, reason=reason)
-
     chosen = max(active_ads, key=_tie_break_key)
     reason = (
-        f"Nessun annuncio attivo su '{BAKECA_INCONTRI_SLUG}'; selezionato il più recente "
-        f"tra tutte le fonti disponibili (fonte='{chosen.source.slug}', "
+        "Selezionato applicando priorità fonte, completezza, recenza e ID "
+        f"deterministico (fonte='{chosen.source.slug}', priorità={chosen.source.priority.name}, "
         f"scraped_at={chosen.scraped_at.isoformat()})."
     )
     return CanonicalResolution(chosen=chosen, reason=reason)

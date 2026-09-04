@@ -46,9 +46,29 @@ class NudeNetOnnxMediaClassifier(MediaClassifier):
 
     MODEL_VERSION = "nudenet-3.4.2-320n"
 
+    def __init__(
+        self,
+        *,
+        safe_threshold: float | None = None,
+        explicit_threshold: float | None = None,
+        config_revision: int | None = None,
+    ) -> None:
+        self.safe_threshold = (
+            settings.MEDIA_SAFE_THRESHOLD if safe_threshold is None else safe_threshold
+        )
+        self.explicit_threshold = (
+            settings.MEDIA_EXPLICIT_THRESHOLD if explicit_threshold is None else explicit_threshold
+        )
+        self.config_revision = config_revision
+
     @staticmethod
     def from_detections(
-        detections: list[dict[str, Any]], *, watermark_present: bool = False
+        detections: list[dict[str, Any]],
+        *,
+        watermark_present: bool = False,
+        safe_threshold: float | None = None,
+        explicit_threshold: float | None = None,
+        config_revision: int | None = None,
     ) -> ClassificationResult:
         explicit_score = max(
             (float(d.get("score", 0)) for d in detections if d.get("class") in EXPLICIT_LABELS),
@@ -58,7 +78,11 @@ class NudeNetOnnxMediaClassifier(MediaClassifier):
             (float(d.get("score", 0)) for d in detections if d.get("class") in FACE_LABELS),
             default=0.0,
         )
-        explicit = explicit_score >= settings.MEDIA_EXPLICIT_THRESHOLD
+        safe_limit = settings.MEDIA_SAFE_THRESHOLD if safe_threshold is None else safe_threshold
+        explicit_limit = (
+            settings.MEDIA_EXPLICIT_THRESHOLD if explicit_threshold is None else explicit_threshold
+        )
+        explicit = explicit_score >= explicit_limit
         face_visible = face_score >= 0.50
         possible_minor_review = explicit and face_visible
 
@@ -66,7 +90,7 @@ class NudeNetOnnxMediaClassifier(MediaClassifier):
             classification = "explicit"
             confidence = explicit_score
             review_required = possible_minor_review
-        elif explicit_score < settings.MEDIA_SAFE_THRESHOLD:
+        elif explicit_score < safe_limit:
             classification = "safe"
             confidence = 1.0 - explicit_score
             review_required = False
@@ -88,6 +112,9 @@ class NudeNetOnnxMediaClassifier(MediaClassifier):
                 "watermarkPresent": watermark_present,
                 # Policy escalation only; never an automated age estimate.
                 "possibleMinorReview": possible_minor_review,
+                "safeThreshold": safe_limit,
+                "explicitThreshold": explicit_limit,
+                "classifierConfigRevision": config_revision,
             },
         )
 
@@ -95,7 +122,12 @@ class NudeNetOnnxMediaClassifier(MediaClassifier):
         if not mime_type.startswith("image/"):
             raise ValueError("NudeNet richiede un'immagine o un frame video.")
         detections = _detector().detect(file_bytes)
-        return self.from_detections(detections)
+        return self.from_detections(
+            detections,
+            safe_threshold=self.safe_threshold,
+            explicit_threshold=self.explicit_threshold,
+            config_revision=self.config_revision,
+        )
 
 
 # Backwards-compatible import name; it is no longer rule based.

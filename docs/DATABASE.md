@@ -346,3 +346,14 @@ primo utente Admin (unico script "una tantum" rimasto).
 La retention predefinita è annunci 365 giorni, media 180, scrape run/error
 e Loki 90, audit 365, pacchetti export 7. Il valore `0` disabilita la
 cancellazione automatica della relativa categoria DB.
+
+## 10. Console operative e notifiche
+
+- `media_classifier_settings` è un singleton revisionato che conserva modello,
+  versione e soglie `safe`/`explicit` con vincolo `safe < explicit`.
+- `source_priority_recalculation_jobs` rende persistente e osservabile il
+  ricalcolo asincrono dei canonici dopo un cambio priorità.
+- `notification_events` contiene alert deduplicati e privi di dati sensibili;
+  `notification_reads` registra la lettura per singolo utente.
+- La migrazione `20260904090000` crea le quattro tabelle e inizializza le
+  soglie NudeNet correnti. Gli alert scadono dopo 90 giorni tramite retention.

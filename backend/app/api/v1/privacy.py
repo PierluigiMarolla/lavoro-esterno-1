@@ -174,6 +174,7 @@ async def confirm_erasure_request(
     await db.commit()
     await db.refresh(row)
     from app.workers.tasks_privacy import execute_erasure
+
     try:
         execute_erasure.delay(str(row.id))
     except Exception:

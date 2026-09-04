@@ -49,4 +49,3 @@ def test_presigned_download_url_is_signed_locally(monkeypatch) -> None:
 
     query = _assert_presigned_url(url)
     assert query["response-content-disposition"] == ['attachment; filename="export.zip"']
-

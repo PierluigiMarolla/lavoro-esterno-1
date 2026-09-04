@@ -5,7 +5,6 @@ import { cn } from "@/lib/cn";
 
 const NAV_ITEMS = [
   { to: "/dashboard", label: "Dashboard", icon: "dashboard" },
-  { to: "/search", label: "Search", icon: "search" },
   { to: "/records", label: "Records", icon: "database" },
   { to: "/sources", label: "Sources", icon: "source" },
   { to: "/exports", label: "Exports", icon: "cloud_download" },
@@ -47,15 +46,6 @@ export default function Sidebar() {
       </ul>
 
       <ul className="px-4 mt-auto space-y-1">
-        <li>
-          <NavLink
-            to="/admin?tab=profile"
-            className="flex items-center gap-3 px-4 py-2 rounded text-on-surface-variant hover:text-on-surface hover:bg-surface-container-low transition-colors duration-150"
-          >
-            <Icon name="account_circle" className="text-xl" />
-            <span className="text-body-md">Profile</span>
-          </NavLink>
-        </li>
         <li>
           <button
             onClick={() => logout()}

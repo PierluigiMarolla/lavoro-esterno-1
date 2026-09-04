@@ -260,6 +260,7 @@ async def update_source(
     stabile usata per collegare la fonte al connettore
     (`app/scrapers/registry.py`) o, se configurata, al motore generico."""
     source = await _get_source_or_404(db, source_id)
+    previous_priority = source.priority
 
     updates = payload.model_dump(exclude_unset=True, exclude={"scrape_config", "watermark_removal"})
     for field_name, value in updates.items():
@@ -273,6 +274,17 @@ async def update_source(
         source.watermark_regions = [region.model_dump() for region in wm.regions]
 
     db.add(source)
+    priority_job = None
+    if source.priority != previous_priority:
+        from app.models.operations import SourcePriorityRecalculationJob
+
+        priority_job = SourcePriorityRecalculationJob(
+            source_id=source.id,
+            requested_by_user_id=user.id,
+            previous_priority=previous_priority,
+            requested_priority=source.priority,
+        )
+        db.add(priority_job)
     await log_action(
         db,
         user_id=user.id,
@@ -286,6 +298,11 @@ async def update_source(
     )
     await db.commit()
     await db.refresh(source)
+    if priority_job is not None:
+        await db.refresh(priority_job)
+        from app.workers.tasks_operations import recalculate_source_priority
+
+        recalculate_source_priority.delay(str(priority_job.id))
 
     return _to_minimal_source_read(source)
 

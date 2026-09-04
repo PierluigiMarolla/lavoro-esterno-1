@@ -89,10 +89,11 @@ manuali finali.
     chiaro.
   - `dedup.py` — dedup multilivello (telefono/URL/SHA-256 reali, resto con
     TODO).
-  - `canonical.py` — regola deterministica di selezione canonica (priorità
-    bakeca_incontri, poi tie-break su campi validi/priorità fonte).
-  - `media_classifier.py`, `summary_generator.py` — interfacce con
-    implementazione placeholder chiaramente documentata.
+  - `canonical.py` — scelta deterministica per priorità fonte, completezza,
+    recenza e ID; nessuno slug riceve precedenza speciale.
+  - `media_classifier.py` — NudeNet ONNX reale con soglie configurabili;
+    `summary_generator.py` e gli adapter provider producono riepiloghi
+    strutturati multiprovider.
 - `app/scrapers/` — ABC `Scraper` + `GenericScraper` (motore generico
   configurabile via `Source.scrape_config`, basato su Scrapling con
   `fetchMode` HTTP/dynamic/stealth). I 9 stub per-fonte iniziali e il
@@ -629,7 +630,7 @@ stack Docker, non solo scritti.
   useRecords.ts`, `useSources.ts`, `useAdmin.ts`) per i 2 endpoint backend
   sopra e per createUser/resetTwoFactor.
 
-### Frontend: pagine (3 agenti in parallelo, poi verifica/fix manuali)
+### Frontend: pagine
 
 - **Login + 2FA**: countdown lockout (`src/hooks/useCountdown.ts`,
   deduplicato da un identico copia-incolla dei due agenti in
@@ -1370,3 +1371,56 @@ Nel `.env` locale `AI_CREDENTIAL_ENCRYPTION_KEY` resta volutamente senza un
 valore generato dal repository: Ollama funziona comunque, mentre prima di
 salvare credenziali cloud l'operatore deve impostare una chiave casuale come
 descritto sopra e ricreare `api` e `worker-ai`.
+
+# Sessione 9 — 4 settembre 2026: Record, Admin e console operative
+
+Completati i dieci rilievi funzionali:
+
+- `/records` è ora elenco, ricerca, filtri ed export; `/search` reindirizza
+  conservando la query string. “All Sources” esegue una normale query non
+  filtrata. Il `204` dell'AI Summary viene normalizzato a `null`.
+- Gli utenti sospesi possono essere riattivati da Admin con 2FA. Sospensione e
+  riattivazione aggiornano il security stamp; auto-sospensione e sospensione
+  dell'ultimo Admin attivo sono bloccate.
+- `/account` è raggiungibile dall'header e gestisce password, setup 2FA e
+  rigenerazione dei backup code. Profile e Search sono rimossi dalla sidebar;
+  Support è rimosso dall'header.
+- Source Priorities usa job persistenti sulla coda `maintenance` per
+  ricalcolare i canonici. La policy è priorità, completezza, recenza e ID,
+  senza eccezione Bakeca.
+- Classifiers espone modello/versione NudeNet, soglie revisionate, statistiche
+  e reprocess bulk dei falliti o da revisionare, preservando gli override.
+- Notifications usa eventi persistenti deduplicati e ricevute per utente, con
+  visibilità RBAC e retention a 90 giorni. System Status controlla API,
+  PostgreSQL, Redis, MinIO, Ollama e le quattro code Celery senza esporre
+  dettagli interni.
+
+Migrazione: `20260904090000_operations_console.py`, applicata su PostgreSQL
+reale e verificata come `head`. Aggiunge `media_classifier_settings`,
+`source_priority_recalculation_jobs`, `notification_events` e
+`notification_reads`.
+
+Verifica finale:
+
+- backend: Ruff verde e suite completa `154 passed`, inclusi i test di
+  regressione per route notifiche e canonici;
+- frontend: lint senza errori (restano due warning Fast Refresh preesistenti),
+  build Vite completata;
+- Playwright mirato: `3 passed` per Records non filtrati, AI Summary senza
+  versione e pagina Account;
+- Docker: build API/frontend/worker riuscite, migrazione all'head, Ollama
+  healthy e worker `scraping`, `maintenance`, `media`, `ai`, `exports` online;
+- il Dockerfile backend installa ora le dipendenze dal `uv.lock` in un layer
+  separato, evitando sia il segfault di pip sia reinstallazioni a ogni modifica
+  del codice.
+
+Per diagnosticare queste funzioni:
+
+```powershell
+docker compose exec api alembic current
+docker compose exec api celery -A app.workers.celery_app:celery_app inspect active_queues
+docker compose logs -f api worker-scraper worker-media worker-ai worker-exports
+```
+
+Non usare `docker compose down -v`: tutti i volumi applicativi esistenti sono
+stati preservati durante l'aggiornamento.

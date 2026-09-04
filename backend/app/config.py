@@ -168,6 +168,7 @@ class Settings(BaseSettings):
     EXPORT_MAX_RECORDS: int = Field(default=1_000, ge=1, le=100_000)
     EXPORT_MAX_UNCOMPRESSED_BYTES: int = Field(default=2 * 1024 * 1024 * 1024, ge=1)
     EXPORT_ORPHAN_GRACE_HOURS: int = Field(default=24, ge=1)
+    NOTIFICATION_RETENTION_DAYS: int = Field(default=90, ge=0)
 
     # --- CORS -------------------------------------------------------------
     CORS_ORIGIN: str = Field(
