@@ -37,12 +37,19 @@ def test_dashboard_kpis_serializes_camel_case() -> None:
         scraping_errors=0,
         scraping_errors_delta=0,
         active_exports=1,
+        range_start=datetime(2026, 1, 1, tzinfo=UTC),
+        range_end=datetime(2026, 1, 2, tzinfo=UTC),
+        new_records_in_range=2,
+        new_records_delta_pct=25.0,
     )
     dumped = kpis.model_dump(mode="json", by_alias=True)
     assert dumped["totalRecords"] == 10
     assert dumped["totalRecordsDeltaPct"] == 5.0
     assert dumped["activeSourcesHealthyPct"] == 100.0
     assert dumped["scrapingErrorsDelta"] == 0
+    assert dumped["newRecordsInRange"] == 2
+    assert dumped["newRecordsDeltaPct"] == 25.0
+    assert dumped["rangeStart"] == "2026-01-01T00:00:00Z"
     assert "total_records" not in dumped
 
 

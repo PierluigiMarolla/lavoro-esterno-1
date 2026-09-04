@@ -36,26 +36,36 @@ test("account button opens the account page", async ({ page }) => {
   await expect(page.getByText("admin@example.test")).toBeVisible();
 });
 
-test("dashboard detailed diagnostics opens and loads system status", async ({ page }) => {
-  await page.route("**/api/v1/dashboard/kpis", (route) =>
+const dashboardKpis = {
+  totalRecords: 12,
+  totalRecordsDeltaPct: 10,
+  activeSources: 2,
+  activeSourcesHealthyPct: 100,
+  newRecordsToday: 2,
+  scrapingErrors: 0,
+  scrapingErrorsDelta: 0,
+  activeExports: 0,
+  rangeStart: "2026-09-03T12:00:00Z",
+  rangeEnd: "2026-09-04T12:00:00Z",
+  newRecordsInRange: 2,
+  newRecordsDeltaPct: 10,
+};
+
+async function mockDashboard(page: import("@playwright/test").Page) {
+  await page.route("**/api/v1/dashboard/kpis?*", (route) =>
     route.fulfill({
-      json: {
-        totalRecords: 0,
-        totalRecordsDeltaPct: 0,
-        activeSources: 0,
-        activeSourcesHealthyPct: 100,
-        newRecordsToday: 0,
-        scrapingErrors: 0,
-        scrapingErrorsDelta: 0,
-        activeExports: 0,
-      },
+      json: dashboardKpis,
     }),
   );
-  await page.route("**/api/v1/dashboard/scraping-activity", (route) => route.fulfill({ json: [] }));
+  await page.route("**/api/v1/dashboard/scraping-activity?*", (route) => route.fulfill({ json: [] }));
   await page.route("**/api/v1/dashboard/source-health", (route) =>
     route.fulfill({ json: { healthy: 0, rateLimited: 0, error: 0, total: 0 } }),
   );
-  await page.route("**/api/v1/dashboard/activity", (route) => route.fulfill({ json: [] }));
+  await page.route("**/api/v1/dashboard/activity?*", (route) => route.fulfill({ json: [] }));
+}
+
+test("dashboard detailed diagnostics opens and loads system status", async ({ page }) => {
+  await mockDashboard(page);
 
   let diagnosticsRequests = 0;
   await page.route("**/api/v1/system/status", (route) => {
@@ -75,6 +85,40 @@ test("dashboard detailed diagnostics opens and loads system status", async ({ pa
   await expect(page.getByRole("dialog", { name: "System status" })).toBeVisible();
   await expect(page.getByText("PostgreSQL")).toBeVisible();
   expect(diagnosticsRequests).toBe(1);
+});
+
+test("dashboard range selector persists the range and refresh reports completion", async ({ page }) => {
+  let kpiRequests = 0;
+  const requestedEnds: string[] = [];
+  await mockDashboard(page);
+  await page.unroute("**/api/v1/dashboard/kpis?*");
+  await page.route("**/api/v1/dashboard/kpis?*", (route) => {
+    kpiRequests += 1;
+    requestedEnds.push(new URL(route.request().url()).searchParams.get("end") ?? "");
+    return route.fulfill({ json: dashboardKpis });
+  });
+
+  await page.goto("/dashboard");
+  await expect(page.getByText("New Records", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: /Last 24 Hours/ }).click();
+  await page.getByRole("button", { name: "7 days" }).click();
+  await expect(page).toHaveURL(/range=7d/);
+  await expect(page.getByRole("button", { name: /Last 7 Days/ })).toBeVisible();
+
+  const beforeRefresh = kpiRequests;
+  const endBeforeRefresh = requestedEnds.at(-1)!;
+  await page.getByRole("button", { name: "Refresh Data" }).click();
+  await expect(page.getByText(/Updated \d{2}:\d{2}:\d{2}/)).toBeVisible();
+  expect(kpiRequests).toBeGreaterThan(beforeRefresh);
+  expect(new Date(requestedEnds.at(-1)!).valueOf()).toBeGreaterThan(
+    new Date(endBeforeRefresh).valueOf(),
+  );
+
+  await page.getByRole("button", { name: /Last 7 Days/ }).click();
+  await page.getByRole("button", { name: "Apply interval" }).click();
+  await expect(page).toHaveURL(/range=custom/);
+  await expect(page).toHaveURL(/start=/);
+  await expect(page).toHaveURL(/end=/);
 });
 
 test("create-user dialog keeps focus while typing", async ({ page }) => {

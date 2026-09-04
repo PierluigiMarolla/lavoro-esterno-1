@@ -119,6 +119,15 @@ export interface DashboardKpis {
   scrapingErrors: number;
   scrapingErrorsDelta: number;
   activeExports: number;
+  rangeStart: string;
+  rangeEnd: string;
+  newRecordsInRange: number;
+  newRecordsDeltaPct: number;
+}
+
+export interface DashboardRangeParams {
+  start: string;
+  end: string;
 }
 
 export interface SourceHealthBreakdown {

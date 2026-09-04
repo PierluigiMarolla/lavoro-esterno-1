@@ -8,7 +8,7 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ForeignKey, LargeBinary, String
+from sqlalchemy import ForeignKey, Index, LargeBinary, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, UUIDPKMixin
@@ -32,6 +32,7 @@ class Record(UUIDPKMixin, TimestampMixin, Base):
     """
 
     __tablename__ = "records"
+    __table_args__ = (Index("ix_records_created_at", "created_at"),)
 
     phone_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     phone_lookup_hash: Mapped[str] = mapped_column(

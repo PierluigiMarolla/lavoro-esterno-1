@@ -10,7 +10,7 @@ chiunque operi sul sistema, non un'area riservata.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
@@ -32,6 +32,7 @@ from app.schemas.dashboard import (
 )
 from app.security.deps import get_current_user
 from app.services.dashboard_metrics import percentage_delta, safe_percentage
+from app.services.dashboard_range import DashboardRange, resolve_dashboard_range
 from app.services.source_health import health_breakdown
 
 router = APIRouter()
@@ -45,34 +46,47 @@ _RECENT_LIMIT = 20
 
 @router.get("/kpis", response_model=DashboardKpisRead)
 async def get_dashboard_kpis(
+    time_range: DashboardRange = Depends(resolve_dashboard_range),
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> DashboardKpisRead:
     now = datetime.now(UTC)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    yesterday_start = today_start - timedelta(days=1)
-    last_24h = now - timedelta(hours=24)
-    previous_24h = now - timedelta(hours=48)
-
     total_records = (await db.execute(select(func.count()).select_from(Record))).scalar_one()
+
+    new_records_in_range = (
+        await db.execute(
+            select(func.count())
+            .select_from(Record)
+            .where(
+                Record.created_at >= time_range.start,
+                Record.created_at < time_range.end,
+            )
+        )
+    ).scalar_one()
+    new_records_previous_range = (
+        await db.execute(
+            select(func.count())
+            .select_from(Record)
+            .where(
+                Record.created_at >= time_range.previous_start,
+                Record.created_at < time_range.start,
+            )
+        )
+    ).scalar_one()
+    new_records_delta_pct = percentage_delta(
+        new_records_in_range, new_records_previous_range
+    )
 
     new_records_today = (
         await db.execute(
             select(func.count()).select_from(Record).where(Record.created_at >= today_start)
         )
     ).scalar_one()
-    new_records_yesterday = (
-        await db.execute(
-            select(func.count())
-            .select_from(Record)
-            .where(Record.created_at >= yesterday_start, Record.created_at < today_start)
-        )
-    ).scalar_one()
-    # Non esiste una tabella di snapshot storici del totale record: come
-    # proxy del "delta" usiamo il confronto tra il ritmo di crescita di oggi
-    # e quello di ieri (nuovi record/giorno), invece del delta sul totale
-    # assoluto che richiederebbe uno storico non disponibile.
-    total_records_delta_pct = percentage_delta(new_records_today, new_records_yesterday)
+    # Campo mantenuto per compatibilita con i client precedenti. Il delta
+    # rappresenta ora il confronto tra l'intervallo selezionato e quello
+    # immediatamente precedente della stessa durata.
+    total_records_delta_pct = new_records_delta_pct
 
     active_sources = (
         await db.execute(select(func.count()).select_from(Source).where(Source.enabled.is_(True)))
@@ -88,19 +102,27 @@ async def get_dashboard_kpis(
 
     scraping_errors = (
         await db.execute(
-            select(func.count()).select_from(ScrapeError).where(ScrapeError.created_at >= last_24h)
+            select(func.count())
+            .select_from(ScrapeError)
+            .where(
+                ScrapeError.created_at >= time_range.start,
+                ScrapeError.created_at < time_range.end,
+            )
         )
     ).scalar_one()
     scraping_errors_previous = (
         await db.execute(
             select(func.count())
             .select_from(ScrapeError)
-            .where(ScrapeError.created_at >= previous_24h, ScrapeError.created_at < last_24h)
+            .where(
+                ScrapeError.created_at >= time_range.previous_start,
+                ScrapeError.created_at < time_range.start,
+            )
         )
     ).scalar_one()
     # A differenza di total_records_delta_pct, qui il frontend chiede un
     # numero assoluto ("scrapingErrorsDelta", non "...DeltaPct"): differenza
-    # semplice tra le due finestre di 24h.
+    # semplice tra le due finestre adiacenti della stessa durata.
     scraping_errors_delta = scraping_errors - scraping_errors_previous
 
     active_exports = (
@@ -120,11 +142,16 @@ async def get_dashboard_kpis(
         scraping_errors=scraping_errors,
         scraping_errors_delta=scraping_errors_delta,
         active_exports=active_exports,
+        range_start=time_range.start,
+        range_end=time_range.end,
+        new_records_in_range=new_records_in_range,
+        new_records_delta_pct=new_records_delta_pct,
     )
 
 
 @router.get("/scraping-activity", response_model=list[ScrapingActivityRead])
 async def get_scraping_activity(
+    time_range: DashboardRange = Depends(resolve_dashboard_range),
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> list[ScrapingActivityRead]:
@@ -142,6 +169,10 @@ async def get_scraping_activity(
     stmt = (
         select(ScrapeRun, Source.name, Source.slug)
         .join(Source, Source.id == ScrapeRun.source_id)
+        .where(
+            ScrapeRun.started_at >= time_range.start,
+            ScrapeRun.started_at < time_range.end,
+        )
         .order_by(ScrapeRun.started_at.desc())
         .limit(_RECENT_LIMIT)
     )
@@ -213,6 +244,7 @@ def _activity_message(action: str, entity_type: str, entity_id: str | None) -> s
 
 @router.get("/activity", response_model=list[ActivityEventRead])
 async def get_recent_activity(
+    time_range: DashboardRange = Depends(resolve_dashboard_range),
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> list[ActivityEventRead]:
@@ -230,6 +262,10 @@ async def get_recent_activity(
     stmt = (
         select(AuditLog, User.email)
         .outerjoin(User, User.id == AuditLog.user_id)
+        .where(
+            AuditLog.created_at >= time_range.start,
+            AuditLog.created_at < time_range.end,
+        )
         .order_by(AuditLog.created_at.desc())
         .limit(_RECENT_LIMIT)
     )

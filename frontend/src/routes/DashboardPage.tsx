@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useDashboardKpis, useRecentActivity, useScrapingActivity, useSourceHealth } from "@/hooks/useDashboard";
 import SystemStatusDialog from "@/components/operations/SystemStatusDialog";
 import Icon from "@/components/ui/Icon";
@@ -7,6 +8,14 @@ import ProgressBar from "@/components/ui/ProgressBar";
 import ErrorState from "@/components/ui/ErrorState";
 import { EmptyRow, ErrorRow, LoadingRow, Table, TBody, Td, Th, THead, Tr } from "@/components/ui/Table";
 import type { ScrapingRunStatus } from "@/types";
+import {
+  formatRomeDateTime,
+  dashboardRangeForRequest,
+  resolveDashboardRange,
+  toRomeDateTimeInput,
+  validateCustomDashboardRange,
+  type DashboardRangePreset,
+} from "@/lib/dashboardRange";
 
 // Replicates desing/dashboard_lavoro_esterno/code.html: 5 KPI cards with a
 // colored top border, a scraping activity table, a source health panel with
@@ -52,10 +61,85 @@ interface KpiCardConfig {
 
 export default function DashboardPage() {
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
-  const kpis = useDashboardKpis();
-  const activity = useScrapingActivity();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const rangeKey = searchParams.toString();
+  const selection = useMemo(
+    () => resolveDashboardRange(new URLSearchParams(rangeKey)),
+    [rangeKey],
+  );
+  const [rangeMenuOpen, setRangeMenuOpen] = useState(false);
+  const [customStart, setCustomStart] = useState(() =>
+    toRomeDateTimeInput(new Date(selection.range.start)),
+  );
+  const [customEnd, setCustomEnd] = useState(() =>
+    toRomeDateTimeInput(new Date(selection.range.end)),
+  );
+  const [rangeError, setRangeError] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
+  const kpis = useDashboardKpis(selection);
+  const activity = useScrapingActivity(selection);
   const health = useSourceHealth();
-  const recent = useRecentActivity();
+  const recent = useRecentActivity(selection);
+
+  const openRangeMenu = () => {
+    const currentRange = dashboardRangeForRequest(selection);
+    setCustomStart(toRomeDateTimeInput(new Date(currentRange.start)));
+    setCustomEnd(toRomeDateTimeInput(new Date(currentRange.end)));
+    setRangeError(null);
+    setRangeMenuOpen((open) => !open);
+  };
+
+  const selectPreset = (preset: Exclude<DashboardRangePreset, "custom">) => {
+    setSearchParams({ range: preset });
+    setRangeMenuOpen(false);
+    setRefreshError(null);
+    setLastUpdatedAt(null);
+  };
+
+  const applyCustomRange = () => {
+    const result = validateCustomDashboardRange(customStart, customEnd);
+    if (!result.range) {
+      setRangeError(result.error ?? "Invalid interval.");
+      return;
+    }
+    setSearchParams({ range: "custom", start: result.range.start, end: result.range.end });
+    setRangeMenuOpen(false);
+    setRangeError(null);
+    setRefreshError(null);
+    setLastUpdatedAt(null);
+  };
+
+  const refreshDashboard = async () => {
+    setIsRefreshing(true);
+    setRefreshError(null);
+    try {
+      const results = await Promise.all([
+        kpis.refetch(),
+        activity.refetch(),
+        health.refetch(),
+        recent.refetch(),
+      ]);
+      const failed = results.filter((result) => result.isError).length;
+      if (failed > 0) {
+        setRefreshError(`${failed} dashboard section${failed === 1 ? "" : "s"} could not be refreshed.`);
+      } else {
+        setLastUpdatedAt(new Date());
+      }
+    } catch {
+      setRefreshError("The dashboard could not be refreshed.");
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  const rangeLabel =
+    selection.preset === "custom"
+      ? `${formatRomeDateTime(selection.range.start)} – ${formatRomeDateTime(selection.range.end)}`
+      : { "24h": "Last 24 Hours", "7d": "Last 7 Days", "30d": "Last 30 Days" }[
+          selection.preset
+        ];
 
   const cards: KpiCardConfig[] | null = kpis.data
     ? [
@@ -65,7 +149,7 @@ export default function DashboardPage() {
           icon: "database",
           accent: "bg-primary text-primary",
           value: kpis.data.totalRecords.toLocaleString(),
-          trend: { icon: "trending_up", label: `+${kpis.data.totalRecordsDeltaPct}% this week`, tone: "text-success" },
+          trend: { icon: "add", label: `+${kpis.data.newRecordsInRange} in selected period`, tone: "text-success" },
         },
         {
           key: "sources",
@@ -77,11 +161,15 @@ export default function DashboardPage() {
         },
         {
           key: "new-today",
-          label: "New Today",
+          label: "New Records",
           icon: "add_box",
           accent: "bg-success text-success",
-          value: kpis.data.newRecordsToday.toLocaleString(),
-          trend: { icon: "trending_up", label: "On track", tone: "text-success" },
+          value: kpis.data.newRecordsInRange.toLocaleString(),
+          trend: {
+            icon: kpis.data.newRecordsDeltaPct >= 0 ? "trending_up" : "trending_down",
+            label: `${kpis.data.newRecordsDeltaPct >= 0 ? "+" : ""}${kpis.data.newRecordsDeltaPct}% vs previous period`,
+            tone: kpis.data.newRecordsDeltaPct >= 0 ? "text-success" : "text-error",
+          },
         },
         {
           key: "errors",
@@ -109,25 +197,85 @@ export default function DashboardPage() {
           <h2 className="text-headline-md text-on-surface">Operational Overview</h2>
           <p className="text-body-md text-on-surface-variant mt-1">Real-time telemetry and extraction metrics.</p>
         </div>
-        <div className="flex gap-2">
-          <button className="flex items-center gap-1 px-3 py-1.5 border border-border rounded text-label-sm text-on-surface-variant hover:bg-surface-container-low transition-colors bg-surface-container-lowest">
-            <Icon name="calendar_today" size={16} />
-            Last 24 Hours
-          </button>
+        <div className="flex flex-col items-end gap-1">
+          <div className="flex gap-2">
+          <div className="relative">
           <button
-            onClick={() => {
-              kpis.refetch();
-              activity.refetch();
-              health.refetch();
-              recent.refetch();
-            }}
+            type="button"
+            onClick={openRangeMenu}
+            aria-expanded={rangeMenuOpen}
+            className="flex items-center gap-1 px-3 py-1.5 border border-border rounded text-label-sm text-on-surface-variant hover:bg-surface-container-low transition-colors bg-surface-container-lowest"
+          >
+            <Icon name="calendar_today" size={16} />
+            {rangeLabel}
+            <Icon name={rangeMenuOpen ? "expand_less" : "expand_more"} size={16} />
+          </button>
+          {rangeMenuOpen && (
+            <div className="absolute right-0 top-10 z-30 w-[340px] rounded-lg border border-border bg-surface-container-lowest p-4 shadow-xl">
+              <div className="grid grid-cols-3 gap-2">
+                {(["24h", "7d", "30d"] as const).map((preset) => (
+                  <button
+                    type="button"
+                    key={preset}
+                    onClick={() => selectPreset(preset)}
+                    className={`rounded border px-2 py-1.5 text-label-sm ${selection.preset === preset ? "border-primary bg-primary/10 text-primary" : "border-border hover:bg-surface-container-low"}`}
+                  >
+                    {preset === "24h" ? "24 hours" : preset === "7d" ? "7 days" : "30 days"}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-4 border-t border-border pt-4 space-y-3">
+                <p className="text-label-sm font-semibold text-on-surface">Custom interval</p>
+                <label className="block text-label-sm text-on-surface-variant">
+                  Start (Europe/Rome)
+                  <input
+                    type="datetime-local"
+                    value={customStart}
+                    onChange={(event) => setCustomStart(event.target.value)}
+                    className="mt-1 block w-full rounded border border-border bg-surface px-2 py-1.5 text-on-surface"
+                  />
+                </label>
+                <label className="block text-label-sm text-on-surface-variant">
+                  End (Europe/Rome)
+                  <input
+                    type="datetime-local"
+                    value={customEnd}
+                    max={toRomeDateTimeInput(new Date())}
+                    onChange={(event) => setCustomEnd(event.target.value)}
+                    className="mt-1 block w-full rounded border border-border bg-surface px-2 py-1.5 text-on-surface"
+                  />
+                </label>
+                {rangeError && <p className="text-label-sm text-error" role="alert">{rangeError}</p>}
+                <button type="button" onClick={applyCustomRange} className="w-full rounded bg-primary px-3 py-2 text-label-sm text-on-primary hover:bg-primary-container">
+                  Apply interval
+                </button>
+              </div>
+            </div>
+          )}
+          </div>
+          <button
+            type="button"
+            onClick={refreshDashboard}
+            disabled={isRefreshing}
             className="flex items-center gap-1 px-3 py-1.5 bg-primary text-on-primary rounded text-label-sm hover:bg-primary-container transition-colors shadow-sm"
           >
-            <Icon name="refresh" size={16} />
-            Refresh Data
+            <Icon name="refresh" size={16} className={isRefreshing ? "animate-spin" : undefined} />
+            {isRefreshing ? "Refreshing…" : "Refresh Data"}
           </button>
+          </div>
+          {lastUpdatedAt && (
+            <p className="text-label-sm text-on-surface-variant">
+              Updated {lastUpdatedAt.toLocaleTimeString("en-GB", { timeZone: "Europe/Rome", hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+            </p>
+          )}
         </div>
       </div>
+
+      {(selection.warning || refreshError) && (
+        <div className="col-span-12 rounded border border-warning/40 bg-warning/10 px-4 py-2 text-body-md text-on-surface" role="alert">
+          {selection.warning ?? refreshError}
+        </div>
+      )}
 
       {/* KPI Cards */}
       <div className="col-span-12 grid grid-cols-5 gap-gutter mb-2">

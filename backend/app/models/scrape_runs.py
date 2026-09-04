@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 
 import sqlalchemy as sa
-from sqlalchemy import DateTime, ForeignKey, Integer
+from sqlalchemy import DateTime, ForeignKey, Index, Integer
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, UUIDPKMixin, utcnow
@@ -18,6 +18,7 @@ ScrapeRunStatus = sa.Enum(
 
 class ScrapeRun(UUIDPKMixin, Base):
     __tablename__ = "scrape_runs"
+    __table_args__ = (Index("ix_scrape_runs_started_at", "started_at"),)
 
     source_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("sources.id", ondelete="CASCADE"), nullable=False, index=True

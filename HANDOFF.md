@@ -1,5 +1,37 @@
 # Riassunto sessione - Progetto "Lavoro Esterno"
 
+## Aggiornamento Dashboard - 4 settembre 2026
+
+Il controllo temporale della Dashboard non è più statico. Offre le finestre
+24 ore, 7 giorni, 30 giorni e un intervallo personalizzato con data e ora nel
+fuso `Europe/Rome`, limitato a 90 giorni. La scelta è conservata nella query
+string (`range`, e per la modalità personalizzata `start`/`end` in UTC), quindi
+sopravvive al reload e può essere condivisa tramite link.
+
+Gli endpoint `GET /api/v1/dashboard/kpis`, `scraping-activity` e `activity`
+accettano ora `start` ed `end`. Il backend rifiuta timestamp senza offset,
+intervalli invertiti, date future e durate superiori a 90 giorni; senza
+parametri usa le ultime 24 ore. Record creati ed errori sono confrontati con
+la finestra precedente della stessa durata. Gli snapshot Total Records,
+Active Sources, Active Exports e Source Health restano valori correnti.
+
+“Refresh Data” attende tutte le richieste, mostra uno spinner, impedisce doppi
+clic e riporta l'orario dell'ultimo aggiornamento completamente riuscito. Un
+errore parziale mantiene i dati precedenti e indica le sezioni non aggiornate.
+
+La migrazione `20260904150000_dashboard_time_indexes.py` aggiunge gli indici
+su `records.created_at` e `scrape_runs.started_at`. Applicarla con:
+
+```powershell
+docker compose exec api alembic upgrade head
+docker compose exec api alembic current
+```
+
+Verifica completata: migrazione applicata come `head`, suite backend `167
+passed`, Ruff verde, lint frontend senza errori, build Vite riuscita e due test
+Playwright Dashboard superati sullo stack Docker ricostruito. Restano soltanto
+i due warning Fast Refresh preesistenti nei context React.
+
 Questo file riassume cosa è stato fatto in questa conversazione, per poter
 proseguire il lavoro in una conversazione/sessione diversa senza perdere
 contesto. Data sessione: 27 agosto 2026.

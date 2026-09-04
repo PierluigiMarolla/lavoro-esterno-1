@@ -34,6 +34,10 @@ class DashboardKpisRead(CamelModel):
     scraping_errors: int
     scraping_errors_delta: int
     active_exports: int
+    range_start: datetime
+    range_end: datetime
+    new_records_in_range: int
+    new_records_delta_pct: float
 
 
 class ScrapingActivityRead(CamelModel):

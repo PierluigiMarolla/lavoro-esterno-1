@@ -1,18 +1,23 @@
 import { apiRequest } from "./client";
-import type { ActivityEvent, DashboardKpis, ScrapingActivity, SourceHealthBreakdown } from "@/types";
+import type { ActivityEvent, DashboardKpis, DashboardRangeParams, ScrapingActivity, SourceHealthBreakdown } from "@/types";
 
-export function fetchDashboardKpis(): Promise<DashboardKpis> {
-  return apiRequest<DashboardKpis>("/dashboard/kpis");
+function rangeQuery(range: DashboardRangeParams): string {
+  const params = new URLSearchParams({ start: range.start, end: range.end });
+  return `?${params.toString()}`;
 }
 
-export function fetchScrapingActivity(): Promise<ScrapingActivity[]> {
-  return apiRequest<ScrapingActivity[]>("/dashboard/scraping-activity");
+export function fetchDashboardKpis(range: DashboardRangeParams): Promise<DashboardKpis> {
+  return apiRequest<DashboardKpis>(`/dashboard/kpis${rangeQuery(range)}`);
+}
+
+export function fetchScrapingActivity(range: DashboardRangeParams): Promise<ScrapingActivity[]> {
+  return apiRequest<ScrapingActivity[]>(`/dashboard/scraping-activity${rangeQuery(range)}`);
 }
 
 export function fetchSourceHealth(): Promise<SourceHealthBreakdown> {
   return apiRequest<SourceHealthBreakdown>("/dashboard/source-health");
 }
 
-export function fetchRecentActivity(): Promise<ActivityEvent[]> {
-  return apiRequest<ActivityEvent[]>("/dashboard/activity");
+export function fetchRecentActivity(range: DashboardRangeParams): Promise<ActivityEvent[]> {
+  return apiRequest<ActivityEvent[]>(`/dashboard/activity${rangeQuery(range)}`);
 }
