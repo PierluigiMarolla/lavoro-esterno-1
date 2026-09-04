@@ -1424,3 +1424,28 @@ docker compose logs -f api worker-scraper worker-media worker-ai worker-exports
 
 Non usare `docker compose down -v`: tutti i volumi applicativi esistenti sono
 stati preservati durante l'aggiornamento.
+
+# Sessione 10 — 4 settembre 2026: testo completo attraverso `<br>`
+
+Il motore generico non usa più `selector::text` per i campi testuali: quella
+forma restituiva nodi separati e un campo non multiplo conservava soltanto il
+primo segmento prima di `<br>`. Ora seleziona ogni elemento, percorre tutti i
+nodi testuali in ordine, ignora `script`/`style` e converte i `<br>` in `\n`.
+I tag inline restano testo continuo e `<br><br>` conserva una riga vuota.
+
+La vista Overview usa `whitespace-pre-line`, quindi la struttura estratta è
+visibile. Non è richiesto alcun aggiornamento dello schema: gli annunci già
+salvati verranno corretti al successivo scan esplicitamente avviato per la
+fonte; il deployment non avvia scraping automatici.
+
+Verifica: Ruff verde, suite backend `156 passed`, lint frontend senza errori,
+build Vite completata e test sintetico eseguito anche dentro l'immagine API.
+Il normale endpoint “Test configuration” sulla fonte configurata ha trovato 25
+annunci; la descrizione campione è stata estratta in 735 caratteri su 3 righe,
+senza warning. API, frontend e `worker-scraper` sono stati ricostruiti e sono
+operativi; nessuno scan con persistenza è stato avviato.
+
+Durante il test è comparso un warning perché il `JWT_SECRET_KEY` dell'ambiente
+locale corrente è lungo 20 byte. Non è stato ruotato automaticamente, perché
+la rotazione invalida le sessioni: prima di un uso reale sostituirlo con il
+valore casuale da 64 byte già indicato nel runbook Windows.

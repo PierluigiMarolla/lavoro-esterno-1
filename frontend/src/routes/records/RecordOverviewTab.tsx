@@ -61,7 +61,7 @@ export default function RecordOverviewTab() {
               </div>
               <div className="md:col-span-2">
                 <label className="text-label-sm text-on-surface-variant block mb-1">Description</label>
-                <div className="text-body-md text-on-surface bg-surface-container-lowest p-4 border border-border rounded leading-relaxed">
+                <div className="whitespace-pre-line text-body-md text-on-surface bg-surface-container-lowest p-4 border border-border rounded leading-relaxed">
                   {record.canonicalDescription}
                 </div>
               </div>

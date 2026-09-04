@@ -34,6 +34,7 @@ from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import httpx
+from lxml import html as lxml_html
 
 from app.scrapers.base import MediaDownloadFailure, MediaDownloadResult, Scraper
 
@@ -180,11 +181,57 @@ class GenericScraper(Scraper):
 
     @staticmethod
     def _extract_all(page: Any, selector: str, attribute: str) -> list[str]:
-        scrapling_selector = (
-            f"{selector}::text" if attribute == "text" else f"{selector}::attr({attribute})"
-        )
-        values = page.css(scrapling_selector).getall()
+        if attribute == "text":
+            # `selector::text` restituisce un valore per ciascun nodo testuale:
+            # con <p>prima<br>seconda</p> il consumer non-multiple prendeva
+            # quindi soltanto "prima". Selezioniamo invece gli elementi e ne
+            # ricostruiamo il testo completo, conservando i <br> come newline.
+            values = [GenericScraper._element_text(element) for element in page.css(selector)]
+        else:
+            values = page.css(f"{selector}::attr({attribute})").getall()
         return [str(value).strip() for value in values if str(value).strip()]
+
+    @staticmethod
+    def _element_text(element: Any) -> str:
+        """Estrae il testo visibile preservando solo i break HTML espliciti.
+
+        Scrapling espone l'HTML serializzato dell'elemento; ripercorrerlo evita
+        di inserire newline artificiali attorno a tag inline come ``strong`` o
+        ``span``. ``None`` è usato internamente come marcatore di ``br``.
+        """
+        root = lxml_html.fragment_fromstring(str(element.html_content), create_parent="div")
+        tokens: list[str | None] = []
+
+        def visit(node: Any) -> None:
+            if node.text:
+                tokens.append(str(node.text))
+            for child in node:
+                tag = child.tag.lower() if isinstance(child.tag, str) else ""
+                if tag == "br":
+                    tokens.append(None)
+                elif tag not in {"script", "style"}:
+                    visit(child)
+                if child.tail:
+                    tokens.append(str(child.tail))
+
+        visit(root)
+        lines: list[str] = []
+        current: list[str] = []
+        for token in tokens:
+            if token is None:
+                lines.append(" ".join("".join(current).split()))
+                current = []
+            else:
+                current.append(token)
+        lines.append(" ".join("".join(current).split()))
+
+        # Mantiene le righe vuote tra <br> consecutivi, ma replica il vecchio
+        # `.strip()` eliminando whitespace/break soltanto ai bordi.
+        while lines and not lines[0]:
+            lines.pop(0)
+        while lines and not lines[-1]:
+            lines.pop()
+        return "\n".join(lines)
 
     async def discover(self) -> list[str]:
         max_pages = int(self._config_value("max_pages", "maxPages") or _DEFAULT_MAX_PAGES)

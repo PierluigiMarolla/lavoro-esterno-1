@@ -10,6 +10,7 @@ from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
+from scrapling.parser import Selector
 
 from app.scrapers.base import Scraper
 from app.scrapers.generic import GenericScraper, RobotsDisallowedError
@@ -187,6 +188,44 @@ async def test_scrape_ad_extracts_configured_fields(open_site_url: str) -> None:
     assert raw["description"] == "This is a synthetic test fixture, not real content."
     assert raw["phone"] == "+39 333 111 1111"
     assert raw["images"] == ["/img1.jpg", "/img2.jpg"]
+
+
+def test_text_extraction_preserves_br_and_inline_content() -> None:
+    page = Selector(
+        """
+        <p class="description">
+          Prima riga<br>
+          Seconda <strong>riga</strong><br><br>
+          Ultima <span>riga</span><script>ignored()</script>
+        </p>
+        """
+    )
+    scraper = _scraper("https://example.test")
+
+    value = scraper._extract_field(
+        page, {"selector": "p.description", "attribute": "text"}
+    )
+
+    assert value == "Prima riga\nSeconda riga\n\nUltima riga"
+
+
+def test_text_extraction_returns_one_complete_value_per_selected_element() -> None:
+    page = Selector(
+        """
+        <div>
+          <p class="note">Prima<br>nota</p>
+          <p class="note">Seconda <a href="#">nota</a></p>
+        </div>
+        """
+    )
+    scraper = _scraper("https://example.test")
+    spec = {"selector": "p.note", "attribute": "text"}
+
+    assert scraper._extract_field(page, spec) == "Prima\nnota"
+    assert scraper._extract_field(page, {**spec, "multiple": True}) == [
+        "Prima\nnota",
+        "Seconda nota",
+    ]
 
 
 @pytest.mark.parametrize(
