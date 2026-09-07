@@ -50,6 +50,20 @@ export function useDisableSource() {
   return useMutation({ mutationFn: sourcesApi.disableSource, onSuccess: invalidate });
 }
 
+export function useEnableSource() {
+  const invalidate = useInvalidateSources();
+  return useMutation({ mutationFn: sourcesApi.enableSource, onSuccess: invalidate });
+}
+
+export function useDuplicateSource() {
+  const invalidate = useInvalidateSources();
+  return useMutation({
+    mutationFn: ({ id, input }: { id: string; input: sourcesApi.DuplicateSourceInput }) =>
+      sourcesApi.duplicateSource(id, input),
+    onSuccess: invalidate,
+  });
+}
+
 // Only fetched when a row is actually expanded (`enabled`) — no point
 // loading run history for every source up front.
 export function useSourceRuns(id: string, enabled: boolean) {

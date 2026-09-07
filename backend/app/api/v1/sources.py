@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import uuid
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
@@ -22,6 +24,7 @@ from app.schemas.sources import (
     ScrapeRunRead,
     SourceCreate,
     SourceDetailRead,
+    SourceDuplicate,
     SourceRead,
     SourcesSummaryRead,
     SourceUpdate,
@@ -115,6 +118,7 @@ async def _compute_source_read(db: AsyncSession, source: Source, since: datetime
         code=source.slug,
         name=source.name,
         status=source.status,
+        enabled=source.enabled,
         priority=source.priority,
         last_run_at=last_run,
         items_last_24h=items_last_24h,
@@ -206,6 +210,71 @@ async def _get_source_or_404(db: AsyncSession, source_id: uuid.UUID) -> Source:
     return source
 
 
+@router.post(
+    "/{source_id}/duplicate",
+    response_model=SourceRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def duplicate_source(
+    source_id: uuid.UUID,
+    payload: SourceDuplicate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_role("admin")),
+) -> SourceRead:
+    """Duplica la configurazione di una fonte, senza copiarne lo storico operativo."""
+    original = await _get_source_or_404(db, source_id)
+    if payload.name.strip() == original.name.strip():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Il nome della copia deve essere diverso da quello della fonte originale.",
+        )
+    existing = (
+        await db.execute(select(Source.id).where(Source.slug == payload.slug))
+    ).scalar_one_or_none()
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Una fonte con slug '{payload.slug}' esiste gia.",
+        )
+
+    duplicate = Source(
+        name=payload.name,
+        slug=payload.slug,
+        base_url=original.base_url,
+        priority=original.priority,
+        status="offline",
+        enabled=False,
+        # Copie esplicite evitano che modifiche in-memory ai JSON mutabili
+        # possano propagarsi tra originale e duplicato prima del flush.
+        scrape_config=deepcopy(original.scrape_config),
+        watermark_removal_enabled=original.watermark_removal_enabled,
+        watermark_authorization_reference=original.watermark_authorization_reference,
+        watermark_regions=deepcopy(original.watermark_regions or []),
+    )
+    db.add(duplicate)
+    try:
+        await db.flush()
+        await log_action(
+            db,
+            user_id=user.id,
+            action="duplicate_source",
+            entity_type="source",
+            entity_id=str(duplicate.id),
+            details={"original_source_id": str(source_id), "duplicate_slug": payload.slug},
+        )
+        await db.commit()
+    except IntegrityError as exc:
+        # La constraint UNIQUE resta l'autorita anche in caso di richieste
+        # concorrenti che superano entrambe il controllo preventivo.
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Una fonte con slug '{payload.slug}' esiste gia.",
+        ) from exc
+    await db.refresh(duplicate)
+    return _to_minimal_source_read(duplicate)
+
+
 def _to_minimal_source_read(source: Source) -> SourceRead:
     """`SourceRead` con le metriche derivate azzerate: usata subito dopo
     creazione/modifica di una fonte, quando non ha ancora `scrape_runs`
@@ -216,6 +285,7 @@ def _to_minimal_source_read(source: Source) -> SourceRead:
         code=source.slug,
         name=source.name,
         status=source.status,
+        enabled=source.enabled,
         priority=source.priority,
         last_run_at=None,
         items_last_24h=0,
@@ -440,6 +510,26 @@ async def disable_source(
     db.add(source)
     await log_action(
         db, user_id=user.id, action="disable_source", entity_type="source", entity_id=str(source_id)
+    )
+    await db.commit()
+
+
+@router.post("/{source_id}/enable", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
+async def enable_source(
+    source_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_role("admin", "operator")),
+) -> None:
+    """Riabilita una fonte disabilitata/in pausa e ne ripristina lo stato iniziale."""
+    source = await _get_source_or_404(db, source_id)
+    if source.enabled:
+        return
+
+    source.enabled = True
+    source.status = "healthy"
+    db.add(source)
+    await log_action(
+        db, user_id=user.id, action="enable_source", entity_type="source", entity_id=str(source_id)
     )
     await db.commit()
 

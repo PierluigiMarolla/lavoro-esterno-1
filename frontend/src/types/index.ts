@@ -38,6 +38,7 @@ export interface Source {
   name: string;
   country: string;
   status: SourceStatus;
+  enabled: boolean;
   // Priorità reale della fonte (bug corretto: prima l'API non la
   // esponeva affatto, la colonna "Priority" della tabella fabbricava
   // un'etichetta High/Medium/Low da errorRate — mostrava il tasso di

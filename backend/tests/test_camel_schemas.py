@@ -76,6 +76,7 @@ def test_source_read_items_last_24h_uses_lowercase_h() -> None:
         code="bakeca_incontri",
         name="Bakeca Incontri",
         status="healthy",
+        enabled=True,
         priority="medium",
         last_run_at=None,
         items_last_24h=42,
@@ -85,6 +86,7 @@ def test_source_read_items_last_24h_uses_lowercase_h() -> None:
     )
     dumped = source.model_dump(mode="json", by_alias=True)
     assert dumped["itemsLast24h"] == 42
+    assert dumped["enabled"] is True
     assert "itemsLast24H" not in dumped
     assert "items_last_24h" not in dumped
 

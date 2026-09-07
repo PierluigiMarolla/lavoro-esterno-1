@@ -1524,4 +1524,38 @@ Collaudo finale:
   ripristino; API nuovamente `UP`;
 - tutti i servizi Compose operativi (il container one-shot `ollama-init` è
   terminato correttamente con exit code 0). Nessun volume è stato eliminato o
-  ricreato durante il collaudo.
+ricreato durante il collaudo.
+
+# Sessione 12 — 7 settembre 2026: duplicazione e riabilitazione Sources
+
+La gestione Sources espone ora esplicitamente `enabled` nelle risposte lista e
+dettaglio, separando lo stato operativo dalla salute del connettore. Sono stati
+aggiunti `POST /api/v1/sources/{source_id}/duplicate` (solo Admin) e
+`POST /api/v1/sources/{source_id}/enable` (Admin/Operator). La duplicazione
+assegna nuova identità e timestamp, copia in modo atomico URL base, priorità,
+configurazione completa dello scraper e impostazioni watermark, ma non annunci,
+run o errori. La copia nasce `offline` e disabilitata; collisioni sullo slug,
+anche concorrenti, restituiscono 409. Entrambe le operazioni sono auditate senza
+registrare configurazioni o riferimenti sensibili; Enable è idempotente.
+
+La tabella mostra agli Admin l'azione Duplicate, con nome e slug suggeriti e
+suffisso numerico anti-collisione. Le fonti ferme mostrano Enable ad Admin e
+Operator e non espongono Scan, Pause o Disable finché non vengono riattivate.
+La UI invalida lista e riepilogo dopo ogni operazione e mantiene visibili gli
+errori nella modale o nella pagina.
+
+Verifica conclusiva:
+
+- Ruff verde e suite backend completa `176 passed`;
+- lint frontend senza errori (restano i due warning Fast Refresh preesistenti)
+  e build Vite completata;
+- Playwright mirato `5 passed`, eseguito anche contro il frontend del Compose;
+- prova API reale su PostgreSQL: route e contratto OpenAPI presenti, Duplicate
+  201 con configurazione identica e stato disabilitato, Enable 204 con stato
+  healthy; le due fonti temporanee sono state eliminate (`temporary_sources=0`);
+- health HTTP 200 e tutti gli 8 target Prometheus UP;
+- i volumi PostgreSQL e MinIO conservano la data di creazione del 4 settembre
+  2026: nessun volume è stato eliminato o ricreato.
+
+Resta il warning già noto per il `JWT_SECRET_KEY` locale di 20 byte: non è stato
+ruotato automaticamente perché la rotazione invaliderebbe le sessioni attive.

@@ -30,6 +30,11 @@ export interface UpdateSourceInput {
   watermarkRemoval?: WatermarkRemovalConfig;
 }
 
+export interface DuplicateSourceInput {
+  name: string;
+  slug: string;
+}
+
 export function fetchSources(): Promise<Source[]> {
   return apiRequest<Source[]>("/sources");
 }
@@ -48,6 +53,14 @@ export function pauseSource(id: string): Promise<void> {
 
 export function disableSource(id: string): Promise<void> {
   return apiRequest<void>(`/sources/${id}/disable`, { method: "POST" });
+}
+
+export function enableSource(id: string): Promise<void> {
+  return apiRequest<void>(`/sources/${id}/enable`, { method: "POST" });
+}
+
+export function duplicateSource(id: string, input: DuplicateSourceInput): Promise<Source> {
+  return apiRequest<Source>(`/sources/${id}/duplicate`, { method: "POST", body: input });
 }
 
 // Drill-down history for a single source (recent scrape_runs + their

@@ -5,6 +5,8 @@ import {
   useRunSourceScan,
   usePauseSource,
   useDisableSource,
+  useEnableSource,
+  useDuplicateSource,
   useSourceRuns,
   useSource,
   useCreateSource,
@@ -824,6 +826,97 @@ function DeleteSourceDialog({ source, onClose }: { source: Source | null; onClos
   );
 }
 
+function duplicateSlugSuggestion(source: Source, sources: Source[]): string {
+  const used = new Set(sources.map((item) => item.code));
+  for (let copyNumber = 1; ; copyNumber += 1) {
+    const suffix = copyNumber === 1 ? "_copy" : `_copy_${copyNumber}`;
+    const candidate = `${source.code.slice(0, 100 - suffix.length)}${suffix}`;
+    if (!used.has(candidate)) return candidate;
+  }
+}
+
+function DuplicateSourceDialog({
+  source,
+  sources,
+  onClose,
+}: {
+  source: Source | null;
+  sources: Source[];
+  onClose: () => void;
+}) {
+  const duplicateSource = useDuplicateSource();
+  const [name, setName] = useState("");
+  const [slug, setSlug] = useState("");
+
+  useEffect(() => {
+    if (!source) return;
+    setName(`${source.name} (copy)`);
+    setSlug(duplicateSlugSuggestion(source, sources));
+  }, [source, sources]);
+
+  function handleClose() {
+    duplicateSource.reset();
+    onClose();
+  }
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (!source) return;
+    try {
+      await duplicateSource.mutateAsync({ id: source.id, input: { name, slug } });
+      handleClose();
+    } catch {
+      // The mutation error is rendered below and the dialog stays open.
+    }
+  }
+
+  return (
+    <Dialog open={source !== null} onClose={handleClose} title="Duplicate source">
+      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+        <p className="text-body-md text-on-surface-variant">
+          All scraping and watermark settings will be copied. The duplicate starts disabled and
+          contains no advertisements or run history.
+        </p>
+        <div>
+          <label htmlFor="duplicate-source-name" className="text-label-sm text-on-surface-variant block mb-1">
+            Name
+          </label>
+          <Input
+            id="duplicate-source-name"
+            data-dialog-initial-focus
+            required
+            maxLength={200}
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
+        </div>
+        <div>
+          <label htmlFor="duplicate-source-slug" className="text-label-sm text-on-surface-variant block mb-1">
+            Slug (unique identifier)
+          </label>
+          <Input
+            id="duplicate-source-slug"
+            required
+            maxLength={100}
+            pattern="[a-z0-9_]+"
+            value={slug}
+            onChange={(event) => setSlug(event.target.value)}
+          />
+        </div>
+        {duplicateSource.isError && (
+          <p className="text-body-md text-error">{describeError(duplicateSource.error).description}</p>
+        )}
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="secondary" onClick={handleClose}>Cancel</Button>
+          <Button type="submit" disabled={duplicateSource.isPending}>
+            {duplicateSource.isPending ? "Duplicating…" : "Duplicate"}
+          </Button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
 export default function SourcesPage() {
   const { user } = useAuth();
   const canManageSources = user?.role !== "viewer";
@@ -833,10 +926,12 @@ export default function SourcesPage() {
   const runScan = useRunSourceScan();
   const pause = usePauseSource();
   const disable = useDisableSource();
+  const enable = useEnableSource();
   const checkRobots = useCheckSourceRobots();
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [formSource, setFormSource] = useState<Source | null | "new">(null);
   const [deleteTarget, setDeleteTarget] = useState<Source | null>(null);
+  const [duplicateTarget, setDuplicateTarget] = useState<Source | null>(null);
   const [robotsResultBySource, setRobotsResultBySource] = useState<Record<string, string>>({});
 
   function toggleExpanded(id: string) {
@@ -916,6 +1011,11 @@ export default function SourcesPage() {
       </div>
 
       {/* Sources Table */}
+      {enable.isError && (
+        <div role="alert" className="bg-error-container/20 border border-error/20 rounded-lg p-4 text-error text-body-md">
+          {describeError(enable.error).description}
+        </div>
+      )}
       <div className="bg-surface-container-lowest border border-border rounded-lg shadow-[0_1px_2px_rgba(0,0,0,0.02)] flex flex-col min-h-[400px]">
         <div className="px-5 py-4 border-b border-border bg-surface-container-lowest">
           <h3 className="text-headline-sm text-on-surface flex items-center gap-2">
@@ -997,7 +1097,7 @@ export default function SourcesPage() {
                     >
                       <Icon name="policy" size={16} />
                     </button>
-                    {canManageSources && source.hasScrapeConfig && (
+                    {canManageSources && source.enabled && source.hasScrapeConfig && (
                       <button
                         onClick={() => handleRunScan(source.id)}
                         disabled={runScan.isPending}
@@ -1007,7 +1107,7 @@ export default function SourcesPage() {
                         <Icon name="play_arrow" size={16} />
                       </button>
                     )}
-                    {canManageSources && (
+                    {canManageSources && source.enabled && (
                       <button
                         onClick={() => pause.mutate(source.id)}
                         disabled={pause.isPending}
@@ -1019,6 +1119,16 @@ export default function SourcesPage() {
                     )}
                     {isAdmin && (
                       <button
+                        onClick={() => setDuplicateTarget(source)}
+                        title="Duplicate"
+                        aria-label={`Duplicate ${source.name}`}
+                        className="p-1.5 text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded transition-colors"
+                      >
+                        <Icon name="content_copy" size={16} />
+                      </button>
+                    )}
+                    {isAdmin && (
+                      <button
                         onClick={() => setFormSource(source)}
                         title={source.hasScrapeConfig ? "Edit configuration" : "Configure"}
                         className="p-1.5 text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded transition-colors"
@@ -1026,7 +1136,7 @@ export default function SourcesPage() {
                         <Icon name="tune" size={16} />
                       </button>
                     )}
-                    {canManageSources && (
+                    {canManageSources && source.enabled && (
                       <button
                         onClick={() => disable.mutate(source.id)}
                         disabled={disable.isPending}
@@ -1034,6 +1144,17 @@ export default function SourcesPage() {
                         className="p-1.5 text-on-surface-variant hover:text-error hover:bg-error-container/30 rounded transition-colors disabled:opacity-50"
                       >
                         <Icon name="block" size={16} />
+                      </button>
+                    )}
+                    {canManageSources && !source.enabled && (
+                      <button
+                        onClick={() => enable.mutate(source.id)}
+                        disabled={enable.isPending}
+                        title="Enable"
+                        aria-label={`Enable ${source.name}`}
+                        className="p-1.5 text-on-surface-variant hover:text-success hover:bg-success/10 rounded transition-colors disabled:opacity-50"
+                      >
+                        <Icon name="power_settings_new" size={16} />
                       </button>
                     )}
                     {isAdmin && (
@@ -1062,6 +1183,11 @@ export default function SourcesPage() {
         editingSource={formSource === "new" ? null : formSource}
       />
       <DeleteSourceDialog source={deleteTarget} onClose={() => setDeleteTarget(null)} />
+      <DuplicateSourceDialog
+        source={duplicateTarget}
+        sources={sources.data ?? []}
+        onClose={() => setDuplicateTarget(null)}
+      />
     </div>
   );
 }

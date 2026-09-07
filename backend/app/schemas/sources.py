@@ -206,6 +206,13 @@ class SourceUpdate(CamelModel):
         return _validate_http_url(value) if value is not None else None
 
 
+class SourceDuplicate(CamelModel):
+    """Nuova identita per una copia; la configurazione arriva dalla fonte originale."""
+
+    name: str = Field(min_length=1, max_length=200)
+    slug: str = Field(min_length=1, max_length=100, pattern=r"^[a-z0-9_]+$")
+
+
 class SourceRead(CamelModel):
     """Riga della tabella fonti per `GET /sources` (`frontend/src/api/
     sources.ts:fetchSources`, tipo `Source` in `frontend/src/types/
@@ -230,6 +237,9 @@ class SourceRead(CamelModel):
     # PROGETTO.md). Non blocca la UI, che lo mostra solo come etichetta.
     country: str = "N/D"
     status: str
+    # Separato dallo stato di salute: una fonte healthy/degraded puo essere
+    # volontariamente in pausa e quindi non abilitata allo scraping.
+    enabled: bool
     # Bug corretto: prima non esposta dall'API affatto, il frontend
     # fabbricava un'etichetta "High/Medium/Low" derivata da `errorRate` per
     # la colonna "Priority" della tabella (vedi
