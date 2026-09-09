@@ -1,3 +1,4 @@
+/** Barra di avanzamento accessibile con colori coerenti ai badge di stato. */
 import { cn } from "@/lib/cn";
 import type { BadgeTone } from "./Badge";
 

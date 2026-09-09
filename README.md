@@ -116,3 +116,7 @@ ONNX/FFmpeg, riepiloghi AI multiprovider, export e flussi GDPR. Restano i gate
 di produzione e la validazione esterna. Vedi
 [`PROGETTO.md`](PROGETTO.md) per l'elenco dettagliato del lavoro
 rimanente.
+
+Le fonti possono essere duplicate dalla UI Admin copiando tutta la
+configurazione ma non lo storico; la copia nasce disabilitata. Admin e Operator
+possono riabilitare dalla stessa tabella fonti disabilitate o in pausa.

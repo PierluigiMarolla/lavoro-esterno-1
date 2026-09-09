@@ -1,4 +1,5 @@
 #!/bin/sh
+# Garantisce in modo idempotente che il modello locale predefinito sia presente.
 set -eu
 
 model="${OLLAMA_DEFAULT_MODEL:-gemma4:e2b}"

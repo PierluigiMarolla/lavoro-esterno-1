@@ -1,3 +1,4 @@
+/** Profilo corrente e operazioni self-service su password e 2FA. */
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";

@@ -1,3 +1,5 @@
+"""Validazione della configurazione autorizzata per la rimozione watermark."""
+
 import pytest
 from pydantic import ValidationError
 

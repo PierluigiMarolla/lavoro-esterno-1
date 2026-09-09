@@ -1,3 +1,4 @@
+/** Verifica il flusso Admin di configurazione e test dei proxy. */
 import { test, expect } from "@playwright/test";
 
 test("admin creates a proxy without exposing credentials", async ({ page }) => {

@@ -1,3 +1,5 @@
+"""Contratti API della console operativa: priorità, classifier, notifiche e salute."""
+
 from __future__ import annotations
 
 import uuid

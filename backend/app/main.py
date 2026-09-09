@@ -51,9 +51,7 @@ app.include_router(api_router, prefix="/api/v1")
 
 
 @app.exception_handler(RequestValidationError)
-async def italian_validation_error(
-    _request: Request, exc: RequestValidationError
-) -> JSONResponse:
+async def italian_validation_error(_request: Request, exc: RequestValidationError) -> JSONResponse:
     """Mantiene il contratto FastAPI traducendo soltanto il testo leggibile."""
 
     details = []

@@ -470,6 +470,7 @@ async def get_occurrence_versions(
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> list[AdvertisementVersionRead]:
+    """Restituisce la cronologia immutabile di un'occorrenza del record."""
     await _get_record_or_404(db, record_id)
     advertisement = await db.get(Advertisement, advertisement_id)
     if advertisement is None or advertisement.record_id != record_id:
@@ -855,6 +856,7 @@ async def get_summary_generation_job(
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> SummaryGenerationJobRead:
+    """Restituisce un job AI solo se appartiene al record richiesto."""
     job = await db.get(SummaryGenerationJob, job_id)
     if job is None or job.record_id != record_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job AI non trovato.")

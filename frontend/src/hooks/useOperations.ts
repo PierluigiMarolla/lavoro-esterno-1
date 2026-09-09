@@ -1,3 +1,4 @@
+/** Stato client della console operativa: priorità, classifier, notifiche e diagnostica. */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "@/api/operations";
 import type { SourcePriority } from "@/types";

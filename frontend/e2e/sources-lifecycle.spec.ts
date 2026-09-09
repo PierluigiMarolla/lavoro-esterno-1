@@ -1,3 +1,4 @@
+/** Regressioni UI per duplicazione, riabilitazione e permessi delle fonti. */
 import { test, expect, type Page } from "@playwright/test";
 
 const admin = {

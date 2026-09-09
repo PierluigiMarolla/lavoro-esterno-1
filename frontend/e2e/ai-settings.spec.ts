@@ -1,3 +1,4 @@
+/** Verifica configurazione e attivazione dei provider AI dalla console Admin. */
 import { test, expect } from "@playwright/test";
 
 const providers = [

@@ -1,3 +1,5 @@
+"""Classificazione locale dei media, soglie e aggregazione fail-safe."""
+
 import io
 
 from PIL import Image

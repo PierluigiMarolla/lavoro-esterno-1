@@ -220,9 +220,7 @@ class SourceScheduleUpdate(CamelModel):
     def normalized_minutes(self) -> int | None:
         if self.interval_value is None or self.interval_unit is None:
             return None
-        return self.interval_value * {"minutes": 1, "hours": 60, "days": 1440}[
-            self.interval_unit
-        ]
+        return self.interval_value * {"minutes": 1, "hours": 60, "days": 1440}[self.interval_unit]
 
 
 class SourceDuplicate(CamelModel):

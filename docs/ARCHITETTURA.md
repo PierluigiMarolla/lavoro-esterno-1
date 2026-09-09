@@ -121,6 +121,10 @@ verificato dal vivo, è più preciso su questi punti (vedi PROGETTO.md § 4):
   Python per-sito precompilati (i 9 stub iniziali descritti nelle versioni
   precedenti di questo documento sono stati rimossi, insieme al
   `registry.py` che li risolveva).
+- **Ciclo di vita fonti**: salute (`status`) e attivazione operativa
+  (`enabled`) sono distinte. La duplicazione copia configurazione scraper,
+  proxy e watermark ma non lo storico, e crea una fonte offline da verificare
+  prima della riabilitazione esplicita.
 - **Media e classificazione**: lo scraper scarica in streaming, valida e
   persiste soltanto l'originale immutabile; dopo il commit accoda
   `process_media` sulla coda `media`. Il worker genera display/thumbnail

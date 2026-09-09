@@ -1,3 +1,4 @@
+/** Mappa delle route pubbliche/protette e redirect di compatibilità della SPA. */
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import AppShell from "@/layout/AppShell";
 import ProtectedRoute from "@/routes/ProtectedRoute";

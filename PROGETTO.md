@@ -78,17 +78,16 @@ implementativi in `docs/SICUREZZA.md`.
 Tutti i punti sottostanti sono stati completati (o esplicitamente valutati
 per iscritto, dove la richiesta era "valutare", non "implementare") e
 verificati dal vivo (`docker compose up --build`, non solo test statici):
-4 migrazioni applicate in sequenza su Postgres reale (12 tabelle + indici
-aggiuntivi + `expires_at`), seed delle 9 fonti (idempotente, ri-eseguito
-due volte), task `cleanup_expired_data` eseguito manualmente contro righe
+la catena Alembic è stata applicata in sequenza su Postgres reale ed è stata
+poi estesa dalle sezioni successive con tabelle e indici operativi; il task
+`cleanup_expired_data` è stato eseguito manualmente contro righe
 di test con date forzate nel passato (cancellazione selettiva confermata:
 solo le righe scadute sparite, quelle recenti intatte; oggetto MinIO di un
-export scaduto correttamente "tentato" e l'assenza del bucket gestita senza
+export scaduto correttamente "tentato" e l'assenza iniziale del bucket gestita senza
 crash), backup Postgres forzato e **ripristinato con successo sullo stesso
 database popolato** (`pg_dump --clean --if-exists` + `psql`, dati e indici
-intatti dopo il restore), backup MinIO forzato (comportamento corretto in
-assenza del bucket, mai creato perché l'upload media reale è un TODO
-separato). Nel farlo è stato trovato e corretto un bug pre-esistente non
+intatti dopo il restore), backup MinIO forzato (comportamento corretto anche
+in assenza iniziale del bucket). Nel farlo è stato trovato e corretto un bug pre-esistente non
 di questa sezione ma scoperto qui: `GET /sources` restituiva
 `itemsLast24H` (H maiuscola) invece di `itemsLast24h` per un difetto di
 `pydantic.alias_generators.to_camel` sui confini cifra/lettera — non era
@@ -115,13 +114,11 @@ precedenti. Corretto con un alias esplicito in
       `backend/migrations/versions/20260829091500_additional_indexes.py`,
       applicata con successo su Postgres reale.
 - [x] Definire la **retention policy per categoria di dato** e
-      implementarla come task periodico dello scheduler. Nessuna scadenza
-      automatica per annunci/media/record (dato "vivo": resta sospesa a
-      validazione legale/GDPR, vedi sezione 8) — solo per dati accessori:
-      `AUDIT_LOG_RETENTION_DAYS` (365gg), `SCRAPE_ERROR_RETENTION_DAYS`
-      (90gg), `EXPORT_RETENTION_DAYS` (7gg, con nuova colonna
-      `export_jobs.expires_at`), valori di default proposti e configurabili
-      via env, nessuna decisione legale bloccante. Task
+      implementarla come task periodico dello scheduler. I default
+      configurabili sono annunci 365gg, media 180gg, run/errori tecnici 90gg,
+      notifiche 90gg, audit 365gg ed export 7gg; `0` disabilita la categoria.
+      I valori definitivi restano soggetti alla validazione legale/GDPR (vedi
+      sezione 8). Task
       `app.workers.tasks_maintenance.cleanup_expired_data`, schedulato
       ogni notte alle 3:00 UTC, eseguito sulla coda `maintenance` del
       worker `worker-scraper` (nessun servizio Celery dedicato).
@@ -136,9 +133,8 @@ precedenti. Corretto con un alias esplicito in
       distruttiva) con `infra/backup/restore-postgres.sh`. Da adattare a
       un target remoto quando si sceglie l'hosting definitivo.
 - [x] Valutare **partitioning** delle tabelle ad alto volume
-      (`advertisement`, `scrape_errors`): solo valutazione scritta (il
-      volume reale è oggi zero, nessuno scraper attivo — implementarlo ora
-      sarebbe prematuro), vedi `docs/DATABASE.md` § 7 per soglie
+      (`advertisement`, `scrape_errors`): valutazione scritta, senza
+      implementazione anticipata; vedi `docs/DATABASE.md` § 7 per soglie
       indicative e costo di conversione di una tabella esistente.
 - [x] ~~Popolare un **seed di sviluppo** per le 9 fonti previste~~ —
       **rimosso in un secondo momento** insieme ai 9 connettori stub e a
@@ -485,25 +481,20 @@ Docker dell'host.
 
 ## 9. Observability
 
-- [x] Costruire le **dashboard Grafana specifiche** del progetto (oggi
-      solo il provisioning datasource è predisposto, nessuna dashboard
-      esiste ancora): almeno (a) salute API (latenze, error rate,
+- [x] Costruire le **dashboard Grafana specifiche** del progetto:
+      sono provisionate (a) salute API (latenze, error rate,
       richieste/minuto), (b) stato worker Celery per coda (lunghezza
       coda, task falliti, tempo di esecuzione), (c) stato scraping per
       fonte (successo/fallimento run, nuovi annunci trovati).
-- [x] Implementare l'**endpoint `/metrics`** lato API (oggi solo
-      referenziato in `infra/prometheus/prometheus.yml`, da implementare
-      nel backend, es. via `prometheus-fastapi-instrumentator`).
-- [x] Configurare l'**invio dei log applicativi a Loki** (oggi Loki gira
-      ma nulla scrive log verso di lui: serve un driver/agent, es.
-      Promtail o driver di logging Docker, oppure logging diretto via
-      client HTTP Loki dal backend).
+- [x] Implementare l'**endpoint `/metrics`** lato API tramite
+      `prometheus-fastapi-instrumentator` e collector applicativo DB-backed.
+- [x] Configurare l'**invio dei log applicativi a Loki** tramite Grafana Alloy
+      e discovery filtrata dei container Docker del progetto.
 - [x] Definire **alerting** (Grafana Alerting o Alertmanager) su almeno:
       API down, coda Celery bloccata/troppo lunga, run di scraping
       falliti ripetutamente per una fonte, spazio disco MinIO/Postgres.
-- [x] Valutare l'aggiunta di **postgres_exporter** (già predisposto come
-      job commentato in `infra/prometheus/prometheus.yml`) e di un
-      eventuale exporter per Redis/Celery.
+- [x] Aggiungere **postgres_exporter**, Redis exporter, Celery exporter e
+      node exporter per i volumi, tutti come target interni di Prometheus.
 
 ## 10. Deploy
 

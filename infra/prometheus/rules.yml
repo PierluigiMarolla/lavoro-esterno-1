@@ -1,3 +1,4 @@
+# Recording rule condivise dalle dashboard per ridurre query ripetute e costose.
 groups:
   - name: lavoro-esterno-recording
     interval: 30s

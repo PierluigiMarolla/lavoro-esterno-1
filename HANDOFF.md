@@ -1828,3 +1828,27 @@ correttamente “Email o password non validi”. Non è stata modificata o
 reimpostata automaticamente alcuna credenziale reale. Il problema non riguarda
 la localizzazione; i flussi equivalenti con API simulate sono coperti dai 16
 test verdi sopra indicati.
+
+# Sessione 20 — 9 settembre 2026: commenti e documentazione allineati
+
+È stata revisionata la base applicativa e infrastrutturale completa. I moduli
+frontend che non dichiaravano ancora la propria responsabilità hanno ora un
+header conciso; lo stesso vale per lo schema operativo, gli script, i test E2E
+e unitari e i file infrastrutturali privi di contesto. Tutti i route handler
+FastAPI ora hanno una docstring utile anche alla descrizione OpenAPI. I
+commenti spiegano responsabilità, sicurezza, concorrenza e fallback non ovvi,
+senza tradurre riga per riga codice già leggibile.
+
+La documentazione è stata riallineata al comportamento corrente: API di
+duplicazione/riabilitazione Sources, revoca delle sessioni, versioni delle
+occorrenze, worker export e download firmato; metriche ed exporter realmente
+attivi; proxy e schedule delle fonti; pHash, backup MinIO e retention effettiva
+di annunci, media, run, notifiche, audit ed export. `docs/SVILUPPO.md` include
+ora la convenzione da seguire per mantenere sincronizzati commenti, OpenAPI,
+documenti e handoff.
+
+Verifica finale: Ruff check e format verdi; suite backend `209 passed, 7
+skipped`; lint frontend senza errori (restano due warning Fast Refresh
+preesistenti); build Vite completata; `docker compose config --quiet` valido.
+`npm ci` ha ripristinato le dipendenze dichiarate e `npm audit` non segnala
+vulnerabilità. Non sono stati modificati dati, credenziali o volumi Docker.

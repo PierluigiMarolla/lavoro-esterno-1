@@ -1,3 +1,5 @@
+"""Contratti dello storage MinIO e generazione sicura degli URL firmati."""
+
 from __future__ import annotations
 
 from urllib.parse import parse_qs, urlparse

@@ -1,3 +1,4 @@
+/** Verifica creazione e ciclo di vita dell'export dalla SPA. */
 import { test, expect } from "@playwright/test";
 import { loginAsAdmin } from "./fixtures";
 

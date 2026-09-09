@@ -274,9 +274,7 @@ def test_text_extraction_preserves_br_and_inline_content() -> None:
     )
     scraper = _scraper("https://example.test")
 
-    value = scraper._extract_field(
-        page, {"selector": "p.description", "attribute": "text"}
-    )
+    value = scraper._extract_field(page, {"selector": "p.description", "attribute": "text"})
 
     assert value == "Prima riga\nSeconda riga\n\nUltima riga"
 

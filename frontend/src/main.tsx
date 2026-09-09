@@ -1,3 +1,4 @@
+/** Bootstrap della SPA e dei provider globali di routing, query, tema e sessione. */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";

@@ -1,3 +1,4 @@
+/** Query e mutation dell'area Admin con invalidazione mirata delle cache. */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as adminApi from "@/api/admin";
 import type { AIProviderName, UserRole } from "@/types";

@@ -1,3 +1,4 @@
+/** Contratti HTTP delle viste aggregate, sempre vincolati a un intervallo esplicito. */
 import { apiRequest } from "./client";
 import type { ActivityEvent, DashboardKpis, DashboardRangeParams, ScrapingActivity, SourceHealthBreakdown } from "@/types";
 

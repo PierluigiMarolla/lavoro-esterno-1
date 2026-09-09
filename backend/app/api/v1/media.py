@@ -42,10 +42,9 @@ async def list_media_for_advertisement(
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> list[MediaRead]:
+    """Elenca le versioni media correnti associate a un'occorrenza."""
     result = await db.execute(
-        select(Media).where(
-            Media.advertisement_id == advertisement_id, Media.is_current.is_(True)
-        )
+        select(Media).where(Media.advertisement_id == advertisement_id, Media.is_current.is_(True))
     )
     return [_media_read(m) for m in result.scalars().all()]
 
@@ -56,6 +55,7 @@ async def get_media(
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> MediaRead:
+    """Restituisce metadati e stato di elaborazione di un media."""
     media = await db.get(Media, media_id)
     if media is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Media non trovato.")
@@ -69,6 +69,7 @@ async def review_media(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_role("admin", "operator")),
 ) -> MediaRead:
+    """Registra la revisione manuale della classificazione di un media."""
     media = await db.get(Media, media_id)
     if media is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Media non trovato.")
@@ -107,6 +108,7 @@ async def reprocess_media(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_role("admin", "operator")),
 ) -> MediaReprocessResponse:
+    """Azzera l'errore e riaccoda la pipeline media richiesta."""
     media = await db.get(Media, media_id)
     if media is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Media non trovato.")

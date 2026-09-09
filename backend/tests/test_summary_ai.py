@@ -1,3 +1,5 @@
+"""Contratto, redazione e versionamento degli input/output dei riepiloghi AI."""
+
 import json
 import re
 import uuid

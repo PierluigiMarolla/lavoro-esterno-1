@@ -22,12 +22,14 @@ proxy nginx (`http(s)://<host>/api/v1/...`).
 | GET | `/api/v1/auth/me` | Restituisce profilo, ruolo (Admin/Operator/Viewer) e stato 2FA dell'utente autenticato (richiede `Authorization: Bearer`). |
 | POST | `/api/v1/auth/setup-2fa` | Avvia l'attivazione della 2FA per l'utente corrente: genera segreto TOTP, QR code (base64) e i backup codes monouso, mostrati una sola volta. |
 | POST | `/api/v1/auth/verify-2fa` | Conferma l'attivazione 2FA fornendo un primo codice TOTP valido generato dall'app authenticator; solo dopo questa chiamata `totp_enabled` diventa `true`. |
-| POST | `/api/v1/auth/logout` | Logout lato server: registra l'evento in `audit_log` e risponde `204`. I JWT restano stateless (nessuna vera revoca del token, vedi nota sotto). |
+| POST | `/api/v1/auth/2fa/backup-codes/regenerate` | Rigenera i backup code dopo verifica TOTP; i codici precedenti diventano inutilizzabili. |
+| POST | `/api/v1/auth/change-password` | Cambia password e revoca tutte le sessioni aggiornando il security stamp. |
+| POST | `/api/v1/auth/logout` | Revoca in Redis l'access token corrente e, se fornito nel body, anche il refresh token; registra l'audit e risponde `204`. |
 
-I JWT sono stateless a scadenza breve (access) / media (refresh):
-`POST /auth/logout` non revoca davvero il token già emesso, si limita a
-tracciare l'evento — vedi `docs/SICUREZZA.md` per la nota sulla
-revoca/blacklist dei refresh token, ancora da implementare.
+I JWT mantengono firma e scadenza stateless, ma la revoca puntuale usa una
+blacklist Redis con TTL pari alla vita residua del token. Cambio password,
+sospensione e reset 2FA aggiornano invece il security stamp per invalidare in
+blocco tutte le sessioni dell'utente.
 
 ## Area `dashboard` - viste aggregate per la home
 
@@ -72,6 +74,7 @@ revoca/blacklist dei refresh token, ancora da implementare.
 | POST | `/api/v1/records/search` | Legacy: lookup esatto di un record dato un numero di telefono completo (hash di lookup). Non usato dal frontend attuale, mantenuto per compatibilità. |
 | GET | `/api/v1/records/{record_id}` | Overview di un record per la UI: titolo/descrizione, `tags` aggregati e `customFieldGroups` di tutte le occorrenze con provenienza. `customFields` conserva lo snapshot canonico per compatibilita. |
 | GET | `/api/v1/records/{record_id}/occurrences` | Tutti gli annunci (`advertisement`) collegati al record, con flag `isCanonical` e i rispettivi `customFields`. |
+| GET | `/api/v1/records/{record_id}/occurrences/{advertisement_id}/versions` | Snapshot immutabili dell'occorrenza, ordinati per revisione e limitati al record richiesto. |
 | GET | `/api/v1/records/{record_id}/media` | Media associati agli annunci del record, con classificazione (media non ancora classificato è trattato come "explicit" per default fail-safe). |
 | GET | `/api/v1/records/{record_id}/history` | Storico unificato: unione di `canonical_history`, `media_classification_history` e `audit_log` filtrati per il record, ordinati per data. |
 | GET | `/api/v1/records/{record_id}/ai-summary` | Ultima versione del riepilogo AI (`summary_versions`); risponde `204` se non è mai stato generato. |
@@ -83,10 +86,11 @@ revoca/blacklist dei refresh token, ancora da implementare.
 
 | Metodo | Path | Scopo |
 |---|---|---|
-| GET | `/api/v1/sources` | Elenco e stato delle fonti, incluse metriche recenti e schedulazione (`automaticScrapingEnabled`, intervallo, revisione, ultima/prossima esecuzione e stato `waiting/pending/running/paused/disabled`). |
+| GET | `/api/v1/sources` | Elenco e stato delle fonti, inclusi `enabled`, metriche recenti e schedulazione (`automaticScrapingEnabled`, intervallo, revisione, ultima/prossima esecuzione e stato `waiting/pending/running/paused/disabled`). |
 | GET | `/api/v1/sources/summary` | Conteggio fonti per stato (`total`/`active`/`degraded`/`offline`). |
 | GET | `/api/v1/sources/{source_id}` | Dettaglio di una fonte, incluso `scrapeConfig` completo (assente da `GET /sources`, che espone solo il booleano `hasScrapeConfig`) — usato per precompilare il form "Edit configuration". |
 | POST | `/api/v1/sources` | Crea una fonte (solo Admin). Accetta `scrapeConfig` e `watermarkRemoval`; quest'ultimo richiede riferimento autorizzativo e almeno una regione normalizzata se abilitato. |
+| POST | `/api/v1/sources/{source_id}/duplicate` | Duplica URL, priorità, configurazione scraper/proxy e watermark con nuovo nome/slug. Non copia annunci o run e crea la copia offline/disabilitata. Solo Admin. |
 | PATCH | `/api/v1/sources/{source_id}` | Modifica `name`/`baseUrl`/`priority`/`scrapeConfig`/`watermarkRemoval` (solo Admin). Non permette di cambiare `slug`. |
 | DELETE | `/api/v1/sources/{source_id}` | Rimuove una fonte (solo Admin). 409 se esistono `advertisement` collegati (storico preservato). |
 | POST | `/api/v1/sources/{source_id}/check-robots` | Verifica live il `robots.txt` pubblico della fonte usando lo stesso User-Agent configurato per lo scan — nessun altro contenuto scaricato. Nessuna restrizione di ruolo oltre l'autenticazione. |
@@ -95,6 +99,7 @@ revoca/blacklist dei refresh token, ancora da implementare.
 | PATCH | `/api/v1/sources/{source_id}/schedule` | Configura il fixed-delay con `enabled`, `intervalValue`, `intervalUnit` e `revision`. Solo Admin con 2FA; intervallo 15 minuti–30 giorni. |
 | POST | `/api/v1/sources/{source_id}/pause` | Mette in pausa una fonte (`enabled=false`, status di salute invariato). Riservato ad Admin/Operator. |
 | POST | `/api/v1/sources/{source_id}/disable` | Disabilita definitivamente una fonte (`enabled=false`, `status="offline"`). Riservato ad Admin/Operator. |
+| POST | `/api/v1/sources/{source_id}/enable` | Riabilita una fonte disabilitata o in pausa (`enabled=true`, `status="healthy"`). Idempotente; riservato ad Admin/Operator. |
 | POST | `/api/v1/sources/{source_id}/scan` | Crea un run persistente `pending` e risponde `202`. Restituisce `409` se la fonte ha già un run pending/running; anche il completamento manuale riavvia il timer automatico. |
 
 ### Motore di scraping generico (`scrapeConfig`)
@@ -184,19 +189,19 @@ devono essere presentati dalla UI come sensibili.
 | Metodo | Path | Scopo |
 |---|---|---|
 | POST | `/api/v1/exports` | Crea un job asincrono con esattamente uno tra `recordIds` non vuoto e filtri tipizzati. Risponde `202`; massimo 1.000 record/2 GB. |
-| GET | `/api/v1/exports` | Storico dei job di esportazione (i più recenti), con `requestedBy`/`progressPct`/`recordCount`/`downloadUrl` calcolati. Riservato ad Admin/Operator. |
+| GET | `/api/v1/exports` | Storico dei job di esportazione (i più recenti), con richiedente, avanzamento e numero di record. L'URL firmato è emesso solo dall'endpoint di download. Riservato ad Admin/Operator. |
 | POST | `/api/v1/exports/{job_id}/retry` | Reimposta un job `failed` a `pending`. |
-| GET | `/api/v1/exports/{job_id}/download` | URL di download del pacchetto. **TODO**: la generazione reale del pacchetto (worker + upload MinIO) non è implementata; risponde `409` finché `object_key` non è valorizzato, altrimenti un URL placeholder verso l'endpoint MinIO configurato (non ancora un presigned URL vero). |
+| GET | `/api/v1/exports/{job_id}/download` | Emette un URL MinIO firmato e auditato per un pacchetto `ready`; risponde `409` se non pronto e `410` se scaduto. |
 
 ### Esempio di flusso export
 
 1. `POST /api/v1/exports` con i criteri di ricerca (stessi filtri di
    `/api/v1/search`) e il formato desiderato (es. CSV + media, o solo
    JSON). Risposta: `{ "job_id": "...", "status": "pending" }`.
-2. Il job viene eseguito in background (worker, coda dedicata o `media`
-   a seconda dell'implementazione finale, vedi `PROGETTO.md`).
-3. Il client fa polling su `GET /api/v1/exports/{job_id}` finché
-   `status` non è `completed` (o `failed`, con dettaglio errore).
+2. Il job viene eseguito dal worker dedicato sulla coda `exports`, che genera
+   un ZIP temporaneo, applica i limiti e lo carica in MinIO.
+3. Il client aggiorna `GET /api/v1/exports` finché il job non è `ready` o
+   `failed`; non esiste un endpoint di dettaglio separato per il job.
 4. A completamento, `GET /api/v1/exports/{job_id}/download` restituisce
    il pacchetto zip (contenente manifest con provenienza dei dati e
    media inclusi) da uno storage temporaneo su MinIO, con scadenza.
@@ -229,12 +234,15 @@ devono essere presentati dalla UI come sensibili.
 
 ## Convenzioni generali
 
-- Autenticazione via header `Authorization: Bearer <access_token>` su
-  tutte le rotte tranne `auth/login` e i primi due passi della 2FA.
+- Autenticazione via header `Authorization: Bearer <access_token>` sulle
+  rotte applicative. `auth/login`, `auth/login-2fa` e `auth/refresh` ricevono
+  invece le credenziali o il token nel body; `/metrics` è intenzionalmente
+  senza autenticazione ma resta escluso dal reverse proxy pubblico.
 - Autorizzazione RBAC a 3 livelli (Admin/Operator/Viewer): il dettaglio
   dei permessi per ruolo è descritto in `docs/SICUREZZA.md`.
-- Paginazione basata su `limit`/`offset` (o cursore, da confermare in
-  fase di implementazione) sugli endpoint che restituiscono liste.
+- Paginazione basata sui parametri dichiarati dal singolo endpoint; la ricerca
+  record usa `page`/`pageSize`, mentre le liste operative hanno limiti massimi
+  espliciti e ordinamento deterministico.
 - Tutte le risposte di errore seguono lo schema standard di FastAPI
   (`detail`), consultabile nello schema OpenAPI su `/docs`.
 

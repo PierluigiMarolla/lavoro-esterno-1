@@ -1,11 +1,9 @@
 # =============================================================================
 # Prometheus - Lavoro Esterno
 # -----------------------------------------------------------------------------
-# Config minimale: scrape delle metriche esposte dal backend FastAPI su
-# /metrics (endpoint da implementare lato backend, es. via
-# prometheus-fastapi-instrumentator). Il job "postgres-exporter" è
-# predisposto ma commentato: da abilitare quando verrà aggiunto il
-# container postgres_exporter al docker-compose.
+# Scrape delle metriche FastAPI su /metrics e dei target infrastrutturali
+# interni: Prometheus, Loki, Celery, PostgreSQL, Redis e volumi applicativi.
+# Nessuna porta exporter viene pubblicata dall'host tramite questo file.
 # =============================================================================
 
 global:

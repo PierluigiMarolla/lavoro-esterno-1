@@ -1,3 +1,4 @@
+/** Traduzione centralizzata di stati e ruoli restituiti dalle API. */
 import i18n from "@/i18n";
 
 const STATUS_KEYS: Record<string, string> = {

@@ -1,3 +1,4 @@
+/** Diagnostica on-demand dei componenti interni, caricata solo a modale aperta. */
 import Dialog from "@/components/ui/Dialog";
 import { useSystemStatus } from "@/hooks/useOperations";
 import { statusLabel } from "@/lib/labels";

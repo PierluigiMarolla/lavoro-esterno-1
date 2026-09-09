@@ -48,7 +48,7 @@ class ExportJob(UUIDPKMixin, Base):
     # Calcolata alla creazione come requested_at + EXPORT_RETENTION_DAYS (vedi
     # app/api/v1/exports.py:create_export). Usata dal task periodico
     # app.workers.tasks_maintenance.cleanup_expired_data per rimuovere
-    # l'oggetto MinIO scaduto e poi la riga, mentre l'evento resta nell'audit.
+    # l'oggetto MinIO e il job scaduti; l'evento resta nell'audit separato.
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     manifest_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

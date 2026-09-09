@@ -1,3 +1,5 @@
+"""Configurazione e adapter dei provider AI locali e remoti."""
+
 import json
 from types import SimpleNamespace
 
@@ -230,14 +232,10 @@ def test_prompt_versions_preserve_history_and_default_to_italian() -> None:
     )
     assert prompt_for(historical) == SUMMARY_PROMPTS["summary-v1"]
     assert "interamente in italiano" in prompt_for(italian)
-    assert prompt_for(ProviderRuntimeConfig("ollama", "model", None, None)) == prompt_for(
-        italian
-    )
+    assert prompt_for(ProviderRuntimeConfig("ollama", "model", None, None)) == prompt_for(italian)
     with pytest.raises(ProviderError, match="Versione prompt"):
         prompt_for(
-            ProviderRuntimeConfig(
-                "ollama", "model", None, None, {"prompt_version": "inesistente"}
-            )
+            ProviderRuntimeConfig("ollama", "model", None, None, {"prompt_version": "inesistente"})
         )
 
 

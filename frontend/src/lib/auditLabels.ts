@@ -1,3 +1,4 @@
+/** Etichette leggibili e metadati sicuri per gli eventi dell'audit log. */
 const ACTION_LABELS: Record<string, string> = {
   retention_cleanup: "Pulizia per conservazione dati",
   regenerate_ai_summary: "Rigenerazione riepilogo AI",

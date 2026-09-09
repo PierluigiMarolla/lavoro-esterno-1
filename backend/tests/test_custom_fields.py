@@ -1,3 +1,5 @@
+"""Persistenza, aggregazione ed export dei campi dinamici delle fonti."""
+
 import csv
 import io
 import json
@@ -181,9 +183,7 @@ def test_media_set_hash_is_order_independent_and_deduplicated() -> None:
 
 
 def test_occurrence_fingerprint_combines_content_and_media() -> None:
-    assert occurrence_fingerprint("content", "media") == occurrence_fingerprint(
-        "content", "media"
-    )
+    assert occurrence_fingerprint("content", "media") == occurrence_fingerprint("content", "media")
     assert occurrence_fingerprint("content", "media") != occurrence_fingerprint(
         "content-2", "media"
     )

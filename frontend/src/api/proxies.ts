@@ -1,3 +1,4 @@
+/** Contratti HTTP per pool ed endpoint proxy; le credenziali non vengono mai lette. */
 import { apiRequest } from "./client";
 import type { ProxyEndpoint, ProxyPool, ProxyScheme, ProxyTestResult } from "@/types";
 

@@ -1,3 +1,4 @@
+/** Select nativa con lo stile e gli stati focus condivisi dal design system. */
 import type { SelectHTMLAttributes } from "react";
 import { cn } from "@/lib/cn";
 

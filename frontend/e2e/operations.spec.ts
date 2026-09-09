@@ -1,3 +1,4 @@
+/** Regressioni trasversali per dashboard, account, Admin e operazioni. */
 import { test, expect } from "@playwright/test";
 
 const user = { id: "00000000-0000-4000-8000-000000000001", email: "admin@example.test", name: "Admin", role: "admin", mfa_enabled: true, status: "active" };

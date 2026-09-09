@@ -1,3 +1,4 @@
+# Build riproducibile del Celery exporter dal commit verificato usato dal progetto.
 FROM python:3.14-slim-bookworm
 
 ARG CELERY_EXPORTER_COMMIT=d45a395e03a0209ba288f99477060619ec1341f3

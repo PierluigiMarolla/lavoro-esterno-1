@@ -75,6 +75,7 @@ async def _read_all(db: AsyncSession) -> tuple[AISettings, list[AIProviderConfig
 async def get_ai_settings(
     db: AsyncSession = Depends(get_db), _admin: User = Depends(require_role("admin"))
 ) -> AISettingsRead:
+    """Restituisce la configurazione AI globale senza esporre credenziali."""
     ai, providers = await _read_all(db)
     return AISettingsRead(
         active_provider=ai.active_provider,
@@ -93,6 +94,7 @@ async def update_ai_settings(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin_with_2fa),
 ) -> AISettingsRead:
+    """Aggiorna limiti e provider attivo con controllo di revisione."""
     ai, providers = await _read_all(db)
     if payload.expected_revision != ai.revision:
         raise HTTPException(status.HTTP_409_CONFLICT, "Impostazioni modificate da un altro Admin.")
@@ -154,6 +156,7 @@ async def update_ai_provider(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin_with_2fa),
 ) -> AIProviderConfigRead:
+    """Aggiorna un provider conservando la chiave cifrata quando non sostituita."""
     row = await _provider_or_404(db, provider)
     ai = await db.get(AISettings, 1)
     if payload.expected_revision != row.revision:
@@ -234,6 +237,7 @@ async def list_ai_models(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(require_role("admin")),
 ) -> AIModelCatalogRead:
+    """Elenca i modelli del provider usando la cache salvo refresh esplicito."""
     row = await _provider_or_404(db, provider)
     if provider in REMOTE_PROVIDERS and row.api_key_encrypted is None:
         raise HTTPException(422, "Configurare prima la API key del provider.")
@@ -259,6 +263,7 @@ async def test_ai_provider(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin_with_2fa),
 ) -> AIProviderTestRead:
+    """Verifica connettività e output strutturato del provider configurato."""
     row = await _provider_or_404(db, provider)
     if not row.model_name or (provider in REMOTE_PROVIDERS and row.api_key_encrypted is None):
         raise HTTPException(422, "Configurare modello e credenziali prima del test.")

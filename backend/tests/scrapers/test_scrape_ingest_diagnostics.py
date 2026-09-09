@@ -1,3 +1,5 @@
+"""Diagnostica di raccolta e persistenza dei risultati dello scraper."""
+
 from __future__ import annotations
 
 from app.models.sources import Source

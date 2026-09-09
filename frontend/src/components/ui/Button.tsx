@@ -1,3 +1,4 @@
+/** Pulsante del design system con varianti semantiche e dimensioni uniformi. */
 import type { ButtonHTMLAttributes } from "react";
 import { cn } from "@/lib/cn";
 

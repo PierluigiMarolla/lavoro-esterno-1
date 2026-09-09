@@ -63,6 +63,7 @@ async def _classifier_stats(db: AsyncSession) -> ClassifierStats:
 async def get_classifier_settings(
     db: AsyncSession = Depends(get_db), _user: User = Depends(require_role("admin"))
 ) -> ClassifierSettingsRead:
+    """Restituisce configurazione e statistiche del classificatore media."""
     config = await db.get(MediaClassifierSettings, 1)
     if config is None:
         raise HTTPException(503, "Configurazione classificatore non inizializzata.")
@@ -82,6 +83,7 @@ async def update_classifier_settings(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin_with_2fa),
 ) -> ClassifierSettingsRead:
+    """Aggiorna soglie e modello con lock e revisione ottimistica."""
     config = (
         await db.execute(
             select(MediaClassifierSettings).where(MediaClassifierSettings.id == 1).with_for_update()
@@ -124,6 +126,7 @@ async def reprocess_classifier_media(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin_with_2fa),
 ) -> ClassifierReprocessResult:
+    """Riaccoda in modo limitato i media falliti o da revisionare."""
     condition = (
         Media.processing_status == "failed"
         if payload.scope == "failed"
@@ -162,6 +165,7 @@ async def reprocess_classifier_media(
 async def list_source_priorities(
     db: AsyncSession = Depends(get_db), _user: User = Depends(require_role("admin"))
 ) -> list[SourcePriorityRead]:
+    """Elenca priorità delle fonti e impatto sui record canonici."""
     sources = (await db.execute(select(Source).order_by(Source.name))).scalars().all()
     output = []
     for source in sources:
@@ -203,6 +207,7 @@ async def update_source_priority(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin_with_2fa),
 ) -> SourcePriorityJobRead:
+    """Modifica la priorità e crea il job persistente di ricalcolo."""
     source = (
         await db.execute(select(Source).where(Source.id == source_id).with_for_update())
     ).scalar_one_or_none()
@@ -239,6 +244,7 @@ async def get_source_priority_job(
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(require_role("admin")),
 ) -> SourcePriorityJobRead:
+    """Restituisce stato e avanzamento di un ricalcolo priorità."""
     job = await db.get(SourcePriorityRecalculationJob, job_id)
     if job is None:
         raise HTTPException(404, "Job non trovato.")
@@ -260,6 +266,7 @@ def _notification_visibility(user: User):
 async def list_notifications(
     db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)
 ) -> NotificationList:
+    """Elenca le notifiche consentite dal ruolo con lo stato di lettura."""
     visibility = _notification_visibility(user)
     read_join = and_(
         NotificationRead.notification_id == NotificationEvent.id,
@@ -315,6 +322,7 @@ async def _visible_notification(
 async def mark_all_notifications_read(
     db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)
 ) -> None:
+    """Segna come lette tutte le notifiche attualmente visibili all'utente."""
     visibility = _notification_visibility(user)
     ids_stmt = select(NotificationEvent.id)
     if visibility is not True:
@@ -339,6 +347,7 @@ async def mark_notification_read(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> None:
+    """Segna una singola notifica visibile come letta in modo idempotente."""
     await _visible_notification(db, notification_id, user)
     if await db.get(NotificationRead, (notification_id, user.id)) is None:
         db.add(NotificationRead(notification_id=notification_id, user_id=user.id))
@@ -361,9 +370,11 @@ async def _timed(name: str, check) -> SystemComponentRead:
 async def system_status(
     db: AsyncSession = Depends(get_db), _user: User = Depends(get_current_user)
 ) -> SystemStatusRead:
+    """Verifica le dipendenze operative e restituisce risultati sanitizzati e brevemente cached."""
     global _status_cache
     if _status_cache and time.monotonic() - _status_cache[0] < 10:
         return _status_cache[1]
+
     async def database():
         await db.execute(select(1))
 

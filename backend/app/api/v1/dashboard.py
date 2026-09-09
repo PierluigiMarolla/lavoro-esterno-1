@@ -50,6 +50,7 @@ async def get_dashboard_kpis(
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> DashboardKpisRead:
+    """Calcola i KPI della dashboard nella finestra temporale richiesta."""
     now = datetime.now(UTC)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     total_records = (await db.execute(select(func.count()).select_from(Record))).scalar_one()
@@ -74,9 +75,7 @@ async def get_dashboard_kpis(
             )
         )
     ).scalar_one()
-    new_records_delta_pct = percentage_delta(
-        new_records_in_range, new_records_previous_range
-    )
+    new_records_delta_pct = percentage_delta(new_records_in_range, new_records_previous_range)
 
     new_records_today = (
         await db.execute(
@@ -204,6 +203,7 @@ async def get_source_health(
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> SourceHealthBreakdownRead:
+    """Aggrega il numero di fonti per stato di salute corrente."""
     statuses = (await db.execute(select(Source.status))).scalars().all()
     return SourceHealthBreakdownRead(**health_breakdown(statuses))
 

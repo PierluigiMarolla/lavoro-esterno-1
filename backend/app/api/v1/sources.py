@@ -765,6 +765,7 @@ async def update_source_schedule(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin_with_2fa),
 ) -> SourceRead:
+    """Aggiorna lo schedule fixed-delay invalidando pianificazioni obsolete."""
     source = (
         await db.execute(select(Source).where(Source.id == source_id).with_for_update())
     ).scalar_one_or_none()
@@ -864,6 +865,7 @@ async def scan_source(
     await db.refresh(run)
 
     from app.workers.tasks_scraper import run_scrape_source
+
     try:
         run_scrape_source.apply_async(args=[str(source.id), str(run.id)], task_id=task_id)
     except Exception as exc:

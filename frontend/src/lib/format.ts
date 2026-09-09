@@ -1,3 +1,4 @@
+/** Formattatori condivisi: output italiano e fuso orario Europe/Rome. */
 const LOCALE = "it-IT";
 const TIME_ZONE = "Europe/Rome";
 

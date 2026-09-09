@@ -1,3 +1,5 @@
+"""Selezione, cooldown, fail-closed e sicurezza della rotazione proxy."""
+
 from __future__ import annotations
 
 import asyncio

@@ -1,3 +1,4 @@
+/** Configurazione Admin dei provider AI, dei limiti e del provider attivo. */
 import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";

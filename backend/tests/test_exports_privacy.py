@@ -1,3 +1,5 @@
+"""Vincoli di export, minimizzazione dati e cancellazione GDPR."""
+
 import uuid
 
 import pytest

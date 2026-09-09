@@ -1,3 +1,5 @@
+"""Regressioni della console operativa e delle relative regole di dominio."""
+
 from __future__ import annotations
 
 import pytest

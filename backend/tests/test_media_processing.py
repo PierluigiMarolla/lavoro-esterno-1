@@ -1,3 +1,5 @@
+"""Validazione e trasformazione deterministica di immagini e video."""
+
 import io
 import shutil
 import subprocess

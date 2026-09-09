@@ -1,3 +1,4 @@
+/** Contratti HTTP della console operativa e amministrativa. */
 import { apiRequest } from "./client";
 import type { ClassifierSettings, NotificationList, SourcePriority, SourcePriorityConfig, SourcePriorityJob, SystemStatus } from "@/types";
 

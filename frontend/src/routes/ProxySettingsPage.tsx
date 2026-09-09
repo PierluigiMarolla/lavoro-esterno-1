@@ -1,3 +1,4 @@
+/** Console Admin per pool, endpoint, credenziali write-only e test dei proxy. */
 import { useState, type FormEvent } from "react";
 import { NavLink } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";

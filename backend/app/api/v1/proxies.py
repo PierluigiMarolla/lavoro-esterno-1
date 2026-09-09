@@ -112,6 +112,7 @@ async def _replace_members(db: AsyncSession, pool_id: uuid.UUID, ids: list[uuid.
 async def list_proxy_pools(
     db: AsyncSession = Depends(get_db), _admin: User = Depends(require_role("admin"))
 ) -> list[ProxyPoolRead]:
+    """Elenca i pool con appartenenze e conteggi senza credenziali."""
     rows = (await db.execute(select(ProxyPool).order_by(ProxyPool.name))).scalars().all()
     return [await _pool_read(db, row) for row in rows]
 
@@ -122,6 +123,7 @@ async def create_proxy_pool(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin_with_2fa),
 ) -> ProxyPoolRead:
+    """Crea un pool e ne materializza atomicamente le appartenenze."""
     row = ProxyPool(name=payload.name.strip(), enabled=payload.enabled)
     db.add(row)
     try:
@@ -157,6 +159,7 @@ async def update_proxy_pool(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin_with_2fa),
 ) -> ProxyPoolRead:
+    """Aggiorna proprietà e membri di un pool esistente."""
     row = await _pool_or_404(db, pool_id)
     if payload.name is not None:
         row.name = payload.name.strip()
@@ -187,6 +190,7 @@ async def delete_proxy_pool(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin_with_2fa),
 ) -> None:
+    """Elimina un pool soltanto quando nessuna fonte lo referenzia."""
     row = await _pool_or_404(db, pool_id)
     references = await db.scalar(
         select(func.count()).select_from(Source).where(Source.proxy_pool_id == pool_id)
@@ -208,6 +212,7 @@ async def delete_proxy_pool(
 async def list_proxies(
     db: AsyncSession = Depends(get_db), _admin: User = Depends(require_role("admin"))
 ) -> list[ProxyEndpointRead]:
+    """Elenca endpoint proxy con il solo indicatore di credenziale configurata."""
     rows = (await db.execute(select(ProxyEndpoint).order_by(ProxyEndpoint.name))).scalars().all()
     return [_endpoint_read(row) for row in rows]
 
@@ -218,6 +223,7 @@ async def create_proxy(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin_with_2fa),
 ) -> ProxyEndpointRead:
+    """Valida l'host e salva le eventuali credenziali cifrate."""
     host = await _validate_host(payload.host)
     try:
         encrypted = (
@@ -268,11 +274,15 @@ async def update_proxy(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin_with_2fa),
 ) -> ProxyEndpointRead:
+    """Aggiorna l'endpoint senza cancellare implicitamente il segreto esistente."""
     row = await _proxy_or_404(db, proxy_id)
-    connection_changed = any(
-        value is not None
-        for value in (payload.scheme, payload.host, payload.port, payload.username)
-    ) or payload.clear_credential
+    connection_changed = (
+        any(
+            value is not None
+            for value in (payload.scheme, payload.host, payload.port, payload.username)
+        )
+        or payload.clear_credential
+    )
     if payload.name is not None:
         row.name = payload.name.strip()
     if payload.scheme is not None:
@@ -320,6 +330,7 @@ async def delete_proxy(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin_with_2fa),
 ) -> None:
+    """Elimina un endpoint soltanto se non appartiene ad alcun pool."""
     row = await _proxy_or_404(db, proxy_id)
     member_count = await db.scalar(
         select(func.count())
@@ -351,6 +362,7 @@ async def test_proxy(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin_with_2fa),
 ) -> ProxyTestRead:
+    """Esegue un test controllato del proxy verso la fonte selezionata."""
     row = await _proxy_or_404(db, proxy_id)
     source = await db.get(Source, payload.source_id)
     if source is None:

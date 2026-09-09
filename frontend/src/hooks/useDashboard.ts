@@ -1,3 +1,4 @@
+/** Query dashboard indicizzate anche per finestra temporale, evitando cache incrociate. */
 import { useQuery } from "@tanstack/react-query";
 import { fetchDashboardKpis, fetchRecentActivity, fetchScrapingActivity, fetchSourceHealth } from "@/api/dashboard";
 import { dashboardRangeForRequest, type DashboardRangeSelection } from "@/lib/dashboardRange";

@@ -150,7 +150,10 @@ aggiungere una fonte.
 
 - Esiste un CRUD completo via API/UI (`POST /sources`, `PATCH
   /sources/{id}`, `DELETE /sources/{id}`, form "Aggiungi/Modifica fonte" nella
-  pagina Fonti — vedi `docs/API.md`) per creare/configurare una fonte.
+  pagina Fonti — vedi `docs/API.md`) per creare/configurare una fonte. Un
+  Admin può duplicarne la configurazione con `POST /sources/{id}/duplicate`:
+  la copia non eredita annunci/run e nasce disabilitata. Admin e Operator la
+  riattivano con `POST /sources/{id}/enable`.
 - Dopo aver creato/configurato la fonte: `POST
   /api/v1/sources/{source_id}/scan` accoda un run reale (coda `scraping`,
   vedi `backend/app/workers/tasks_scraper.py`) — controllare
@@ -277,6 +280,15 @@ Dettagli completi in `docs/DATABASE.md` (§ 5-7). In sintesi:
   docker compose exec backup-postgres sh /scripts/restore-postgres.sh \
       /backups/lavoro_esterno_<timestamp>.sql.gz
   ```
+
+## Convenzioni per commenti e documentazione
+
+Ogni modulo dichiara in apertura la propria responsabilità. Docstring e
+commenti interni spiegano soprattutto vincoli di sicurezza, concorrenza,
+fallback e decisioni non evidenti; non duplicano istruzioni già leggibili dal
+codice. I contratti HTTP fanno riferimento allo schema OpenAPI generato e a
+`docs/API.md`. Ogni modifica funzionale deve aggiornare nello stesso commit la
+documentazione interessata e, dopo il collaudo, `HANDOFF.md`.
 
 ## Verifiche sicurezza
 

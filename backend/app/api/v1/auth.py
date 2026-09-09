@@ -258,6 +258,7 @@ async def refresh_token(
 
 @router.get("/me", response_model=UserPublic)
 async def read_current_user(user: User = Depends(get_current_user_allow_unenrolled)) -> UserPublic:
+    """Restituisce il profilo anche durante il flusso obbligatorio di enrollment MFA."""
     return UserPublic.from_user(user)
 
 

@@ -93,6 +93,7 @@ async def create_erasure_request(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin_with_2fa),
 ) -> ErasureRequestRead:
+    """Crea una bozza di cancellazione usando soltanto l'hash del telefono."""
     lookup = phone_lookup_hash(payload.phone)
     record_id = await db.scalar(select(Record.id).where(Record.phone_lookup_hash == lookup))
     request = ErasureRequest(
@@ -124,6 +125,7 @@ async def list_erasure_requests(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(require_role("admin")),
 ) -> list[ErasureRequestRead]:
+    """Elenca le richieste di cancellazione più recenti per gli Admin."""
     rows = (
         await db.execute(
             select(ErasureRequest).order_by(ErasureRequest.created_at.desc()).limit(200)
@@ -138,6 +140,7 @@ async def get_erasure_request(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(require_role("admin")),
 ) -> ErasureRequestRead:
+    """Restituisce una richiesta di cancellazione senza dati telefonici in chiaro."""
     row = await db.get(ErasureRequest, request_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Richiesta non trovata.")
@@ -154,6 +157,7 @@ async def confirm_erasure_request(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin_with_2fa),
 ) -> ErasureRequestRead:
+    """Conferma una bozza valida e accoda la cancellazione asincrona."""
     row = await db.get(ErasureRequest, request_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Richiesta non trovata.")

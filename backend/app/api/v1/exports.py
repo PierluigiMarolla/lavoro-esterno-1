@@ -142,6 +142,7 @@ async def create_export(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_role("admin", "operator")),
 ) -> ExportJobOut:
+    """Congela lo scope autorizzato e accoda la creazione del pacchetto."""
     ids = await _resolve_scope(db, payload.record_ids, payload.filters)
     if not ids:
         raise HTTPException(status_code=422, detail="Lo scope non contiene record.")
@@ -202,6 +203,7 @@ async def list_exports(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_role("admin", "operator")),
 ) -> list[ExportJobOut]:
+    """Elenca gli export visibili, limitando gli operatori ai propri job."""
     stmt = select(ExportJob, User.email).join(User, User.id == ExportJob.requested_by_user_id)
     if user.role != "admin":
         stmt = stmt.where(ExportJob.requested_by_user_id == user.id)
@@ -217,6 +219,7 @@ async def retry_export(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_role("admin", "operator")),
 ) -> ExportJobOut:
+    """Riaccoda un export fallito preservandone scope e proprietà."""
     job = await _get_visible_job(db, job_id, user)
     if job.status != "failed":
         raise HTTPException(status_code=400, detail="Solo un export fallito può essere ripetuto.")
@@ -248,6 +251,7 @@ async def get_export_download_url(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_role("admin", "operator")),
 ) -> DownloadUrlResponse:
+    """Genera un URL temporaneo solo per pacchetti pronti e non scaduti."""
     job = await _get_visible_job(db, job_id, user)
     if job.status != "ready" or not job.object_key:
         raise HTTPException(status_code=409, detail="Il pacchetto non è pronto.")

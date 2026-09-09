@@ -1,3 +1,4 @@
+/** Visualizza i campi dinamici di una singola occorrenza senza assumerne lo schema. */
 import type { CustomFields as CustomFieldsMap } from "@/types";
 
 interface CustomFieldsProps {

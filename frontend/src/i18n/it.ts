@@ -1,3 +1,4 @@
+/** Catalogo italiano canonico usato dall'interfaccia. */
 export const it = {
   translation: {
     app: { name: "Lavoro Esterno", tagline: "Gestione dati aziendali" },

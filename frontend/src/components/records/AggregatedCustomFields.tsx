@@ -1,3 +1,4 @@
+/** Raggruppa i campi dinamici di più fonti mantenendo visibile la provenienza. */
 import type { CustomFieldGroup, CustomFieldValue } from "@/types";
 
 interface AggregatedCustomFieldsProps {

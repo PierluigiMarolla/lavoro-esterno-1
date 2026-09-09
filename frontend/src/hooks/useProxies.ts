@@ -1,3 +1,4 @@
+/** Query e mutation React Query per la configurazione proxy Admin. */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "@/api/proxies";
 

@@ -91,8 +91,9 @@ File (immagine/video) associato a un annuncio.
   `display_object_key` e `thumbnail_object_key` Text nullable; l'originale
   non viene mai sovrascritto
 - `sha256` String(64), **index** (dedup esatto)
-- `perceptual_hash` String(64) nullable, **index** (dedup pHash, TODO in
-  `app/services/dedup.py`)
+- `perceptual_hash` String(64) nullable, **index**. Il worker media calcola
+  il pHash; l'unione automatica per somiglianza percettiva resta volutamente
+  separata dalla deduplicazione esatta SHA-256.
 - `mime_type` String(100)
 - `classification` enum `media_classification` (`explicit` / `safe` /
   `unclassified`), default `unclassified`
@@ -115,6 +116,9 @@ File (immagine/video) associato a un annuncio.
 - `priority` enum `source_priority` (`high` / `medium` / `low`), default `medium`
 - `status` enum `source_status` (`healthy` / `degraded` / `offline`), default `healthy`
 - `enabled` bool default `true`
+- `proxy_pool_id` UUID nullable, FK → `proxy_pools.id` ondelete SET NULL:
+  assegna alla fonte un pool di proxy senza incorporarne le credenziali nella
+  configurazione dello scraper.
 - `automatic_scraping_enabled`, `scrape_interval_minutes`, `next_scrape_at`,
   `last_scheduled_at`, `last_completed_scrape_at`,
   `last_schedule_skip_reason`, `schedule_revision`: configurazione e stato
@@ -137,11 +141,15 @@ File (immagine/video) associato a un annuncio.
 - `trigger_type` (`manual` / `scheduled`), `scheduled_for`, `celery_task_id`
 - indice univoco parziale su `source_id` per gli stati `pending/running`:
   il database impedisce due run attivi della stessa fonte anche in caso di race
-- `items_found`, `items_new`, `errors_count` Integer, default `0`
+- `items_found`, `items_new`, `items_updated`, `items_unchanged`,
+  `errors_count` Integer, default `0`
 - `pages_visited` Integer default `0`
 - `pagination_mode` String (`none`, `href`, `click`)
 - `pagination_stop_reason` String nullable: motivo sicuro e senza URL
   dell'arresto della discovery
+- `proxy_attempts_count`, `proxy_rotations_count` Integer e
+  `proxy_stop_reason` String nullable: diagnostica aggregata della rotazione,
+  senza endpoint o credenziali proxy.
 
 ### `scrape_errors`
 - `id` UUID PK
@@ -210,8 +218,8 @@ File (immagine/video) associato a un annuncio.
 ### `export_jobs`
 - `id` UUID PK
 - `record_id` UUID nullable, FK → `records.id` ondelete CASCADE, **index**
-  (nullable: un export può essere bulk, con l'elenco record in
-  `manifest_json["record_ids"]` invece che una singola FK)
+  (nullable: un export può essere bulk; lo scope immutabile è materializzato
+  nella tabella ponte `export_job_records`)
 - `type` enum `export_type` (`text_only` / `complete_media` / `safe_complete`)
 - `status` enum `export_status` (`pending` / `processing` / `ready` / `failed`)
 - `progress_percent` Integer default `0`
@@ -220,8 +228,8 @@ File (immagine/video) associato a un annuncio.
 - `manifest_json` JSONB nullable, `object_key` Text nullable, `error_message` Text nullable
 - `expires_at` timestamptz nullable — calcolata a `requested_at +
   EXPORT_RETENTION_DAYS` da `app/api/v1/exports.py`, usata dal task di
-  retention (§ 4) per rimuovere l'oggetto MinIO scaduto **senza cancellare
-  la riga** (storico esportazioni preservato per audit)
+  retention (§ 5) per rimuovere oggetto MinIO e job scaduti; l'evento di audit
+  resta separato.
 - **Composito** `(status, requested_at)`, **index**
 
 ### `audit_log`
@@ -271,24 +279,24 @@ non ha un campo geografico strutturato oggi (vedi § 2).
 
 ## 5. Retention policy
 
-Nessuna scadenza automatica per dato "vivo" (`records`/`advertisements`/
-`media`): la loro retention definitiva resta sospesa a una validazione
-legale/GDPR (vedi `docs/SICUREZZA.md`). Per i dati accessori (log, export
-scaduti), un task periodico Celery Beat applica default configurabili via
-env, non vincolanti:
+Un task periodico Celery Beat applica policy configurabili via ambiente. Il
+valore `0` disabilita la cancellazione della categoria; in produzione i valori
+vanno confermati in base alla base giuridica e alle esigenze del titolare.
 
 | Dato | Variabile | Default | Azione |
 |---|---|---|---|
+| Annunci/record orfani | `ADVERTISEMENT_RETENTION_DAYS` | 365 giorni | Annunci non visti dopo il cutoff eliminati; il record senza occorrenze viene eliminato |
+| Media | `MEDIA_RETENTION_DAYS` | 180 giorni | Oggetti MinIO e righe media eliminati |
+| Run/errori di scraping | `TECHNICAL_LOG_RETENTION_DAYS` | 90 giorni | Run conclusi eliminati in cascata con errori e tentativi proxy |
 | `audit_log` | `AUDIT_LOG_RETENTION_DAYS` | 365 giorni | Riga cancellata |
-| `scrape_errors` | `SCRAPE_ERROR_RETENTION_DAYS` | 90 giorni | Riga cancellata |
-| `export_jobs` (pacchetto) | `EXPORT_RETENTION_DAYS` | 7 giorni | Oggetto MinIO rimosso, `object_key` azzerato; riga mantenuta |
+| Notifiche | `NOTIFICATION_RETENTION_DAYS` | 90 giorni | Evento e letture collegate eliminati |
+| `export_jobs` (pacchetto) | `EXPORT_RETENTION_DAYS` | 7 giorni | Oggetto MinIO e job eliminati; audit separato preservato |
 
 Implementato in `backend/app/workers/tasks_maintenance.py`
 (`cleanup_expired_data`), schedulato ogni notte alle 3:00 UTC via
 `celery_app.conf.beat_schedule` (`app/workers/celery_app.py`), eseguito dal
-worker `worker-scraper` (coda aggiuntiva `maintenance`, vedi
-`docker-compose.yml` — nessun servizio Celery dedicato, il volume di
-lavoro non lo giustifica).
+worker `worker-scraper` sulla coda aggiuntiva `maintenance` (vedi
+`docker-compose.yml`). Ogni esecuzione lavora in batch limitati.
 
 Test manuale: `docker compose exec worker-scraper celery -A
 app.workers.celery_app call app.workers.tasks_maintenance.cleanup_expired_data`.
@@ -309,12 +317,9 @@ un backup off-site/disaster-recovery):
   volume dedicato `minio-backups`. `BACKUP_RETENTION_DAYS` non si applica
   qui (nessuno snapshot da ruotare): la variabile resta letta per
   coerenza e per un'eventuale futura evoluzione verso snapshot periodici.
-  Script: `infra/backup/backup-minio.sh`. Verificato dal vivo: finché il
-  bucket `lavoro-esterno-media` non esiste (nessun media è mai stato
-  caricato, l'upload reale su MinIO è un TODO aperto in § "Storage /
-  media" di `PROGETTO.md`), lo script logga un avviso e ritenta al ciclo
-  successivo invece di fallire il container — comportamento corretto,
-  nessuna azione richiesta finché quel TODO non è chiuso.
+  Script: `infra/backup/backup-minio.sh`. Su un'installazione nuova lo script
+  tollera l'eventuale assenza iniziale del bucket, logga un avviso e ritenta
+  al ciclo successivo; appena il bucket esiste ne mantiene la replica.
 
 Quando si sceglie l'hosting definitivo, adattare entrambi gli script per
 spedire una copia anche a uno storage remoto S3-compatible (i comandi
@@ -324,11 +329,10 @@ spedire una copia anche a uno storage remoto S3-compatible (i comandi
 
 `advertisements` e `scrape_errors` sono le tabelle a più alto volume
 atteso nel tempo (una riga per annuncio scrapato/per errore di scraping).
-Oggi il volume reale è **zero** (nessuno scraper attivo, vedi
-`PROGETTO.md` § 4): implementare il partitioning nativo Postgres ora
-sarebbe prematuro e aggiungerebbe complessità (query planner, vincoli
-unique/FK cross-partizione, manutenzione delle partizioni) senza alcun
-beneficio misurabile.
+Il partitioning nativo Postgres non è ancora implementato: va introdotto in
+base alla crescita misurata, non alla sola stima. Anticiparlo aggiungerebbe
+complessità (query planner, vincoli unique/FK cross-partizione, manutenzione
+delle partizioni) senza un beneficio dimostrato dal carico corrente.
 
 Raccomandazione: rivalutare quando una delle due tabelle supera
 indicativamente **qualche milione di righe** o **decine di GB**, con

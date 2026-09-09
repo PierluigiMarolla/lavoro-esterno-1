@@ -32,9 +32,7 @@ class Source(UUIDPKMixin, TimestampMixin, Base):
     priority: Mapped[str] = mapped_column(SourcePriority, default="medium", nullable=False)
     status: Mapped[str] = mapped_column(SourceStatus, default="healthy", nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    automatic_scraping_enabled: Mapped[bool] = mapped_column(
-        Boolean, default=False, nullable=False
-    )
+    automatic_scraping_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     scrape_interval_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     next_scrape_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
