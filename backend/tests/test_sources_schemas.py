@@ -87,14 +87,12 @@ def test_scrape_config_accepts_stealth_options() -> None:
         hide_canvas=True,
         real_chrome=True,
         block_ads=True,
-        proxy="http://proxy.example:8080",
         wait_selector=".loaded",
         wait_ms=500,
     )
 
     assert config.fetch_mode == "stealth"
     assert config.solve_cloudflare is True
-    assert config.proxy == "http://proxy.example:8080"
     assert config.wait_selector == ".loaded"
     assert config.wait_ms == 500
 
@@ -109,13 +107,13 @@ def test_scrape_config_rejects_invalid_fetch_mode() -> None:
         )
 
 
-def test_scrape_config_rejects_invalid_proxy() -> None:
+def test_scrape_config_rejects_legacy_inline_proxy() -> None:
     with pytest.raises(ValidationError):
         ScrapeConfigInput(
             start_urls=["https://example.com/listing"],
             ad_link_selector=".ad",
             fields=_VALID_FIELDS,
-            proxy="not-a-proxy-url",
+            proxy="http://proxy.example:8080",
         )
 
 

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from prometheus_fastapi_instrumentator import Instrumentator
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1.router import api_router
 from app.config import settings
 from app.db import get_db
+from app.i18n.messages import validation_message
 from app.services import observability_metrics
 
 logger = logging.getLogger(__name__)
@@ -46,6 +48,24 @@ instrumentator = Instrumentator(
 ).instrument(app, metric_namespace="lavoro_esterno")
 
 app.include_router(api_router, prefix="/api/v1")
+
+
+@app.exception_handler(RequestValidationError)
+async def italian_validation_error(
+    _request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    """Mantiene il contratto FastAPI traducendo soltanto il testo leggibile."""
+
+    details = []
+    for error in exc.errors():
+        translated = dict(error)
+        translated["msg"] = validation_message(str(error.get("type", "")))
+        # L'input può contenere segreti o dati personali: non deve essere
+        # riflesso nella risposta di errore.
+        translated.pop("input", None)
+        translated.pop("ctx", None)
+        details.append(translated)
+    return JSONResponse(status_code=422, content={"detail": details})
 
 
 @app.get("/api/v1/healthz", tags=["health"])

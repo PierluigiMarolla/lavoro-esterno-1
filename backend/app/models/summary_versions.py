@@ -21,6 +21,9 @@ class SummaryVersion(UUIDPKMixin, Base):
         ForeignKey("records.id", ondelete="CASCADE"), nullable=False, index=True
     )
     version: Mapped[int] = mapped_column(Integer, nullable=False)
+    record_content_revision: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
 
     # Struttura attesa (vedi app/services/summary_generator.py e
     # app/schemas/records.py per lo schema Pydantic corrispondente):

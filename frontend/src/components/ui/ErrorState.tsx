@@ -28,7 +28,7 @@ export default function ErrorState({
           onClick={onRetry}
           className="mt-2 px-3 py-1.5 border border-border rounded text-label-sm text-on-surface hover:bg-surface-container-low transition-colors"
         >
-          Retry
+          Riprova
         </button>
       )}
     </div>

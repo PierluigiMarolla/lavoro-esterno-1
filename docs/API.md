@@ -70,8 +70,8 @@ revoca/blacklist dei refresh token, ancora da implementare.
 |---|---|---|
 | GET | `/api/v1/records/search` | Ricerca paginata di record con filtri combinabili (`phone`, `source`, `status`, `date_from`, `date_to`, `page`, `page_size`). Il filtro `phone` cerca per hash esatto solo se il valore digitato sembra un numero completo (vedi `app/services/record_search.py`: non esiste ricerca a prefisso su un dato cifrato/hashato). |
 | POST | `/api/v1/records/search` | Legacy: lookup esatto di un record dato un numero di telefono completo (hash di lookup). Non usato dal frontend attuale, mantenuto per compatibilità. |
-| GET | `/api/v1/records/{record_id}` | Overview di un record per la UI: titolo/descrizione dell'annuncio canonico, confidence, conteggio fonti/occorrenze, status. |
-| GET | `/api/v1/records/{record_id}/occurrences` | Tutti gli annunci (`advertisement`) collegati al record, con flag `isCanonical`. |
+| GET | `/api/v1/records/{record_id}` | Overview di un record per la UI: titolo/descrizione, `tags` aggregati e `customFieldGroups` di tutte le occorrenze con provenienza. `customFields` conserva lo snapshot canonico per compatibilita. |
+| GET | `/api/v1/records/{record_id}/occurrences` | Tutti gli annunci (`advertisement`) collegati al record, con flag `isCanonical` e i rispettivi `customFields`. |
 | GET | `/api/v1/records/{record_id}/media` | Media associati agli annunci del record, con classificazione (media non ancora classificato è trattato come "explicit" per default fail-safe). |
 | GET | `/api/v1/records/{record_id}/history` | Storico unificato: unione di `canonical_history`, `media_classification_history` e `audit_log` filtrati per il record, ordinati per data. |
 | GET | `/api/v1/records/{record_id}/ai-summary` | Ultima versione del riepilogo AI (`summary_versions`); risponde `204` se non è mai stato generato. |
@@ -83,18 +83,19 @@ revoca/blacklist dei refresh token, ancora da implementare.
 
 | Metodo | Path | Scopo |
 |---|---|---|
-| GET | `/api/v1/sources` | Elenco delle fonti configurate: `code` (slug), `status`, `priority`, `lastRunAt`, `itemsLast24h`, `errorRate`, `consecutiveFailures`, `hasScrapeConfig` calcolati/letti da `scrape_runs`/`Source` (query N+1 accettata per il numero di fonti atteso, vedi commento in `app/api/v1/sources.py`); `country` è un placeholder fisso (`"N/D"`), nessuna colonna dedicata nel modello. |
+| GET | `/api/v1/sources` | Elenco e stato delle fonti, incluse metriche recenti e schedulazione (`automaticScrapingEnabled`, intervallo, revisione, ultima/prossima esecuzione e stato `waiting/pending/running/paused/disabled`). |
 | GET | `/api/v1/sources/summary` | Conteggio fonti per stato (`total`/`active`/`degraded`/`offline`). |
 | GET | `/api/v1/sources/{source_id}` | Dettaglio di una fonte, incluso `scrapeConfig` completo (assente da `GET /sources`, che espone solo il booleano `hasScrapeConfig`) — usato per precompilare il form "Edit configuration". |
 | POST | `/api/v1/sources` | Crea una fonte (solo Admin). Accetta `scrapeConfig` e `watermarkRemoval`; quest'ultimo richiede riferimento autorizzativo e almeno una regione normalizzata se abilitato. |
 | PATCH | `/api/v1/sources/{source_id}` | Modifica `name`/`baseUrl`/`priority`/`scrapeConfig`/`watermarkRemoval` (solo Admin). Non permette di cambiare `slug`. |
 | DELETE | `/api/v1/sources/{source_id}` | Rimuove una fonte (solo Admin). 409 se esistono `advertisement` collegati (storico preservato). |
 | POST | `/api/v1/sources/{source_id}/check-robots` | Verifica live il `robots.txt` pubblico della fonte usando lo stesso User-Agent configurato per lo scan — nessun altro contenuto scaricato. Nessuna restrizione di ruolo oltre l'autenticazione. |
-| POST | `/api/v1/sources/{source_id}/test-config` | Prova `scrapeConfig` su UN solo annuncio reale (non salvato su DB): utile per verificare i selettori prima di un run reale. Richiede Admin/Operator (esegue richieste HTTP reali verso la fonte). |
-| GET | `/api/v1/sources/{source_id}/runs` | Storico dei run di scraping (`scrape_runs`) per la fonte, con gli errori di ciascun run annidati (`scrape_errors`) — drill-down per la pagina Sources. Sola lettura, nessuna restrizione di ruolo. |
+| POST | `/api/v1/sources/{source_id}/test-config` | Prova una bozza opzionale `{"scrapeConfig": ...}` senza salvarla; senza body usa la configurazione persistita. Restituisce campione, pagine visitate, modalità e motivo di arresto. Richiede Admin/Operator. |
+| GET | `/api/v1/sources/{source_id}/runs` | Storico dei run con origine `manual`/`scheduled`, accodamento, istante pianificato, errori e diagnostica di paginazione/proxy. |
+| PATCH | `/api/v1/sources/{source_id}/schedule` | Configura il fixed-delay con `enabled`, `intervalValue`, `intervalUnit` e `revision`. Solo Admin con 2FA; intervallo 15 minuti–30 giorni. |
 | POST | `/api/v1/sources/{source_id}/pause` | Mette in pausa una fonte (`enabled=false`, status di salute invariato). Riservato ad Admin/Operator. |
 | POST | `/api/v1/sources/{source_id}/disable` | Disabilita definitivamente una fonte (`enabled=false`, `status="offline"`). Riservato ad Admin/Operator. |
-| POST | `/api/v1/sources/{source_id}/scan` | Accoda un task di scraping on-demand per la fonte (Celery). Se `scrapeConfig` è impostato, esegue DAVVERO lo scraping (motore generico); altrimenti nessuna azione reale (fonte registrata come classe Python stub, vedi `app/scrapers/registry.py`). |
+| POST | `/api/v1/sources/{source_id}/scan` | Crea un run persistente `pending` e risponde `202`. Restituisce `409` se la fonte ha già un run pending/running; anche il completamento manuale riavvia il timer automatico. |
 
 ### Motore di scraping generico (`scrapeConfig`)
 
@@ -117,12 +118,13 @@ generico" per il razionale completo. Struttura di `scrapeConfig` (sia in
   "hideCanvas": false,
   "realChrome": false,
   "blockAds": false,
-  "proxy": null,
   "waitSelector": null,
   "waitMs": null,
   "fields": {
     "phone": { "selector": ".ad-phone", "attribute": "text" },
     "title": { "selector": "h1.ad-title", "attribute": "text" },
+    "tags": { "selector": ".tags span", "attribute": "text", "multiple": true },
+    "city": { "selector": ".location", "attribute": "text" },
     "images": { "selector": ".gallery img", "attribute": "src", "multiple": true }
   }
 }
@@ -138,6 +140,24 @@ anti-bot di Scrapling configurate sulla fonte. `renderJs` resta accettato
 per compatibilità e, se `fetchMode` manca, equivale a `"dynamic"`. Il
 motore rispetta sempre `robots.txt`. `userAgent` è opzionale e, se assente,
 usa il default `app/scrapers/base.py:Scraper.user_agent`.
+
+`nextPageSelector` deve identificare esattamente un solo controllo Next. Se
+l'elemento ha `href`, il motore segue il link; se non lo ha, i mode `dynamic`
+e `stealth` eseguono un click DOM controllato e attendono che URL o annunci
+cambino. Il mode HTTP segnala invece che serve un browser. URL e contenuti già
+visitati sono bloccati, i link annuncio sono deduplicati e la navigazione di
+paginazione è limitata alla stessa origine.
+
+I nomi diversi dai campi standard `title`, `description`, `phone`, `images`
+e `videos` sono campi custom. Lo scan ne salva lo snapshot in
+`advertisements.custom_fields`, inclusi valori mancanti (`null`) e liste.
+L'Overview espone in `customFieldGroups` ogni campo valorizzato di tutte le
+occorrenze, con `sourceId`, `sourceName`, `sourceCode`, `advertisementId` e
+`isCanonical`; chiavi con casing diverso restano distinte e valori discordanti
+non si sovrascrivono. `tags` e la relativa lista di badge sono aggregati da
+tutte le fonti. Il dettaglio Occurrences continua a esporre lo snapshot della
+singola fonte. I pacchetti `export-v2` includono lo stesso oggetto in
+`advertisements.json` e come JSON deterministico nel CSV.
 
 Una fonte può essere creata senza `scrapeConfig` (`POST /sources` con solo
 `name`/`slug`/`baseUrl`) e configurata in un secondo momento via `PATCH
@@ -218,6 +238,19 @@ devono essere presentati dalla UI come sensibili.
 - Tutte le risposte di errore seguono lo schema standard di FastAPI
   (`detail`), consultabile nello schema OpenAPI su `/docs`.
 
+## Proxy rotator
+
+Il proxy non fa parte di `scrapeConfig`: `SourceCreate`, `SourceUpdate` e il
+test della bozza accettano `proxyPoolId`. Senza pool la fonte usa la connessione
+diretta; con un pool opera fail-closed.
+
+Gli endpoint Admin sono `GET/POST /admin/proxy-pools`, `PATCH/DELETE
+/admin/proxy-pools/{id}`, `GET/POST /admin/proxies`, `PATCH/DELETE
+/admin/proxies/{id}` e `POST /admin/proxies/{id}/test`. Scritture e test
+richiedono 2FA. Le risposte indicano solo `credentialConfigured`, mai le
+credenziali. Lo storico run aggiunge `proxyAttemptsCount`,
+`proxyRotationsCount` e `proxyStopReason`.
+
 ## Export e privacy (settembre 2026)
 
 - Gli export richiedono uno scope esplicito. `recordIds` e `filters` sono
@@ -235,3 +268,15 @@ devono essere presentati dalla UI come sensibili.
   Admin ha il permesso in modo intrinseco; per Operator/Viewer è revocabile.
 - Le risposte record espongono `phoneVisibility` (`clear` o `masked`) e
   hanno `Cache-Control: no-store`.
+## Aggiornamento continuo delle occorrenze
+
+Ogni scan confronta l'occorrenza identificata da record, fonte e URL. I run
+espongono `itemsNew`, `itemsUpdated` e `itemsUnchanged`. Una risposta
+occurrence include `revision`, `lastChangedAt` e `hasUpdates`.
+
+`GET /records/{recordId}/occurrences/{advertisementId}/versions` restituisce
+gli snapshot immutabili in ordine di revisione decrescente, con soli nomi dei
+campi modificati, snapshot corrente e riferimento opzionale al run.
+
+I riepiloghi AI espongono `recordContentRevision` e `isStale`; la
+rigenerazione resta esplicita e asincrona.

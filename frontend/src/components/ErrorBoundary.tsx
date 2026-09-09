@@ -36,7 +36,7 @@ export default class ErrorBoundary extends Component<Props, State> {
             error
           </span>
           <div>
-            <h1 className="text-headline-sm text-on-surface">Something went wrong</h1>
+            <h1 className="text-headline-sm text-on-surface">Qualcosa è andato storto</h1>
             <p className="text-body-md text-on-surface-variant mt-1">
               An unexpected error occurred while rendering this page. Reloading usually fixes it.
             </p>

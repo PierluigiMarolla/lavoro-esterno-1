@@ -76,6 +76,9 @@ def test_provider_input_omits_phone_and_urls_and_hash_is_deterministic():
     assert "[PHONE REDACTED]" in encoded
     assert local_mapping == {"source-1": advertisement.source_url}
     assert summary_input_hash(payload) == summary_input_hash(json.loads(encoded))
+    assert summary_input_hash(payload, record_content_revision=1) != summary_input_hash(
+        payload, record_content_revision=2
+    )
 
 
 def test_ai_is_disabled_without_explicit_limits():

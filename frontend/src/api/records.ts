@@ -9,6 +9,7 @@ import type {
   RecordSearchFilters,
   RecordSearchResponse,
   SummaryGenerationJob,
+  AdvertisementVersion,
 } from "@/types";
 
 function toQueryString(filters: RecordSearchFilters): string {
@@ -45,6 +46,15 @@ export function fetchRecordHistory(id: string): Promise<RecordHistoryEvent[]> {
 
 export async function fetchRecordAiSummary(id: string): Promise<RecordAiSummary | null> {
   return (await apiRequest<RecordAiSummary | undefined>(`/records/${id}/ai-summary`)) ?? null;
+}
+
+export function fetchOccurrenceVersions(
+  recordId: string,
+  advertisementId: string,
+): Promise<AdvertisementVersion[]> {
+  return apiRequest<AdvertisementVersion[]>(
+    `/records/${recordId}/occurrences/${advertisementId}/versions`,
+  );
 }
 
 // Full version history, most recent first — lets the UI offer a version

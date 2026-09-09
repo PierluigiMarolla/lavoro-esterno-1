@@ -171,6 +171,78 @@ async def test_discover_stops_at_max_pages(open_site_url: str) -> None:
 
     # Solo la prima pagina: i 2 annunci lì elencati, non il terzo (pagina 2).
     assert len(urls) == 2
+    assert scraper.discovery_diagnostics.pages_visited == 1
+    assert scraper.discovery_diagnostics.stop_reason == "max_pages"
+    assert scraper.discovery_diagnostics.warnings
+
+
+async def test_discover_rejects_ambiguous_next_selector(open_site_url: str) -> None:
+    scraper = _scraper(open_site_url, next_page_selector="a", max_pages=2)
+    urls = await scraper.discover()
+
+    assert len(urls) == 2
+    assert scraper.discovery_diagnostics.stop_reason == "ambiguous_next_control"
+    assert scraper.discovery_diagnostics.errors == [
+        "Il selettore di paginazione deve identificare esattamente un controllo Next."
+    ]
+
+
+async def test_discover_stops_when_next_href_repeats_page(open_site_url: str) -> None:
+    scraper = _scraper(open_site_url, next_page_selector="a.self", max_pages=3)
+    pages = {
+        f"{open_site_url}/listing.html": Selector(
+            '<a class="ad-link" href="/ad1.html">Ad</a>'
+            '<a class="self" href="/listing.html">Next</a>'
+        )
+    }
+
+    async def fake_fetch(url: str):
+        return pages[url]
+
+    scraper._fetch_page = fake_fetch  # type: ignore[method-assign]
+    urls = await scraper.discover()
+
+    assert len(urls) == 1
+    assert scraper.discovery_diagnostics.pages_visited == 1
+    assert scraper.discovery_diagnostics.stop_reason == "repeated_page"
+
+
+async def test_discover_blocks_cross_origin_pagination(open_site_url: str) -> None:
+    scraper = _scraper(open_site_url, next_page_selector="a.external", max_pages=3)
+    page = Selector(
+        '<a class="ad-link" href="/ad1.html">Ad</a>'
+        '<a class="external" href="https://other.example/page/2">Next</a>'
+    )
+
+    async def fake_fetch(_url: str):
+        return page
+
+    scraper._fetch_page = fake_fetch  # type: ignore[method-assign]
+    urls = await scraper.discover()
+
+    assert len(urls) == 1
+    assert scraper.discovery_diagnostics.stop_reason == "cross_origin_blocked"
+    assert scraper.discovery_diagnostics.errors
+
+
+async def test_discover_deduplicates_ads_across_multiple_start_urls(open_site_url: str) -> None:
+    second_start = f"{open_site_url}/other-listing.html"
+    scraper = _scraper(
+        open_site_url,
+        start_urls=[f"{open_site_url}/listing.html", second_start],
+        next_page_selector=None,
+    )
+    page = Selector('<a class="ad-link" href="/same-ad.html">Ad</a>')
+
+    async def fake_fetch(_url: str):
+        return page
+
+    scraper._fetch_page = fake_fetch  # type: ignore[method-assign]
+    urls = await scraper.discover()
+
+    assert urls == [f"{open_site_url}/same-ad.html"]
+    assert scraper.discovery_diagnostics.pages_visited == 2
+    assert scraper.discovery_diagnostics.unique_ads_found == 1
 
 
 async def test_discover_stops_at_max_ads_per_run(open_site_url: str) -> None:

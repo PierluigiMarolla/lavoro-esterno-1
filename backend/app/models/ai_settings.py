@@ -17,7 +17,9 @@ class AISettings(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     active_provider: Mapped[str] = mapped_column(String(50), default="ollama", nullable=False)
-    prompt_version: Mapped[str] = mapped_column(String(100), default="summary-v1", nullable=False)
+    prompt_version: Mapped[str] = mapped_column(
+        String(100), default="summary-v2-it", nullable=False
+    )
     user_daily_request_limit: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
     provider_requests_per_minute: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
     global_daily_token_budget: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)

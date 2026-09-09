@@ -1,10 +1,10 @@
 [
   {
-    "name": "two redacted advertisements",
+    "name": "due annunci redatti",
     "input": {
       "advertisements": [
-        {"source_ref": "source-1", "title": "Example A", "description": "Redacted factual text."},
-        {"source_ref": "source-2", "title": "Example B", "description": "A second redacted occurrence."}
+        {"source_ref": "source-1", "title": "Esempio A", "description": "Testo fattuale redatto."},
+        {"source_ref": "source-2", "title": "Esempio B", "description": "Una seconda occorrenza redatta."}
       ],
       "forum_snippets": []
     },

@@ -5,6 +5,7 @@ import * as authApi from "@/api/auth";
 import Button from "@/components/ui/Button";
 import Icon from "@/components/ui/Icon";
 import { describeError } from "@/lib/errors";
+import { roleLabel, statusLabel } from "@/lib/labels";
 
 export default function AccountPage() {
   const { user, logout } = useAuth();
@@ -47,8 +48,8 @@ export default function AccountPage() {
         <dl className="grid sm:grid-cols-2 gap-4 text-body-md">
           <div><dt className="text-on-surface-variant">Nome</dt><dd>{user?.name}</dd></div>
           <div><dt className="text-on-surface-variant">Email</dt><dd>{user?.email}</dd></div>
-          <div><dt className="text-on-surface-variant">Ruolo</dt><dd className="capitalize">{user?.role}</dd></div>
-          <div><dt className="text-on-surface-variant">Stato</dt><dd className="capitalize">{user?.status}</dd></div>
+          <div><dt className="text-on-surface-variant">Ruolo</dt><dd>{roleLabel(user?.role)}</dd></div>
+          <div><dt className="text-on-surface-variant">Stato</dt><dd>{statusLabel(user?.status)}</dd></div>
         </dl>
       </section>
       {error && <div className="rounded border border-error/30 bg-error/10 p-3 text-error">{error}</div>}
@@ -71,7 +72,7 @@ export default function AccountPage() {
               <p className="text-success">2FA attiva</p>
               <label className="block text-sm">Codice TOTP corrente</label>
               <input required inputMode="numeric" pattern="\d{6}" maxLength={6} value={totp} onChange={(e) => setTotp(e.target.value.replace(/\D/g, "").slice(0, 6))} className="w-full rounded border border-border bg-surface p-2 font-mono" />
-              <Button type="submit" variant="secondary" disabled={busy || totp.length !== 6}>Rigenera backup code</Button>
+              <Button type="submit" variant="secondary" disabled={busy || totp.length !== 6}>Rigenera codici di recupero</Button>
             </form>
           )}
           {backupCodes.length > 0 && <div className="border border-warning rounded p-3"><p className="font-semibold mb-2">Salvali ora: non saranno mostrati di nuovo.</p><div className="grid grid-cols-2 font-mono gap-1">{backupCodes.map((code) => <span key={code}>{code}</span>)}</div></div>}

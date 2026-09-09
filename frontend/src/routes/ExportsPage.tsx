@@ -6,6 +6,7 @@ import Icon from "@/components/ui/Icon";
 import Badge, { type BadgeTone } from "@/components/ui/Badge";
 import { EmptyRow, ErrorRow, LoadingRow, Table, TBody, Td, Th, THead, Tr } from "@/components/ui/Table";
 import type { ExportFilters, ExportJob, ExportStatus, ExportType } from "@/types";
+import { formatDateTime } from "@/lib/format";
 
 const STATUS_TONE: Record<ExportStatus, BadgeTone> = {
   pending: "neutral",
@@ -15,20 +16,16 @@ const STATUS_TONE: Record<ExportStatus, BadgeTone> = {
 };
 
 const TYPE_LABEL: Record<ExportType, string> = {
-  text_only: "Text Only",
-  complete_media: "Complete (Media)",
-  safe_complete: "Safe Complete",
+  text_only: "Solo testo",
+  complete_media: "Completa (media)",
+  safe_complete: "Completa sicura",
 };
 
 const CARDS: { type: ExportType; icon: string; description: string }[] = [
-  { type: "text_only", icon: "description", description: "JSON and CSV, without media files." },
-  { type: "complete_media", icon: "perm_media", description: "Data plus display and thumbnail variants." },
-  { type: "safe_complete", icon: "filter_b_and_w", description: "Only ready, definitively safe media." },
+  { type: "text_only", icon: "description", description: "JSON e CSV, senza file media." },
+  { type: "complete_media", icon: "perm_media", description: "Dati, varianti visualizzabili e anteprime." },
+  { type: "safe_complete", icon: "filter_b_and_w", description: "Solo media pronti e definitivamente sicuri." },
 ];
-
-function formatDateTime(iso: string | null): string {
-  return iso ? new Date(iso).toLocaleString() : "—";
-}
 
 function formatBytes(value: number | null): string {
   if (value === null) return "—";
@@ -69,10 +66,10 @@ export default function ExportsPage() {
   const filters = recordIds ? undefined : inboundFilters ?? localFilters;
   const hasScope = Boolean(recordIds?.length || filters);
   const scopeLabel = recordIds?.length
-    ? `${recordIds.length} selected record${recordIds.length === 1 ? "" : "s"}`
+    ? `${recordIds.length} ${recordIds.length === 1 ? "record selezionato" : "record selezionati"}`
     : filters
-      ? "all records matching the explicit filters"
-      : "no scope selected";
+      ? "tutti i record corrispondenti ai filtri espliciti"
+      : "nessun ambito selezionato";
 
   async function handleDownload(job: ExportJob) {
     const { url } = await exportsApi.getExportDownloadUrl(job.id);
@@ -82,26 +79,26 @@ export default function ExportsPage() {
   return (
     <div className="space-y-8">
       <div>
-        <h2 className="text-headline-md text-on-surface mb-1">Export Management</h2>
-        <p className="text-body-md text-on-surface-variant">Exports require selected records or explicit filters. Limits: 1,000 records and 2 GB.</p>
+        <h2 className="text-headline-md text-on-surface mb-1">Gestione esportazioni</h2>
+        <p className="text-body-md text-on-surface-variant">Le esportazioni richiedono record selezionati o filtri espliciti. Limiti: 1.000 record e 2 GB.</p>
       </div>
 
       <section className="bg-surface-container-lowest border border-border rounded-lg p-5 space-y-4">
         <div className="flex items-center justify-between">
-          <h3 className="text-headline-sm">Export scope</h3>
+          <h3 className="text-headline-sm">Ambito dell’esportazione</h3>
           <Badge tone={hasScope ? "success" : "warning"}>{scopeLabel}</Badge>
         </div>
         {!inboundIds.length && !inboundFilters && (
           <div className="grid md:grid-cols-2 gap-4">
             <div>
-              <label className="text-label-sm block mb-1">Record IDs (comma or line separated)</label>
+              <label className="text-label-sm block mb-1">ID record (separati da virgola o su righe distinte)</label>
               <textarea value={manualIds} onChange={(event) => setManualIds(event.target.value)} rows={3} className="w-full rounded border border-border bg-surface p-2 font-mono text-sm" />
             </div>
             <div className="grid gap-2">
-              <input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="Exact phone filter" disabled={typedIds.length > 0} className="rounded border border-border bg-surface p-2" />
-              <input value={source} onChange={(event) => setSource(event.target.value)} placeholder="Source slug or name" disabled={typedIds.length > 0} className="rounded border border-border bg-surface p-2" />
+              <input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="Filtro telefono esatto" disabled={typedIds.length > 0} className="rounded border border-border bg-surface p-2" />
+              <input value={source} onChange={(event) => setSource(event.target.value)} placeholder="Slug o nome della fonte" disabled={typedIds.length > 0} className="rounded border border-border bg-surface p-2" />
               <select value={status ?? ""} onChange={(event) => setStatus((event.target.value || undefined) as ExportFilters["status"])} disabled={typedIds.length > 0} className="rounded border border-border bg-surface p-2">
-                <option value="">Any status</option><option value="verified">Verified</option><option value="unverified">Unverified</option><option value="flagged">Flagged</option>
+                <option value="">Qualsiasi stato</option><option value="verified">Verificato</option><option value="unverified">Non verificato</option><option value="flagged">Segnalato</option>
               </select>
             </div>
           </div>
@@ -109,7 +106,7 @@ export default function ExportsPage() {
       </section>
 
       <section>
-        <h3 className="text-headline-sm text-on-surface mb-4">New Export Job</h3>
+        <h3 className="text-headline-sm text-on-surface mb-4">Nuova esportazione</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-gutter">
           {CARDS.map((card) => (
             <div key={card.type} data-testid={`export-card-${card.type}`} className="bg-surface-container-lowest rounded-lg border border-border p-6">
@@ -121,30 +118,30 @@ export default function ExportsPage() {
                 disabled={!hasScope || createJob.isPending}
                 className="bg-primary text-on-primary rounded px-4 py-2 text-label-sm w-full disabled:opacity-40"
               >
-                {createJob.isPending ? "Creating…" : "Create Export"}
+                {createJob.isPending ? "Creazione…" : "Crea esportazione"}
               </button>
             </div>
           ))}
         </div>
-        {createJob.isError && <p className="text-error text-body-md mt-3">{createJob.error instanceof Error ? createJob.error.message : "Export request failed."}</p>}
+        {createJob.isError && <p className="text-error text-body-md mt-3">{createJob.error instanceof Error ? createJob.error.message : "Richiesta di esportazione non riuscita."}</p>}
       </section>
 
       <section>
-        <h3 className="text-headline-sm text-on-surface mb-4">Recent Jobs</h3>
+        <h3 className="text-headline-sm text-on-surface mb-4">Esportazioni recenti</h3>
         <div className="bg-surface-container-lowest border border-border rounded-lg overflow-hidden">
-          <Table><THead><Tr><Th>Type</Th><Th>Requested</Th><Th>Records</Th><Th>Size</Th><Th>Phone</Th><Th>Status</Th><Th className="text-right">Actions</Th></Tr></THead>
+          <Table><THead><Tr><Th>Tipo</Th><Th>Richiesta</Th><Th>Record</Th><Th>Dimensione</Th><Th>Telefono</Th><Th>Stato</Th><Th className="text-right">Azioni</Th></Tr></THead>
             <TBody>
               {jobs.isLoading && <LoadingRow colSpan={7} />}
               {jobs.isError && <ErrorRow colSpan={7} error={jobs.error} onRetry={() => jobs.refetch()} />}
-              {jobs.data?.length === 0 && <EmptyRow colSpan={7} message="No export jobs yet." />}
+              {jobs.data?.length === 0 && <EmptyRow colSpan={7} message="Nessuna esportazione presente." />}
               {jobs.data?.map((job) => (
                 <Tr key={job.id}>
                   <Td>{TYPE_LABEL[job.type]}</Td><Td>{formatDateTime(job.requestedAt)}<div className="text-xs text-on-surface-variant">{job.requestedBy}</div></Td>
                   <Td>{job.recordCount}</Td><Td>{formatBytes(job.archiveSizeBytes ?? job.estimatedUncompressedBytes)}</Td><Td>{job.phoneVisibility}</Td>
-                  <Td><Badge tone={STATUS_TONE[job.status]}>{job.status === "processing" ? `Processing ${job.progressPct}%` : job.status}</Badge>{job.errorMessage && <div className="text-xs text-error mt-1 max-w-xs">{job.errorMessage}</div>}</Td>
+                  <Td><Badge tone={STATUS_TONE[job.status]}>{job.status === "processing" ? `Elaborazione ${job.progressPct}%` : job.status === "pending" ? "In attesa" : job.status === "ready" ? "Pronta" : "Non riuscita"}</Badge>{job.errorMessage && <div className="text-xs text-error mt-1 max-w-xs">{job.errorMessage}</div>}</Td>
                   <Td className="text-right">
-                    {job.status === "ready" && <button onClick={() => handleDownload(job)} className="text-primary">Download</button>}
-                    {job.status === "failed" && <button onClick={() => retryJob.mutate(job.id)} className="text-primary">Retry</button>}
+                    {job.status === "ready" && <button onClick={() => handleDownload(job)} className="text-primary">Scarica</button>}
+                    {job.status === "failed" && <button onClick={() => retryJob.mutate(job.id)} className="text-primary">Riprova</button>}
                   </Td>
                 </Tr>
               ))}

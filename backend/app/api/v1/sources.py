@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.db import get_db
 from app.models.advertisement import Advertisement
+from app.models.proxies import ProxyEndpoint, ProxyPool, ProxyPoolMember
 from app.models.scrape_errors import ScrapeError
 from app.models.scrape_runs import ScrapeRun
 from app.models.sources import Source
@@ -26,12 +29,16 @@ from app.schemas.sources import (
     SourceDetailRead,
     SourceDuplicate,
     SourceRead,
+    SourceScheduleUpdate,
     SourcesSummaryRead,
     SourceUpdate,
+    TestConfigInput,
     TestConfigResult,
 )
-from app.security.deps import get_current_user, require_role
+from app.security.deps import get_current_user, require_admin_with_2fa, require_role
 from app.services.audit import log_action
+from app.services.proxy_credentials import decrypt_proxy_credentials
+from app.services.proxy_rotation import ProxyRuntimeConfig, proxy_host_is_allowed
 from app.services.source_health import summarize_sources_by_status
 
 # Numero massimo di run restituiti da GET /sources/{id}/runs: un drill-down
@@ -51,6 +58,91 @@ _CONSECUTIVE_FAILURES_LOOKBACK = 10
 CONSECUTIVE_FAILURES_ALERT_THRESHOLD = 3
 
 router = APIRouter()
+
+
+async def _proxy_pool_or_422(db: AsyncSession, pool_id: uuid.UUID | None) -> ProxyPool | None:
+    if pool_id is None:
+        return None
+    pool = await db.get(ProxyPool, pool_id)
+    if pool is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Pool proxy non trovato.")
+    return pool
+
+
+async def _proxy_pool_status(db: AsyncSession, source: Source) -> str:
+    if source.proxy_pool_id is None:
+        return "direct"
+    pool = await db.get(ProxyPool, source.proxy_pool_id)
+    if pool is None or not pool.enabled:
+        return "disabled"
+    now = datetime.now(UTC)
+    healthy = (
+        await db.execute(
+            select(ProxyEndpoint.id)
+            .join(ProxyPoolMember, ProxyPoolMember.proxy_id == ProxyEndpoint.id)
+            .where(
+                ProxyPoolMember.pool_id == pool.id,
+                ProxyEndpoint.enabled.is_(True),
+                or_(ProxyEndpoint.cooldown_until.is_(None), ProxyEndpoint.cooldown_until <= now),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return "healthy" if healthy else "unavailable"
+
+
+async def _proxy_candidates_for_test(
+    db: AsyncSession, pool_id: uuid.UUID | None
+) -> list[ProxyRuntimeConfig]:
+    if pool_id is None:
+        return []
+    pool = await _proxy_pool_or_422(db, pool_id)
+    if pool is None or not pool.enabled:
+        raise HTTPException(422, "Il pool proxy e disabilitato.")
+    now = datetime.now(UTC)
+    rows = (
+        (
+            await db.execute(
+                select(ProxyEndpoint)
+                .join(ProxyPoolMember, ProxyPoolMember.proxy_id == ProxyEndpoint.id)
+                .where(
+                    ProxyPoolMember.pool_id == pool_id,
+                    ProxyEndpoint.enabled.is_(True),
+                    or_(
+                        ProxyEndpoint.cooldown_until.is_(None), ProxyEndpoint.cooldown_until <= now
+                    ),
+                )
+                .order_by(ProxyEndpoint.last_used_at.asc().nullsfirst(), ProxyEndpoint.id.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not rows:
+        raise HTTPException(503, "Nessun proxy sano disponibile; accesso diretto bloccato.")
+    result = []
+    for row in rows:
+        if not await asyncio.to_thread(proxy_host_is_allowed, row.host):
+            continue
+        try:
+            credentials = decrypt_proxy_credentials(row.credentials_encrypted)
+        except RuntimeError as exc:
+            raise HTTPException(503, "Credenziali proxy non disponibili.") from exc
+        result.append(
+            ProxyRuntimeConfig(
+                row.id,
+                row.scheme,
+                row.host,
+                row.port,
+                credentials[0] if credentials else None,
+                credentials[1] if credentials else None,
+            )
+        )
+        if len(result) >= settings.PROXY_MAX_ATTEMPTS:
+            break
+    if not result:
+        raise HTTPException(503, "Nessun proxy con destinazione consentita nel pool.")
+    return result
 
 
 def _source_user_agent(source: Source) -> str:
@@ -73,9 +165,9 @@ async def _compute_source_read(db: AsyncSession, source: Source, since: datetime
     e da `GET /sources/{id}` (una singola fonte, nessun N+1)."""
     last_run = (
         await db.execute(
-            select(ScrapeRun.started_at)
+            select(func.coalesce(ScrapeRun.started_at, ScrapeRun.queued_at))
             .where(ScrapeRun.source_id == source.id)
-            .order_by(ScrapeRun.started_at.desc())
+            .order_by(func.coalesce(ScrapeRun.started_at, ScrapeRun.queued_at).desc())
             .limit(1)
         )
     ).scalar_one_or_none()
@@ -83,7 +175,8 @@ async def _compute_source_read(db: AsyncSession, source: Source, since: datetime
     recent_runs = (
         await db.execute(
             select(ScrapeRun.items_found, ScrapeRun.errors_count).where(
-                ScrapeRun.source_id == source.id, ScrapeRun.started_at >= since
+                ScrapeRun.source_id == source.id,
+                func.coalesce(ScrapeRun.started_at, ScrapeRun.queued_at) >= since,
             )
         )
     ).all()
@@ -100,7 +193,7 @@ async def _compute_source_read(db: AsyncSession, source: Source, since: datetime
             await db.execute(
                 select(ScrapeRun.status)
                 .where(ScrapeRun.source_id == source.id)
-                .order_by(ScrapeRun.started_at.desc())
+                .order_by(func.coalesce(ScrapeRun.started_at, ScrapeRun.queued_at).desc())
                 .limit(_CONSECUTIVE_FAILURES_LOOKBACK)
             )
         )
@@ -112,6 +205,23 @@ async def _compute_source_read(db: AsyncSession, source: Source, since: datetime
         if run_status != "failed":
             break
         consecutive_failures += 1
+
+    active_status = (
+        await db.execute(
+            select(ScrapeRun.status)
+            .where(ScrapeRun.source_id == source.id, ScrapeRun.status.in_(("pending", "running")))
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    schedule_state = (
+        "disabled"
+        if not source.enabled
+        else active_status
+        if active_status in {"pending", "running"}
+        else "waiting"
+        if source.automatic_scraping_enabled and source.next_scrape_at is not None
+        else "paused"
+    )
 
     return SourceRead(
         id=source.id,
@@ -125,6 +235,16 @@ async def _compute_source_read(db: AsyncSession, source: Source, since: datetime
         error_rate=round(error_rate, 4),
         consecutive_failures=consecutive_failures,
         has_scrape_config=source.scrape_config is not None,
+        proxy_pool_id=source.proxy_pool_id,
+        proxy_pool_status=await _proxy_pool_status(db, source),
+        automatic_scraping_enabled=bool(source.automatic_scraping_enabled),
+        scrape_interval_minutes=source.scrape_interval_minutes,
+        next_scrape_at=source.next_scrape_at,
+        last_scheduled_at=source.last_scheduled_at,
+        last_completed_scrape_at=source.last_completed_scrape_at,
+        last_schedule_skip_reason=source.last_schedule_skip_reason,
+        schedule_revision=source.schedule_revision or 1,
+        automatic_scraping_state=schedule_state,
     )
 
 
@@ -177,6 +297,7 @@ async def create_source(
             detail=f"Una fonte con slug '{payload.slug}' esiste già.",
         )
 
+    await _proxy_pool_or_422(db, payload.proxy_pool_id)
     source = Source(
         name=payload.name,
         slug=payload.slug,
@@ -185,6 +306,7 @@ async def create_source(
         status="healthy",
         enabled=True,
         scrape_config=payload.scrape_config.model_dump() if payload.scrape_config else None,
+        proxy_pool_id=payload.proxy_pool_id,
         watermark_removal_enabled=payload.watermark_removal.enabled,
         watermark_authorization_reference=payload.watermark_removal.authorization_reference,
         watermark_regions=[region.model_dump() for region in payload.watermark_removal.regions],
@@ -247,6 +369,7 @@ async def duplicate_source(
         # Copie esplicite evitano che modifiche in-memory ai JSON mutabili
         # possano propagarsi tra originale e duplicato prima del flush.
         scrape_config=deepcopy(original.scrape_config),
+        proxy_pool_id=original.proxy_pool_id,
         watermark_removal_enabled=original.watermark_removal_enabled,
         watermark_authorization_reference=original.watermark_authorization_reference,
         watermark_regions=deepcopy(original.watermark_regions or []),
@@ -292,6 +415,22 @@ def _to_minimal_source_read(source: Source) -> SourceRead:
         error_rate=0.0,
         consecutive_failures=0,
         has_scrape_config=source.scrape_config is not None,
+        proxy_pool_id=source.proxy_pool_id,
+        proxy_pool_status="configured" if source.proxy_pool_id else "direct",
+        automatic_scraping_enabled=bool(source.automatic_scraping_enabled),
+        scrape_interval_minutes=source.scrape_interval_minutes,
+        next_scrape_at=source.next_scrape_at,
+        last_scheduled_at=source.last_scheduled_at,
+        last_completed_scrape_at=source.last_completed_scrape_at,
+        last_schedule_skip_reason=source.last_schedule_skip_reason,
+        schedule_revision=source.schedule_revision or 1,
+        automatic_scraping_state=(
+            "disabled"
+            if not source.enabled
+            else "waiting"
+            if source.automatic_scraping_enabled and source.next_scrape_at
+            else "paused"
+        ),
     )
 
 
@@ -329,14 +468,43 @@ async def update_source(
     esistente (solo Admin). Non permette di cambiare `slug`: è la chiave
     stabile usata per collegare la fonte al connettore
     (`app/scrapers/registry.py`) o, se configurata, al motore generico."""
-    source = await _get_source_or_404(db, source_id)
+    source = (
+        await db.execute(select(Source).where(Source.id == source_id).with_for_update())
+    ).scalar_one_or_none()
+    if source is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Fonte non trovata.")
     previous_priority = source.priority
 
-    updates = payload.model_dump(exclude_unset=True, exclude={"scrape_config", "watermark_removal"})
+    updates = payload.model_dump(
+        exclude_unset=True, exclude={"scrape_config", "watermark_removal", "proxy_pool_id"}
+    )
     for field_name, value in updates.items():
         setattr(source, field_name, value)
     if "scrape_config" in payload.model_fields_set:
         source.scrape_config = payload.scrape_config.model_dump() if payload.scrape_config else None
+        if source.automatic_scraping_enabled:
+            active_run = (
+                await db.execute(
+                    select(ScrapeRun.id).where(
+                        ScrapeRun.source_id == source.id,
+                        ScrapeRun.status.in_(("pending", "running")),
+                    )
+                )
+            ).scalar_one_or_none()
+            if active_run is not None:
+                source.next_scrape_at = None
+                source.last_schedule_skip_reason = "active_run"
+            elif source.scrape_config and source.enabled and source.scrape_interval_minutes:
+                source.next_scrape_at = datetime.now(UTC) + timedelta(
+                    minutes=source.scrape_interval_minutes
+                )
+                source.last_schedule_skip_reason = None
+            else:
+                source.next_scrape_at = None
+                source.last_schedule_skip_reason = "configuration_missing"
+    if "proxy_pool_id" in payload.model_fields_set:
+        await _proxy_pool_or_422(db, payload.proxy_pool_id)
+        source.proxy_pool_id = payload.proxy_pool_id
     if "watermark_removal" in payload.model_fields_set and payload.watermark_removal is not None:
         wm = payload.watermark_removal
         source.watermark_removal_enabled = wm.enabled
@@ -364,6 +532,7 @@ async def update_source(
         details={
             "watermark_removal_enabled": source.watermark_removal_enabled,
             "watermark_authorization_reference": source.watermark_authorization_reference,
+            "proxy_pool_changed": "proxy_pool_id" in payload.model_fields_set,
         },
     )
     await db.commit()
@@ -427,7 +596,7 @@ async def get_source_runs(
             await db.execute(
                 select(ScrapeRun)
                 .where(ScrapeRun.source_id == source_id)
-                .order_by(ScrapeRun.started_at.desc())
+                .order_by(func.coalesce(ScrapeRun.started_at, ScrapeRun.queued_at).desc())
                 .limit(_RECENT_RUNS_LIMIT)
             )
         )
@@ -465,7 +634,18 @@ async def get_source_runs(
             status=run.status,
             items_found=run.items_found,
             items_new=run.items_new,
+            items_updated=run.items_updated,
+            items_unchanged=run.items_unchanged,
             errors_count=run.errors_count,
+            pages_visited=run.pages_visited,
+            pagination_mode=run.pagination_mode,
+            pagination_stop_reason=run.pagination_stop_reason,
+            proxy_attempts_count=run.proxy_attempts_count,
+            proxy_rotations_count=run.proxy_rotations_count,
+            proxy_stop_reason=run.proxy_stop_reason,
+            queued_at=run.queued_at,
+            trigger_type=run.trigger_type,
+            scheduled_for=run.scheduled_for,
             errors=errors_by_run.get(run.id, []),
         )
         for run in runs
@@ -486,8 +666,14 @@ async def pause_source(
     Riservato ad admin/operator, come `POST /sources/{id}/scan`: mettere in
     pausa una fonte è un'azione operativa che impatta la raccolta dati.
     """
-    source = await _get_source_or_404(db, source_id)
+    source = (
+        await db.execute(select(Source).where(Source.id == source_id).with_for_update())
+    ).scalar_one_or_none()
+    if source is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Fonte non trovata.")
     source.enabled = False
+    source.next_scrape_at = None
+    source.last_schedule_skip_reason = "source_disabled"
     db.add(source)
     await log_action(
         db, user_id=user.id, action="pause_source", entity_type="source", entity_id=str(source_id)
@@ -504,9 +690,15 @@ async def disable_source(
     """Disabilita definitivamente una fonte: `enabled=False` e
     `status="offline"`, a differenza della pausa che lascia lo status di
     salute invariato (vedi `pause_source`)."""
-    source = await _get_source_or_404(db, source_id)
+    source = (
+        await db.execute(select(Source).where(Source.id == source_id).with_for_update())
+    ).scalar_one_or_none()
+    if source is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Fonte non trovata.")
     source.enabled = False
     source.status = "offline"
+    source.next_scrape_at = None
+    source.last_schedule_skip_reason = "source_disabled"
     db.add(source)
     await log_action(
         db, user_id=user.id, action="disable_source", entity_type="source", entity_id=str(source_id)
@@ -521,12 +713,44 @@ async def enable_source(
     user: User = Depends(require_role("admin", "operator")),
 ) -> None:
     """Riabilita una fonte disabilitata/in pausa e ne ripristina lo stato iniziale."""
-    source = await _get_source_or_404(db, source_id)
+    source = (
+        await db.execute(select(Source).where(Source.id == source_id).with_for_update())
+    ).scalar_one_or_none()
+    if source is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Fonte non trovata.")
     if source.enabled:
         return
 
     source.enabled = True
     source.status = "healthy"
+    active_run = (
+        await db.execute(
+            select(ScrapeRun.id).where(
+                ScrapeRun.source_id == source.id,
+                ScrapeRun.status.in_(("pending", "running")),
+            )
+        )
+    ).scalar_one_or_none()
+    if (
+        source.automatic_scraping_enabled
+        and source.scrape_config
+        and source.scrape_interval_minutes
+        and active_run is None
+    ):
+        source.next_scrape_at = datetime.now(UTC) + timedelta(
+            minutes=source.scrape_interval_minutes
+        )
+        source.last_schedule_skip_reason = None
+    elif active_run is not None:
+        source.next_scrape_at = None
+        source.last_schedule_skip_reason = "active_run"
+    else:
+        source.next_scrape_at = None
+        source.last_schedule_skip_reason = (
+            "schedule_disabled"
+            if not source.automatic_scraping_enabled
+            else "configuration_missing"
+        )
     db.add(source)
     await log_action(
         db, user_id=user.id, action="enable_source", entity_type="source", entity_id=str(source_id)
@@ -534,7 +758,63 @@ async def enable_source(
     await db.commit()
 
 
-@router.post("/{source_id}/scan", response_model=ScanTriggerResponse)
+@router.patch("/{source_id}/schedule", response_model=SourceRead)
+async def update_source_schedule(
+    source_id: uuid.UUID,
+    payload: SourceScheduleUpdate,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin_with_2fa),
+) -> SourceRead:
+    source = (
+        await db.execute(select(Source).where(Source.id == source_id).with_for_update())
+    ).scalar_one_or_none()
+    if source is None:
+        raise HTTPException(404, "Fonte non trovata.")
+    if source.schedule_revision != payload.revision:
+        raise HTTPException(409, "La schedulazione e stata modificata; ricaricare i dati.")
+    if payload.enabled and (not source.enabled or source.scrape_config is None):
+        raise HTTPException(422, "La fonte deve essere abilitata e configurata per lo scraping.")
+    interval = payload.normalized_minutes()
+    if payload.enabled and interval is None:
+        raise HTTPException(422, "Intervallo non valido.")
+    if interval is not None:
+        source.scrape_interval_minutes = interval
+    source.automatic_scraping_enabled = payload.enabled
+    source.schedule_revision += 1
+    source.last_schedule_skip_reason = None if payload.enabled else "schedule_disabled"
+    active = (
+        await db.execute(
+            select(ScrapeRun.id).where(
+                ScrapeRun.source_id == source.id,
+                ScrapeRun.status.in_(("pending", "running")),
+            )
+        )
+    ).scalar_one_or_none()
+    source.next_scrape_at = (
+        None
+        if active or not payload.enabled
+        else datetime.now(UTC) + timedelta(minutes=source.scrape_interval_minutes or 0)
+    )
+    await log_action(
+        db,
+        user_id=admin.id,
+        action="update_source_schedule",
+        entity_type="source",
+        entity_id=str(source.id),
+        details={
+            "enabled": payload.enabled,
+            "interval_minutes": source.scrape_interval_minutes,
+            "revision": source.schedule_revision,
+        },
+    )
+    await db.commit()
+    await db.refresh(source)
+    return await _compute_source_read(db, source, datetime.now(UTC) - timedelta(hours=24))
+
+
+@router.post(
+    "/{source_id}/scan", response_model=ScanTriggerResponse, status_code=status.HTTP_202_ACCEPTED
+)
 async def scan_source(
     source_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -546,7 +826,9 @@ async def scan_source(
     terzi e va quindi avviabile solo da chi ha responsabilità operativa,
     non dai soli viewer.
     """
-    source = await db.get(Source, source_id)
+    source = (
+        await db.execute(select(Source).where(Source.id == source_id).with_for_update())
+    ).scalar_one_or_none()
     if source is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fonte non trovata.")
     if not source.enabled:
@@ -554,14 +836,64 @@ async def scan_source(
             status_code=status.HTTP_400_BAD_REQUEST, detail="La fonte è disabilitata."
         )
 
-    # Import locale per evitare che l'intero modulo Celery (e le sue
-    # dipendenze, es. connessione Redis) venga caricato all'avvio di ogni
-    # richiesta API che non ne ha bisogno.
+    if source.scrape_config is None:
+        raise HTTPException(422, "La fonte non ha una configurazione di scraping.")
+    active_run = (
+        await db.execute(
+            select(ScrapeRun).where(
+                ScrapeRun.source_id == source.id,
+                ScrapeRun.status.in_(("pending", "running")),
+            )
+        )
+    ).scalar_one_or_none()
+    if active_run is not None:
+        raise HTTPException(409, f"Uno scan e gia attivo (run {active_run.id}).")
+
+    task_id = str(uuid.uuid4())
+    run = ScrapeRun(
+        source_id=source.id,
+        status="pending",
+        queued_at=datetime.now(UTC),
+        trigger_type="manual",
+        celery_task_id=task_id,
+    )
+    db.add(run)
+    source.next_scrape_at = None
+    source.last_schedule_skip_reason = None
+    await db.commit()
+    await db.refresh(run)
+
     from app.workers.tasks_scraper import run_scrape_source
+    try:
+        run_scrape_source.apply_async(args=[str(source.id), str(run.id)], task_id=task_id)
+    except Exception as exc:
+        finished_at = datetime.now(UTC)
+        run.status = "failed"
+        run.finished_at = finished_at
+        await db.refresh(
+            source,
+            attribute_names=[
+                "automatic_scraping_enabled",
+                "enabled",
+                "scrape_config",
+                "scrape_interval_minutes",
+            ],
+        )
+        source.last_completed_scrape_at = finished_at
+        if (
+            source.automatic_scraping_enabled
+            and source.enabled
+            and source.scrape_config
+            and source.scrape_interval_minutes
+        ):
+            source.next_scrape_at = finished_at + timedelta(minutes=source.scrape_interval_minutes)
+        else:
+            source.next_scrape_at = None
+        source.last_schedule_skip_reason = "dispatch_failed"
+        await db.commit()
+        raise HTTPException(503, "Impossibile accodare lo scan.") from exc
 
-    async_result = run_scrape_source.delay(str(source.id))
-
-    return ScanTriggerResponse(task_id=async_result.id, source_id=source.id)
+    return ScanTriggerResponse(task_id=task_id, source_id=source.id, run_id=run.id)
 
 
 @router.post("/{source_id}/check-robots", response_model=RobotsCheckRead)
@@ -590,6 +922,7 @@ async def check_source_robots(
 @router.post("/{source_id}/test-config", response_model=TestConfigResult)
 async def test_source_config(
     source_id: uuid.UUID,
+    payload: TestConfigInput | None = None,
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(require_role("admin", "operator")),
 ) -> TestConfigResult:
@@ -604,7 +937,15 @@ async def test_source_config(
     come ogni altra chiamata del motore).
     """
     source = await _get_source_or_404(db, source_id)
-    if not source.scrape_config:
+    scrape_config = (
+        payload.scrape_config.model_dump() if payload is not None else source.scrape_config
+    )
+    proxy_pool_id = (
+        payload.proxy_pool_id
+        if payload is not None and "proxy_pool_id" in payload.model_fields_set
+        else source.proxy_pool_id
+    )
+    if not scrape_config:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Questa fonte non ha ancora una configurazione di scraping (scrape_config).",
@@ -612,23 +953,46 @@ async def test_source_config(
 
     from app.scrapers.generic import GenericScraper, RobotsDisallowedError
 
+    proxy_candidates = await _proxy_candidates_for_test(db, proxy_pool_id)
     scraper = GenericScraper(
-        slug=source.slug, base_url=source.base_url, config=source.scrape_config
+        slug=source.slug,
+        base_url=source.base_url,
+        config=scrape_config,
+        proxy_candidates=proxy_candidates,
     )
     try:
         ad_urls = await scraper.discover()
+        diagnostics = scraper.discovery_diagnostics
         if not ad_urls:
             return TestConfigResult(
-                ad_urls_found=0, error="Nessun link annuncio trovato con 'ad_link_selector'."
+                ad_urls_found=0,
+                error="Nessun link annuncio trovato con 'ad_link_selector'.",
+                warnings=[*diagnostics.warnings, *diagnostics.errors],
+                pages_visited=diagnostics.pages_visited,
+                configured_max_pages=diagnostics.configured_max_pages,
+                pagination_mode=diagnostics.pagination_mode,
+                pagination_stop_reason=diagnostics.stop_reason,
+                unique_ads_found=diagnostics.unique_ads_found,
             )
         raw = await scraper.scrape_ad(ad_urls[0])
         return TestConfigResult(
             ad_urls_found=len(ad_urls),
             sample_url=ad_urls[0],
             extracted_fields=raw,
-            warnings=scraper.media_extraction_warnings(raw),
+            warnings=[
+                *scraper.media_extraction_warnings(raw),
+                *diagnostics.warnings,
+                *diagnostics.errors,
+            ],
+            pages_visited=diagnostics.pages_visited,
+            configured_max_pages=diagnostics.configured_max_pages,
+            pagination_mode=diagnostics.pagination_mode,
+            pagination_stop_reason=diagnostics.stop_reason,
+            unique_ads_found=diagnostics.unique_ads_found,
         )
     except RobotsDisallowedError as exc:
         return TestConfigResult(ad_urls_found=0, error=f"robots.txt vieta l'accesso: {exc}")
     except Exception as exc:  # noqa: BLE001 - risposta diagnostica per l'operatore, non un 500
         return TestConfigResult(ad_urls_found=0, error=str(exc))
+    finally:
+        await scraper.aclose()

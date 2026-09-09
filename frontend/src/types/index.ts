@@ -31,6 +31,8 @@ export type LoginResult =
 export type SourceStatus = "healthy" | "degraded" | "offline";
 export type SourcePriority = "high" | "medium" | "low";
 export type ScrapeFetchMode = "http" | "dynamic" | "stealth";
+export type AutomaticScrapingState = "waiting" | "pending" | "running" | "paused" | "disabled";
+export type ScrapeIntervalUnit = "minutes" | "hours" | "days";
 
 export interface Source {
   id: string;
@@ -49,6 +51,16 @@ export interface Source {
   errorRate: number;
   consecutiveFailures: number;
   hasScrapeConfig: boolean;
+  proxyPoolId: string | null;
+  proxyPoolStatus: "direct" | "configured" | "healthy" | "disabled" | "unavailable";
+  automaticScrapingEnabled: boolean;
+  scrapeIntervalMinutes: number | null;
+  nextScrapeAt: string | null;
+  lastScheduledAt: string | null;
+  lastCompletedScrapeAt: string | null;
+  lastScheduleSkipReason: string | null;
+  scheduleRevision: number;
+  automaticScrapingState: AutomaticScrapingState;
 }
 
 export interface ScrapeFieldConfig {
@@ -72,7 +84,6 @@ export interface ScrapeConfig {
   hideCanvas?: boolean;
   realChrome?: boolean;
   blockAds?: boolean;
-  proxy?: string | null;
   waitSelector?: string | null;
   waitMs?: number | null;
   fields: Record<string, ScrapeFieldConfig>;
@@ -90,6 +101,45 @@ export interface TestConfigResult {
   extractedFields: Record<string, unknown> | null;
   warnings: string[];
   error: string | null;
+  pagesVisited: number;
+  configuredMaxPages: number;
+  paginationMode: "none" | "href" | "click";
+  paginationStopReason: string;
+  uniqueAdsFound: number;
+}
+
+export type ProxyScheme = "http" | "https" | "socks4" | "socks5";
+
+export interface ProxyEndpoint {
+  id: string;
+  name: string;
+  scheme: ProxyScheme;
+  host: string;
+  port: number;
+  enabled: boolean;
+  credentialConfigured: boolean;
+  health: "healthy" | "cooldown" | "disabled";
+  consecutiveFailures: number;
+  cooldownUntil: string | null;
+  lastUsedAt: string | null;
+  lastSuccessAt: string | null;
+  lastFailureAt: string | null;
+}
+
+export interface ProxyPool {
+  id: string;
+  name: string;
+  enabled: boolean;
+  proxyIds: string[];
+  healthyCount: number;
+  totalCount: number;
+}
+
+export interface ProxyTestResult {
+  success: boolean;
+  latencyMs: number;
+  statusCategory: string;
+  message: string;
 }
 
 export type ScrapingRunStatus =
@@ -190,6 +240,28 @@ export interface RecordOverview {
   lastSeenAt: string;
   status: "verified" | "unverified" | "flagged";
   tags: string[];
+  /** Snapshot canonico mantenuto per retrocompatibilita. */
+  customFields: CustomFields;
+  /** Valori valorizzati raccolti da tutte le occorrenze, con provenienza. */
+  customFieldGroups: CustomFieldGroup[];
+  contentRevision: number;
+}
+
+export type CustomFieldValue = string | string[] | null;
+export type CustomFields = Record<string, CustomFieldValue>;
+
+export interface CustomFieldSourceValue {
+  value: CustomFieldValue;
+  sourceId: string;
+  sourceName: string;
+  sourceCode: string;
+  advertisementId: string;
+  isCanonical: boolean;
+}
+
+export interface CustomFieldGroup {
+  name: string;
+  values: CustomFieldSourceValue[];
 }
 
 export interface RecordOccurrence {
@@ -201,6 +273,25 @@ export interface RecordOccurrence {
   scrapedAt: string;
   isCanonical: boolean;
   matchConfidence: number;
+  customFields: CustomFields;
+  revision: number;
+  lastChangedAt: string;
+  hasUpdates: boolean;
+}
+
+export interface AdvertisementVersion {
+  id: string;
+  advertisementId: string;
+  revision: number;
+  scrapeRunId: string | null;
+  changedFields: string[];
+  snapshot: {
+    title?: string | null;
+    description?: string | null;
+    customFields?: CustomFields;
+    mediaHashes?: string[];
+  };
+  createdAt: string;
 }
 
 export type MediaSensitivity = "safe" | "explicit";
@@ -252,6 +343,8 @@ export interface RecordAiSummary {
   sourcesUsed: { name: string; url: string }[];
   provider: string;
   model: string;
+  recordContentRevision: number;
+  isStale: boolean;
 }
 
 // A single entry in the full version history (GET /records/{id}/ai-summary/versions),
@@ -273,6 +366,7 @@ export interface SummaryGenerationJob {
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;
+  recordContentRevision: number;
 }
 
 export type AIProviderName =
@@ -323,16 +417,27 @@ export interface ScrapeError {
   createdAt: string;
 }
 
-export type ScrapeRunStatus = "running" | "completed" | "failed";
+export type ScrapeRunStatus = "pending" | "running" | "completed" | "failed";
 
 export interface ScrapeRun {
   id: string;
-  startedAt: string;
+  startedAt: string | null;
   finishedAt: string | null;
+  queuedAt: string;
+  triggerType: "manual" | "scheduled";
+  scheduledFor: string | null;
   status: ScrapeRunStatus;
   itemsFound: number;
   itemsNew: number;
+  itemsUpdated: number;
+  itemsUnchanged: number;
   errorsCount: number;
+  pagesVisited: number;
+  paginationMode: "none" | "href" | "click";
+  paginationStopReason: string | null;
+  proxyAttemptsCount: number;
+  proxyRotationsCount: number;
+  proxyStopReason: string | null;
   errors: ScrapeError[];
 }
 

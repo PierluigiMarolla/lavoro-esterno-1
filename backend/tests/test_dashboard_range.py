@@ -42,16 +42,16 @@ def test_dashboard_range_handles_rome_dst_transition() -> None:
 @pytest.mark.parametrize(
     ("start", "end", "message"),
     [
-        (datetime(2026, 1, 1, tzinfo=UTC), None, "Both start and end"),
+        (datetime(2026, 1, 1, tzinfo=UTC), None, "richiesti sia l'inizio sia la fine"),
         (
             datetime(2026, 2, 1, tzinfo=UTC),
             datetime(2026, 1, 1, tzinfo=UTC),
-            "start must be earlier",
+            "inizio dell'intervallo deve precedere",
         ),
         (
             datetime(2025, 1, 1, tzinfo=UTC),
             datetime(2025, 5, 1, tzinfo=UTC),
-            "cannot exceed 90 days",
+            "non può superare 90 giorni",
         ),
     ],
 )
@@ -64,9 +64,9 @@ def test_dashboard_range_rejects_invalid_intervals(
 
 
 def test_dashboard_range_rejects_naive_and_future_timestamps() -> None:
-    with pytest.raises(HTTPException, match="timezone offset"):
+    with pytest.raises(HTTPException, match="includere il fuso orario"):
         resolve_dashboard_range(datetime(2026, 1, 1), datetime(2026, 1, 2))
 
     now = datetime.now(UTC)
-    with pytest.raises(HTTPException, match="cannot be in the future"):
+    with pytest.raises(HTTPException, match="non può essere nel futuro"):
         resolve_dashboard_range(now, now + timedelta(minutes=1))

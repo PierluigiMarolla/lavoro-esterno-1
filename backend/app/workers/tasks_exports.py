@@ -32,7 +32,15 @@ def _csv_bytes(rows: list[dict], fieldnames: list[str]) -> bytes:
     output = io.StringIO(newline="")
     writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
     writer.writeheader()
-    writer.writerows(rows)
+    writer.writerows(
+        {
+            key: json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            if isinstance(value, (dict, list))
+            else value
+            for key, value in row.items()
+        }
+        for row in rows
+    )
     return output.getvalue().encode("utf-8-sig")
 
 
@@ -122,6 +130,7 @@ def generate_export(job_id: str) -> dict:
                             "source_url": ad.source_url,
                             "title": ad.title,
                             "description": ad.description,
+                            "custom_fields": ad.custom_fields or {},
                             "status": ad.status,
                             "confidence": ad.confidence,
                             "first_seen_at": ad.first_seen_at.isoformat(),
@@ -132,7 +141,9 @@ def generate_export(job_id: str) -> dict:
                     if job.type == "text_only":
                         continue
                     media_rows = session.execute(
-                        select(Media).where(Media.advertisement_id == ad.id)
+                        select(Media).where(
+                            Media.advertisement_id == ad.id, Media.is_current.is_(True)
+                        )
                     ).scalars()
                     for media in media_rows:
                         safe = (
@@ -212,6 +223,7 @@ def generate_export(job_id: str) -> dict:
                 "first_seen_at",
                 "last_seen_at",
                 "scraped_at",
+                "custom_fields",
             ]
             payloads = {
                 "records.json": records_json,
@@ -235,7 +247,7 @@ def generate_export(job_id: str) -> dict:
                 )
 
             manifest = {
-                "schema_version": "export-v1",
+                "schema_version": "export-v2",
                 "job_id": str(job.id),
                 "type": job.type,
                 "generated_at": datetime.now(UTC).isoformat(),

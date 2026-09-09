@@ -64,13 +64,21 @@ Singolo annuncio scrapato da una fonte.
 - `source_id` UUID, FK → `sources.id` ondelete RESTRICT, **index**
 - `source_url` Text
 - `title` Text nullable, `description` Text nullable
+- `custom_fields` JSONB non nullo, default `{}`: snapshot dei campi configurati
+  sulla fonte che non appartengono allo schema standard. Conserva stringhe,
+  liste e valori `null`; viene sostituito integralmente a ogni nuovo scan. Non
+  esiste una lista preventiva di nomi custom: ogni chiave configurata viene
+  conservata esattamente come scritta. La vista Record aggrega a runtime gli
+  snapshot di tutte le occorrenze senza creare una copia nel record canonico.
 - `content_hash` String(64) nullable, **index** (SHA-256 del contenuto
-  normalizzato, per rilevare ripubblicazioni identiche)
+  normalizzato, inclusi i campi custom ordinati deterministicamente, per
+  rilevare ripubblicazioni identiche)
 - `first_seen_at`, `last_seen_at` (aggiornato via `onupdate`), `scraped_at`
 - `confidence` Float default `1.0`
 - `status` enum `advertisement_status` (`active` / `removed` / `invalid`)
-- **Nessun campo città/età/external_id**: non esistono nel modello attuale.
-  Se in futuro serve idempotenza per-fonte (evitare di ricreare lo stesso
+- **Nessuna colonna dedicata città/età/external_id**: città, età e proprietà
+  simili possono essere conservate in `custom_fields`. Se in futuro serve
+  idempotenza per-fonte (evitare di ricreare lo stesso
   annuncio a ogni scan), andrà aggiunto un campo `external_id` + un
   vincolo `unique(source_id, external_id)` — non presente oggi.
 
@@ -107,6 +115,10 @@ File (immagine/video) associato a un annuncio.
 - `priority` enum `source_priority` (`high` / `medium` / `low`), default `medium`
 - `status` enum `source_status` (`healthy` / `degraded` / `offline`), default `healthy`
 - `enabled` bool default `true`
+- `automatic_scraping_enabled`, `scrape_interval_minutes`, `next_scrape_at`,
+  `last_scheduled_at`, `last_completed_scrape_at`,
+  `last_schedule_skip_reason`, `schedule_revision`: configurazione e stato
+  dello schedule fixed-delay. `next_scrape_at` resta nullo durante un run.
 - `scrape_config` JSONB, nullable — configurazione del motore di scraping
   generico (`app/scrapers/generic.py`, vedi § "Motore di scraping
   generico" sotto), unico motore esistente. Nullable: una fonte senza
@@ -120,9 +132,16 @@ File (immagine/video) associato a un annuncio.
 ### `scrape_runs`
 - `id` UUID PK
 - `source_id` UUID, FK → `sources.id` ondelete CASCADE, **index**
-- `started_at`, `finished_at` nullable
-- `status` enum `scrape_run_status` (`running` / `completed` / `failed`)
+- `queued_at`, `started_at`, `finished_at` (gli ultimi due nullable)
+- `status` enum `scrape_run_status` (`pending` / `running` / `completed` / `failed`)
+- `trigger_type` (`manual` / `scheduled`), `scheduled_for`, `celery_task_id`
+- indice univoco parziale su `source_id` per gli stati `pending/running`:
+  il database impedisce due run attivi della stessa fonte anche in caso di race
 - `items_found`, `items_new`, `errors_count` Integer, default `0`
+- `pages_visited` Integer default `0`
+- `pagination_mode` String (`none`, `href`, `click`)
+- `pagination_stop_reason` String nullable: motivo sicuro e senza URL
+  dell'arresto della discovery
 
 ### `scrape_errors`
 - `id` UUID PK
@@ -325,7 +344,7 @@ manutenzione per la migrazione.
 ## 8. Seed di sviluppo
 
 Nessuno script di seed per `sources`: si crea una fonte via API/UI (`POST
-/sources`, form "Add Source" nella pagina Sources), con o senza
+/sources`, form "Aggiungi fonte" nella pagina Fonti), con o senza
 `scrape_config`. Vedi `app/scripts/create_admin.py` per il bootstrap del
 primo utente Admin (unico script "una tantum" rimasto).
 
@@ -357,3 +376,29 @@ cancellazione automatica della relativa categoria DB.
   `notification_reads` registra la lettura per singolo utente.
 - La migrazione `20260904090000` crea le quattro tabelle e inizializza le
   soglie NudeNet correnti. Gli alert scadono dopo 90 giorni tramite retention.
+
+## 11. Proxy rotator
+
+- `proxy_pools`: nome univoco e stato del pool globale.
+- `proxy_endpoints`: protocollo, host, porta, stato, cooldown e metriche
+  passive; username/password sono un ciphertext AES-256-GCM.
+- `proxy_pool_members`: relazione molti-a-molti tra pool ed endpoint.
+- `sources.proxy_pool_id`: nullable e `ON DELETE SET NULL`; assente significa
+  connessione diretta.
+- `scrape_run_proxy_attempts`: endpoint ID, operazione, esito, latenza e
+  categoria sicura; viene eliminato in cascata con il run dopo 90 giorni.
+- `scrape_runs` espone i contatori di tentativi/rotazioni e il motivo sicuro
+  dell'arresto proxy.
+## Versionamento continuo degli annunci
+
+Le migrazioni `20260909100000` e `20260909103000` aggiungono e popolano
+`records.content_revision`, revisione,
+hash contenuto/hash set media e `last_changed_at` agli annunci, oltre a
+`media.is_current` e `media.last_seen_at`. Il vincolo
+`uq_advertisements_occurrence` rende unica la terna record/fonte/URL.
+
+`advertisement_versions` conserva uno snapshot per la revisione iniziale e per
+ogni modifica materiale. Gli snapshot sono eliminati in cascata con
+l'annuncio, quindi retention e cancellazione GDPR non lasciano copie orfane.
+Gli originali MinIO non vengono sovrascritti: un media non più pubblicato è
+marcato non corrente e rimane storico fino alla retention.

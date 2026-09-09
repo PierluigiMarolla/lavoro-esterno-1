@@ -5,14 +5,11 @@ import { useAuth } from "@/context/AuthContext";
 import Icon from "@/components/ui/Icon";
 import ErrorState from "@/components/ui/ErrorState";
 import type { RecordMedia } from "@/types";
+import { formatDate } from "@/lib/format";
 
 // Replicates desing/record_detail_media/code.html: a media gallery where
 // items flagged "explicit" are blurred behind a warning overlay until the
 // analyst explicitly opts in per item.
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
-}
 
 export default function RecordMediaTab() {
   const { id = "" } = useParams();
@@ -46,7 +43,7 @@ export default function RecordMediaTab() {
     return <ErrorState error={media.error} onRetry={() => media.refetch()} />;
   }
   if (!media.data || media.data.length === 0) {
-    return <p className="text-body-md text-on-surface-variant">No media associated with this record.</p>;
+    return <p className="text-body-md text-on-surface-variant">Nessun media associato a questo record.</p>;
   }
 
   return (
@@ -61,7 +58,7 @@ export default function RecordMediaTab() {
             onReveal={() => reveal(item.id)}
             canReview={canReview}
             onReview={(classification) => {
-              const notes = window.prompt("Review notes (required):");
+              const notes = window.prompt("Note di revisione (obbligatorie):");
               if (notes?.trim()) review.mutate({ mediaId: item.id, classification, notes: notes.trim() });
             }}
             onReprocess={() => reprocess.mutate(item.id)}
@@ -100,13 +97,13 @@ function MediaCard({
         {isBlurred && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-surface/40 backdrop-blur-sm p-4 text-center">
             <Icon name="visibility_off" size={32} className="text-error mb-2" />
-            <span className="text-body-md font-semibold text-on-surface mb-1">Explicit Content Detected</span>
+            <span className="text-body-md font-semibold text-on-surface mb-1">Rilevato contenuto esplicito</span>
             <button
               type="button"
               onClick={onReveal}
               className="mt-2 px-3 py-1 bg-surface-container-lowest border border-border rounded text-label-sm text-on-surface hover:bg-surface-container-low transition-colors"
             >
-              Reveal Media
+              Mostra media
             </button>
           </div>
         )}
@@ -125,17 +122,17 @@ function MediaCard({
                   : "shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-label-sm bg-success/10 text-success border border-success/20"
               }
             >
-              {item.sensitivity === "explicit" ? "Explicit" : "Safe"}
+              {item.sensitivity === "explicit" ? "Esplicito" : "Sicuro"}
             </span>
             {item.reviewStatus === "required" && (
               <span className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-label-sm bg-warning/10 text-warning border border-warning/20">
-                Needs review
+                Da revisionare
               </span>
             )}
           </div>
           <div className="flex items-center gap-2 text-label-sm text-on-surface-variant mb-4">
             <Icon name="language" size={14} />
-            <span>Source: {item.sourceName}</span>
+            <span>Fonte: {item.sourceName}</span>
             <span className="text-border">&bull;</span>
             <span>{formatDate(item.addedAt)}</span>
           </div>
@@ -148,16 +145,16 @@ function MediaCard({
             className="text-label-sm text-on-surface-variant hover:text-primary transition-colors flex items-center gap-1"
           >
             <Icon name="open_in_new" size={16} />
-            View
+            Visualizza
           </a>
           {canReview && item.reviewStatus === "required" && (
             <div className="flex gap-2">
-              <button type="button" onClick={() => onReview("safe")} className="text-label-sm text-success">Mark safe</button>
-              <button type="button" onClick={() => onReview("explicit")} className="text-label-sm text-error">Mark explicit</button>
+              <button type="button" onClick={() => onReview("safe")} className="text-label-sm text-success">Segna come sicuro</button>
+              <button type="button" onClick={() => onReview("explicit")} className="text-label-sm text-error">Segna come esplicito</button>
             </div>
           )}
           {canReview && item.processingStatus === "failed" && (
-            <button type="button" onClick={onReprocess} className="text-label-sm text-primary">Reprocess</button>
+            <button type="button" onClick={onReprocess} className="text-label-sm text-primary">Rielabora</button>
           )}
         </div>
       </div>

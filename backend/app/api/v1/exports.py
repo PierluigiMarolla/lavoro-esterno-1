@@ -124,7 +124,7 @@ async def _estimate_media_bytes(db: AsyncSession, record_ids: list[uuid.UUID]) -
     value = await db.scalar(
         select(func.coalesce(func.sum(Media.file_size_bytes), 0))
         .join(Advertisement, Advertisement.id == Media.advertisement_id)
-        .where(Advertisement.record_id.in_(record_ids))
+        .where(Advertisement.record_id.in_(record_ids), Media.is_current.is_(True))
     )
     return int(value or 0)
 

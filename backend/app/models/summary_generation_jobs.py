@@ -38,6 +38,9 @@ class SummaryGenerationJob(UUIDPKMixin, Base):
     provider_config_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
     prompt_version: Mapped[str] = mapped_column(String(100), nullable=False)
     input_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    record_content_revision: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
     result_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cache_hit: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)

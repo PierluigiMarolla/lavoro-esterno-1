@@ -95,7 +95,6 @@ class ScrapeConfigInput(CamelModel):
     hide_canvas: bool = False
     real_chrome: bool = False
     block_ads: bool = False
-    proxy: str | None = Field(default=None, min_length=1, max_length=500)
     wait_selector: str | None = Field(default=None, min_length=1, max_length=500)
     wait_ms: int | None = Field(default=None, ge=0, le=120_000)
     fields: dict[str, ScrapeFieldConfig] = Field(default_factory=dict)
@@ -104,6 +103,10 @@ class ScrapeConfigInput(CamelModel):
     @classmethod
     def _derive_fetch_mode_from_render_js(cls, data):
         if isinstance(data, dict):
+            if data.get("proxy") is not None:
+                raise ValueError(
+                    "Il proxy testuale non e piu supportato: assegnare un proxyPoolId alla fonte."
+                )
             has_fetch_mode = "fetch_mode" in data or "fetchMode" in data
             render_js = data.get("render_js", data.get("renderJs"))
             if not has_fetch_mode and render_js is True:
@@ -119,17 +122,6 @@ class ScrapeConfigInput(CamelModel):
     @classmethod
     def _validate_user_agent(cls, value: str | None) -> str | None:
         return cls._strip_optional_string(value, "user_agent")
-
-    @field_validator("proxy")
-    @classmethod
-    def _validate_proxy(cls, value: str | None) -> str | None:
-        stripped = cls._strip_optional_string(value, "proxy")
-        if stripped is None:
-            return None
-        parsed = urlparse(stripped)
-        if parsed.scheme not in ("http", "https", "socks4", "socks5") or not parsed.netloc:
-            raise ValueError("Proxy non valido.")
-        return stripped
 
     @field_validator("wait_selector")
     @classmethod
@@ -181,6 +173,7 @@ class SourceCreate(CamelModel):
     base_url: str
     priority: str = "medium"
     scrape_config: ScrapeConfigInput | None = None
+    proxy_pool_id: uuid.UUID | None = None
     watermark_removal: WatermarkRemovalConfig = Field(default_factory=WatermarkRemovalConfig)
 
     @field_validator("base_url")
@@ -198,12 +191,38 @@ class SourceUpdate(CamelModel):
     base_url: str | None = None
     priority: str | None = None
     scrape_config: ScrapeConfigInput | None = None
+    proxy_pool_id: uuid.UUID | None = None
     watermark_removal: WatermarkRemovalConfig | None = None
 
     @field_validator("base_url")
     @classmethod
     def _validate_base_url(cls, value: str | None) -> str | None:
         return _validate_http_url(value) if value is not None else None
+
+
+class SourceScheduleUpdate(CamelModel):
+    enabled: bool
+    interval_value: int | None = Field(default=None, ge=1)
+    interval_unit: Literal["minutes", "hours", "days"] | None = None
+    revision: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def validate_interval(self):
+        if self.enabled and (self.interval_value is None or self.interval_unit is None):
+            raise ValueError("Intervallo e unita sono obbligatori quando lo schedule e attivo.")
+        if self.interval_value is not None and self.interval_unit is not None:
+            factors = {"minutes": 1, "hours": 60, "days": 1440}
+            minutes = self.interval_value * factors[self.interval_unit]
+            if not 15 <= minutes <= 43_200:
+                raise ValueError("L'intervallo deve essere compreso tra 15 minuti e 30 giorni.")
+        return self
+
+    def normalized_minutes(self) -> int | None:
+        if self.interval_value is None or self.interval_unit is None:
+            return None
+        return self.interval_value * {"minutes": 1, "hours": 60, "days": 1440}[
+            self.interval_unit
+        ]
 
 
 class SourceDuplicate(CamelModel):
@@ -263,6 +282,18 @@ class SourceRead(CamelModel):
     # generico (Source.scrape_config valorizzato) — la UI la usa per
     # decidere se mostrare "Configure" o "Edit configuration".
     has_scrape_config: bool
+    proxy_pool_id: uuid.UUID | None = None
+    proxy_pool_status: str = "direct"
+    automatic_scraping_enabled: bool = False
+    scrape_interval_minutes: int | None = None
+    next_scrape_at: datetime | None = None
+    last_scheduled_at: datetime | None = None
+    last_completed_scrape_at: datetime | None = None
+    last_schedule_skip_reason: str | None = None
+    schedule_revision: int = 1
+    automatic_scraping_state: Literal["waiting", "pending", "running", "paused", "disabled"] = (
+        "paused"
+    )
 
 
 class SourceDetailRead(SourceRead):
@@ -282,6 +313,7 @@ class ScanTriggerResponse(BaseModel):
 
     task_id: str
     source_id: uuid.UUID
+    run_id: uuid.UUID
     queued: bool = True
 
 
@@ -300,12 +332,23 @@ class ScrapeRunRead(CamelModel):
     (tipicamente pochi per run: nessuna paginazione separata necessaria)."""
 
     id: uuid.UUID
-    started_at: datetime
+    started_at: datetime | None
     finished_at: datetime | None
     status: str
     items_found: int
     items_new: int
+    items_updated: int = 0
+    items_unchanged: int = 0
     errors_count: int
+    pages_visited: int = 0
+    pagination_mode: str = "none"
+    pagination_stop_reason: str | None = None
+    proxy_attempts_count: int = 0
+    proxy_rotations_count: int = 0
+    proxy_stop_reason: str | None = None
+    queued_at: datetime
+    trigger_type: Literal["manual", "scheduled"] = "manual"
+    scheduled_for: datetime | None = None
     errors: list[ScrapeErrorRead] = Field(default_factory=list)
 
 
@@ -315,6 +358,13 @@ class RobotsCheckRead(CamelModel):
     allowed: bool
     robots_txt_found: bool
     checked_url: str
+
+
+class TestConfigInput(CamelModel):
+    """Bozza opzionale da provare senza aggiornare la fonte."""
+
+    scrape_config: ScrapeConfigInput
+    proxy_pool_id: uuid.UUID | None = None
 
 
 class TestConfigResult(CamelModel):
@@ -327,6 +377,11 @@ class TestConfigResult(CamelModel):
     extracted_fields: dict | None = None
     warnings: list[str] = Field(default_factory=list)
     error: str | None = None
+    pages_visited: int = 0
+    configured_max_pages: int = 1
+    pagination_mode: str = "none"
+    pagination_stop_reason: str = "not_started"
+    unique_ads_found: int = 0
 
 
 class SourcesSummaryRead(CamelModel):

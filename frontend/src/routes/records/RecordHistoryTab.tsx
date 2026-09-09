@@ -3,6 +3,8 @@ import { useRecordHistory } from "@/hooks/useRecords";
 import Icon from "@/components/ui/Icon";
 import ErrorState from "@/components/ui/ErrorState";
 import type { ActivityActor, RecordHistoryEvent } from "@/types";
+import { formatDateTime } from "@/lib/format";
+import { auditActionLabel } from "@/lib/auditLabels";
 
 // Replicates desing/record_detail_history/code.html: a vertical audit
 // timeline, dot-and-line style borrowed from DashboardPage's "Recent
@@ -45,10 +47,6 @@ function actorIcon(actor: ActivityActor): string {
   }
 }
 
-function formatDateTime(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-}
-
 export default function RecordHistoryTab() {
   const { id = "" } = useParams();
   const history = useRecordHistory(id);
@@ -57,13 +55,13 @@ export default function RecordHistoryTab() {
     <div className="max-w-4xl mx-auto bg-surface-container-lowest border border-border rounded-xl p-8 shadow-sm">
       <h3 className="text-headline-sm text-on-surface flex items-center gap-2 mb-8">
         <Icon name="history" className="text-primary" />
-        Audit Trail
+        Registro attività
       </h3>
 
-      {history.isLoading && <p className="text-body-md text-on-surface-variant">Loading…</p>}
+      {history.isLoading && <p className="text-body-md text-on-surface-variant">Caricamento…</p>}
       {history.isError && <ErrorState error={history.error} onRetry={() => history.refetch()} />}
       {history.data && history.data.length === 0 && (
-        <p className="text-body-md text-on-surface-variant">No history events recorded for this record.</p>
+        <p className="text-body-md text-on-surface-variant">Nessun evento registrato nella cronologia di questo record.</p>
       )}
 
       {history.data && history.data.length > 0 && (
@@ -97,13 +95,13 @@ export default function RecordHistoryTab() {
                 >
                   <div className="flex justify-between items-start mb-2 gap-4">
                     <div className="flex items-center gap-2">
-                      <span className="text-body-md text-on-surface font-semibold">{event.action}</span>
+                      <span className="text-body-md text-on-surface font-semibold">{auditActionLabel(event.action)}</span>
                       <span className="px-2 py-0.5 rounded-full bg-surface-container-high text-on-surface-variant text-[10px] font-mono font-semibold uppercase tracking-wider">
                         {event.actorLabel}
                       </span>
                       {isCanonicalChange && (
                         <span className="px-2 py-0.5 rounded-full bg-tertiary/15 text-tertiary text-[10px] font-mono font-semibold uppercase tracking-wider">
-                          Canonical Change
+                          Cambio canonico
                         </span>
                       )}
                     </div>
@@ -114,7 +112,7 @@ export default function RecordHistoryTab() {
                   <p className="text-body-md text-on-surface-variant">
                     {isCanonicalChange ? (
                       <>
-                        <span className="font-medium text-on-surface">Reason: </span>
+                        <span className="font-medium text-on-surface">Motivo: </span>
                         {event.detail}
                       </>
                     ) : (

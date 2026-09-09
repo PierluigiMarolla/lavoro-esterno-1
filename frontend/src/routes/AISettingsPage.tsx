@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { NavLink } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import {
   useAIProviderModels, useAISettings, useTestAIProvider,
@@ -38,7 +39,11 @@ export default function AISettingsPage() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h2 className="text-headline-md text-on-surface">Impostazioni AI</h2>
+        <h2 className="text-headline-md text-on-surface">Impostazioni</h2>
+        <div className="flex gap-4 mt-3 mb-4 border-b border-border">
+          <NavLink to="/settings/ai" className="pb-2 border-b-2 border-primary text-primary">AI</NavLink>
+          <NavLink to="/settings/proxies" className="pb-2 text-on-surface-variant">Rotazione proxy</NavLink>
+        </div>
         <p className="text-body-md text-on-surface-variant mt-1">
           Configura il modello globale dei riepiloghi. Le API key sono cifrate e non vengono mai mostrate.
         </p>
@@ -130,12 +135,12 @@ function ProviderCard({ provider, settingsRevision, cloudBudget }: { provider: A
       {isLocal && <p className={`mb-3 text-label-sm ${catalog.isError ? "text-error" : catalog.data?.models.includes(model) ? "text-success" : "text-on-surface-variant"}`}>
         {catalog.isFetching ? "Verifica stato Ollama..." : catalog.isError ? "Ollama non raggiungibile." : catalog.data?.models.includes(model) ? "Ollama online: modello disponibile." : "Ollama online: download o inizializzazione del modello in corso."}
       </p>}
-      <label className="text-label-sm text-on-surface-variant">Model ID<Input value={model} list={`models-${provider.provider}`} onChange={(e) => setModel(e.target.value)} className="mt-1 font-mono" /></label>
+      <label className="text-label-sm text-on-surface-variant">ID modello<Input value={model} list={`models-${provider.provider}`} onChange={(e) => setModel(e.target.value)} className="mt-1 font-mono" /></label>
       <datalist id={`models-${provider.provider}`}>{catalog.data?.models.map((name) => <option key={name} value={name} />)}</datalist>
       {provider.provider === "custom_openai" && <label className="block mt-3 text-label-sm text-on-surface-variant">Endpoint HTTPS<Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} className="mt-1 font-mono" /></label>}
       {!isLocal && <label className="block mt-3 text-label-sm text-on-surface-variant">API key {provider.credentialConfigured && <span className="text-success">· configurata</span>}<Input type="password" autoComplete="new-password" value={apiKey} placeholder={provider.credentialConfigured ? "Lascia vuoto per conservarla" : "Inserisci API key"} onChange={(e) => setApiKey(e.target.value)} className="mt-1" /></label>}
-      {provider.provider === "openai" && <div className="grid grid-cols-2 gap-2 mt-3"><Input placeholder="Organization (opzionale)" value={organization} onChange={(e) => setOrganization(e.target.value)} /><Input placeholder="Project (opzionale)" value={project} onChange={(e) => setProject(e.target.value)} /></div>}
-      {provider.provider === "openrouter" && <div className="grid grid-cols-2 gap-2 mt-3"><Input placeholder="Site URL (opzionale)" value={siteUrl} onChange={(e) => setSiteUrl(e.target.value)} /><Input placeholder="App name (opzionale)" value={appName} onChange={(e) => setAppName(e.target.value)} /></div>}
+      {provider.provider === "openai" && <div className="grid grid-cols-2 gap-2 mt-3"><Input placeholder="Organizzazione (opzionale)" value={organization} onChange={(e) => setOrganization(e.target.value)} /><Input placeholder="Progetto (opzionale)" value={project} onChange={(e) => setProject(e.target.value)} /></div>}
+      {provider.provider === "openrouter" && <div className="grid grid-cols-2 gap-2 mt-3"><Input placeholder="URL sito (opzionale)" value={siteUrl} onChange={(e) => setSiteUrl(e.target.value)} /><Input placeholder="Nome applicazione (opzionale)" value={appName} onChange={(e) => setAppName(e.target.value)} /></div>}
       <label className="flex items-center gap-2 mt-4 text-body-md"><input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} disabled={isLocal || (!isLocal && provider.lastTestSuccess !== true)} className="accent-primary" />Provider abilitato</label>
       <div className="flex flex-wrap gap-2 mt-4">
         <Button size="sm" onClick={saveProvider} disabled={save.isPending}>Salva</Button>

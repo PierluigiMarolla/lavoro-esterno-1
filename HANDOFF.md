@@ -852,8 +852,8 @@ fonti rotte (`consecutiveFailures`).
    verificare ToS/robots.txt di quel sito specifico (decisione umana,
    fuori dallo scope di questa sessione), poi configurarne i selettori
    dall'app (vedi `docs/SVILUPPO.md` § 7).
-3. Non ancora affrontato: gestione blocchi IP/captcha/proxy rotation
-   (decisione con impatto su costi, esplicitamente lasciata aperta).
+3. La gestione proxy e stata completata nella sessione 16 tramite pool
+   globali fail-closed. La gestione automatica dei CAPTCHA resta fuori scope.
 
 ## File chiave da leggere per ripartire (sessione 4)
 
@@ -1263,6 +1263,20 @@ backup.
 
 ### `localhost` restituisce HTTP 500 o resta in attesa
 
+È disponibile `scripts/windows/Repair-Localhost.ps1`. Senza parametri esegue
+soltanto la diagnosi; `-Repair`, da PowerShell elevata, termina un listener
+stale esclusivamente quando IPv4 risponde `200`, IPv6 non risponde e PID, nome
+e percorso identificano esattamente `C:\Program Files\WSL\wslrelay.exe`.
+Il frontend Docker usa inoltre `VITE_API_URL=/api/v1`, quindi il fallback
+`http://127.0.0.1` mantiene operative anche autenticazione e chiamate API.
+
+Verifica del 7 settembre 2026: lo script ha identificato IPv4 `200`, IPv6 in
+timeout e `wslrelay.exe` PID 62736 nel percorso ufficiale. L'ambiente Codex
+non può ottenere autonomamente il token UAC di Windows; la modalità `-Repair`
+va quindi eseguita una volta da una PowerShell aperta come amministratore.
+Nel frattempo il frontend ricostruito è pienamente operativo su
+`http://127.0.0.1`, incluso `POST /api/v1/auth/login`.
+
 Su Docker Desktop con backend WSL, `localhost` può risolvere prima a `::1` e
 venire intercettato da `wslrelay` senza raggiungere nginx. Le porte nginx sono
 perciò pubblicate esplicitamente su `127.0.0.1`; il browser deve quindi poter
@@ -1559,3 +1573,258 @@ Verifica conclusiva:
 
 Resta il warning già noto per il `JWT_SECRET_KEY` locale di 20 byte: non è stato
 ruotato automaticamente perché la rotazione invaliderebbe le sessioni attive.
+
+# Sessione 13 — 7 settembre 2026: campi custom dello scraper
+
+La pipeline non scarta più i campi configurati al di fuori dello schema core.
+La migrazione `20260907120000_advertisement_custom_fields.py` aggiunge lo
+snapshot JSONB `advertisements.custom_fields`; `GenericScraper.normalize()` vi
+conserva stringhe, liste e valori mancanti e l'upsert lo sostituisce a ogni
+scan. Telefono e media restano nei rispettivi flussi e non vengono duplicati.
+L'hash del contenuto comprende ora il JSON custom con ordinamento stabile e i
+valori non vuoti contribuiscono alla completezza nella scelta canonica.
+
+Le API Overview e Occurrences espongono `customFields`. L'Overview mostra i
+campi dell'annuncio canonico, usando i badge esistenti per `tags`; ogni riga
+Occurrences ha un dettaglio espandibile con lo snapshot della singola fonte.
+I nuovi export dichiarano `export-v2` e includono `custom_fields` sia nel JSON
+sia in una colonna CSV serializzata deterministicamente. Gli export già creati
+non vengono modificati e i dati custom scartati prima di questa migrazione
+saranno disponibili soltanto dopo un nuovo scan esplicitamente avviato.
+
+Prima del riavvio applicare:
+
+```powershell
+docker compose exec api alembic upgrade head
+```
+
+I campi custom non entrano nella ricerca dinamica e non vengono inviati ai
+provider AI. La configurazione di prova continua a mostrarli immediatamente,
+mentre la persistenza avviene soltanto durante uno scan reale.
+
+Verifica conclusiva: migrazione applicata a `head`, Ruff verde sui file
+modificati, suite backend completa `181 passed`, lint frontend senza errori
+(due warning Fast Refresh preesistenti), build Vite completata e Playwright
+custom-fields `1 passed` tramite `http://127.0.0.1`. Lo scan reale della fonte
+`prova` è terminato `completed` con 25 annunci e zero errori: tutti e 25 hanno
+`tags` JSON array in `custom_fields`, nessuno contiene chiavi core duplicate e
+24 sono già annunci canonici dei rispettivi record (il restante condivide un
+record il cui canonico è un'altra occorrenza). API, frontend, worker scraper ed
+export sono operativi. `localhost` conserva il problema esterno del relay IPv6
+Windows già documentato; l'endpoint IPv4 ha risposto HTTP 200 durante i test.
+
+# Sessione 14 — 8 settembre 2026: aggregazione universale dei campi custom
+
+La persistenza era già generica: la verifica sul database ha confermato che la
+chiave arbitraria `prova` era salvata in 25 annunci. Il dato risultava però
+invisibile nell'Overview quando apparteneva a un'occorrenza diversa da quella
+canonica, perché `GET /records/{id}` leggeva solo
+`canonical_ad.custom_fields`.
+
+L'endpoint Overview espone ora `customFieldGroups`, una vista calcolata su tutte
+le occorrenze del record. Ogni valore conserva fonte, codice fonte, annuncio e
+flag canonico. Valori discordanti non vengono sovrascritti; vengono rimossi
+soltanto duplicati JSON identici della stessa fonte. I nomi restano
+case-sensitive ed esattamente come configurati, mentre campi vuoti non sono
+mostrati. `customFields` continua a rappresentare lo snapshot canonico per
+compatibilità con client precedenti.
+
+La UI mostra la sezione "All collected fields" con provenienza e aggrega i
+badge `tags` da tutte le fonti. Occurrences ed export continuano a usare lo
+snapshot per-annuncio. Non è richiesta una migrazione aggiuntiva e i valori già
+presenti diventano visibili appena API e frontend vengono ricostruiti; solo i
+dati scartati prima della migrazione del 7 settembre richiedono un nuovo scan.
+
+Verifica conclusiva: test custom-fields `7 passed`, suite backend completa
+`183 passed`, Ruff verde sui file interessati, lint frontend senza errori (due
+warning Fast Refresh preesistenti), build Vite completata e Playwright mirato
+`1 passed`. API e frontend sono stati ricostruiti senza modificare i volumi;
+pagina e health API rispondono `200`. Una richiesta autenticata reale ha
+restituito per un record già esistente i gruppi `prova` e `tags`, confermando
+che non serve ripetere lo scraping per i valori già persistiti.
+
+# Sessione 15 — 8 settembre 2026: paginazione href e JavaScript
+
+La fonte `prova` aveva `max_pages=1`; inoltre `a.page-link` trovava sia la
+pagina corrente sia “Seguente” e nessuno dei controlli esponeva `href`. Il
+motore precedente cercava esclusivamente il primo `href` e interrompeva la
+discovery senza diagnostica.
+
+La discovery ora richiede un controllo Next univoco, usa automaticamente
+`href` quando presente e, nei mode `dynamic`/`stealth`, usa una `page_action`
+Scrapling con click DOM quando il controllo è JavaScript-only. Attende una
+variazione dell'URL o degli annunci, deduplica i link e blocca cicli e cambi di
+origine. La migrazione `20260908100000` aggiunge a `scrape_runs` pagine
+visitate, modalità e motivo di arresto; le anomalie diventano errori sicuri
+nello storico.
+
+“Test configuration” invia la bozza del form senza salvarla e mostra la stessa
+diagnostica. La fonte `prova` è stata aggiornata tramite il normale endpoint
+Admin, con audit, usando
+`nextPageSelector = a.page-link[aria-label="Next"]` e `maxPages = 5`.
+
+Verifica conclusiva: migrazione applicata a `head` (`20260908100000`), test
+reale della configurazione completato su 5 pagine in modalità `click`, arresto
+per `max_pages`, 119 URL di annunci unici e nessun warning. La suite backend
+completa è verde (`192 passed`), incluso il controllo sulla propagazione sicura
+degli errori di paginazione nello storico. Ruff è verde, lint frontend non
+segnala errori (restano due warning Fast
+Refresh preesistenti), build Vite completata e Playwright Sources `6 passed`.
+API, frontend, nginx e worker scraper sono stati ricostruiti preservando i
+volumi. È stato inoltre accodato uno scan reale della fonte: l'elaborazione è
+asincrona e può richiedere tempo perché visita e scarica i singoli annunci e i
+relativi media rispettando i limiti della fonte.
+
+# Sessione 16 — 8 settembre 2026: proxy rotator globale
+
+Introdotti pool proxy globali riutilizzabili con endpoint HTTP/HTTPS/SOCKS,
+selezione least-recently-used e policy fail-closed per le fonti assegnate.
+Username/password sono cifrati AES-256-GCM con una chiave dedicata e non
+compaiono in API, log o audit. Il proxy viene applicato a robots.txt, listing,
+pagine annuncio e download media; gli errori di rete e HTTP 403/407/429 ruotano
+su un massimo di tre endpoint con cooldown 5/15/30/60 minuti.
+
+La migrazione `20260908130000_proxy_rotator.py` crea pool, endpoint, membership
+e storico tentativi, collega le fonti e amplia la diagnostica dei run. La UI
+Admin e disponibile in `/settings/proxies`; il form Source assegna il pool e
+mostra esplicitamente il comportamento fail-closed. Prima di salvare
+credenziali valorizzare `PROXY_CREDENTIAL_ENCRYPTION_KEY` con 32 byte casuali
+in base64; per gateway interni usare l'allowlist server-side dedicata.
+
+Sono supportati HTTP, HTTPS, SOCKS4 e SOCKS5. Poiche `httpx` non implementa
+SOCKS4, quel solo percorso usa `curl_cffi`/libcurl mantenendo gli stessi limiti
+di dimensione, redirect controllati e verifiche SSRF. Host e DNS sono
+rivalidati al momento dell'uso per impedire DNS rebinding; un pool assegnato
+non effettua mai fallback diretto.
+
+Verifica conclusiva: migrazione applicata a `20260908130000 (head)`, suite
+backend completa `201 passed` e test proxy mirati `9 passed`; Ruff verde,
+lint frontend senza errori (due warning Fast
+Refresh preesistenti), build Vite completata. Playwright Sources `6 passed` e
+Proxy Settings `1 passed` tramite `http://127.0.0.1`. API, frontend e worker
+scraper sono stati ricostruiti preservando tutti i volumi; health API e pagina
+rispondono `200` su IPv4. `localhost` puo ancora essere intercettato dal relay
+IPv6 stale di WSL documentato nelle sessioni precedenti.
+
+# Sessione 17 — 9 settembre 2026: scraping automatico fixed-delay
+
+Ogni fonte dispone ora di uno schedule opzionale configurabile dalla pagina
+Sources da un Admin con 2FA, in minuti/ore/giorni tra 15 minuti e 30 giorni.
+Non è una periodicità ancorata all'orologio: `next_scrape_at` viene calcolato
+solo alla conclusione del run. Esempio verificato: scan 10:00–10:20 e intervallo
+di un'ora producono la nuova scadenza 11:20. Anche un run manuale o fallito
+riavvia il countdown; durante pending/running la scadenza resta nulla.
+
+La migrazione `20260908160000_source_scrape_scheduling.py` aggiunge stato e
+revisione alle fonti, run `pending`, origine manual/scheduled e task ID. Un
+indice univoco parziale vieta più run attivi per fonte. Celery Beat esegue il
+dispatcher ogni minuto con lock `SKIP LOCKED`, ripubblica pending non acquisiti
+dopo due minuti e chiude i running stale oltre sei ore (con margine per il hard
+time limit del worker). Lo schedule viene riletto al termine, quindi modifiche o
+disattivazioni effettuate durante uno scan si applicano alla scadenza seguente.
+
+La UI mostra stato, frequenza, ultima conclusione, prossima esecuzione e origine
+dei run in `Europe/Rome`; gli Operator conservano il solo avvio manuale. Le
+variabili operative sono `SCRAPE_PENDING_RETRY_MINUTES`, `SCRAPE_STALE_HOURS` e
+`SCRAPE_SCHEDULER_BATCH_SIZE`. Non usare `docker compose down -v`: la migrazione
+è additiva e preserva dati, media e configurazioni proxy.
+
+Verifica eseguita: Ruff verde; suite backend `212 passed`; lint frontend
+senza errori (restano due warning Fast Refresh preesistenti); build Vite
+completata; Playwright Sources `7 passed`, incluso il salvataggio dello
+schedule. Migrazione applicata a `20260908160000 (head)`, indice parziale
+verificato su PostgreSQL, dispatcher osservato ogni minuto con esito
+`published: 0` quando nessuna fonte è abilitata allo schedule, pagina e health
+API entrambe `200` su `127.0.0.1`. Il test browser va eseguito con
+`PLAYWRIGHT_BASE_URL=http://127.0.0.1` su questa macchina a causa del relay
+IPv6 stale di `localhost` già documentato.
+
+# Sessione 18 — 9 settembre 2026: refresh continuo e storico occorrenze
+
+Ogni scraping manuale o scheduled confronta ora l'occorrenza identificata
+dalla terna record/fonte/URL. Titolo, descrizione e tutti i campi custom hanno
+un hash deterministico separato dall'hash del set ordinato e deduplicato dei
+media. Se nulla cambia vengono aggiornati soltanto `last_seen_at`
+dell'annuncio e dei media riconosciuti: `scraped_at`, canonico, revisioni e
+storico restano invariati e nessun media viene ricaricato o riclassificato.
+
+Una modifica materiale incrementa `Advertisement.revision` e
+`Record.content_revision`, aggiorna lo snapshot corrente e crea una riga
+immutabile in `advertisement_versions` con i soli nomi dei campi cambiati. I
+media nuovi vengono aggiunti; quelli assenti diventano `is_current=false`
+solo quando il download del set è completo. Un download parziale mantiene i
+media precedenti, e gli originali MinIO non vengono mai sovrascritti. Gli
+annunci non incontrati durante uno scan non vengono considerati rimossi.
+
+La tab Occurrences mostra revisione e ultimo cambiamento; History include gli
+aggiornamenti dello scraper. Il nuovo endpoint
+`GET /records/{recordId}/occurrences/{advertisementId}/versions` espone gli
+snapshot autorizzati. Media, Overview ed export usano solo media correnti. I
+riepiloghi AI salvano la revisione del record e rispondono con `isStale=true`
+quando i dati sono cambiati; la rigenerazione resta manuale per evitare costi
+imprevisti.
+
+Migrazioni applicate: `20260909100000_continuous_record_versions.py` e
+`20260909103000_backfill_occurrence_hashes.py` (head), con backfill verificato
+di 400 versioni iniziali per 400 annunci e zero hash mancanti. I run ora
+espongono `itemsUpdated` e `itemsUnchanged`; lo schedule fixed-delay della
+sessione precedente è invariato. Verifica: suite backend `215 passed`, test
+mirati successivi `29 passed`; Ruff verde; lint frontend senza errori (due
+warning Fast Refresh preesistenti), build Vite completata; API, frontend e
+worker interessati ricostruiti senza rimuovere volumi; health IPv4 `200`.
+Playwright `custom-fields.spec.ts` è verde (`1 passed`) e copre sia i campi
+aggregati sia dettaglio e storico revisioni dell'occorrenza.
+
+# Sessione 19 — 9 settembre 2026: localizzazione italiana
+
+L’esperienza applicativa è ora in italiano. Il frontend inizializza `i18next`
+e `react-i18next` con lingua e fallback `it`, imposta `lang="it"` e centralizza
+la formattazione in `it-IT` con fuso `Europe/Rome`. Route, payload JSON, enum,
+tabelle e identificatori tecnici restano invariati. Provider, modelli, nomi
+delle fonti, contenuti acquisiti e campi personalizzati non vengono tradotti.
+
+I nuovi riepiloghi usano `summary-v2-it`; `summary-v1` resta disponibile per
+i job storici già congelati. La migrazione
+`20260909110000_italian_localization.py` aggiorna in modo idempotente soltanto
+la configurazione globale e incrementa la revisione. Non rigenera versioni
+esistenti. Una versione prompt sconosciuta fallisce esplicitamente, senza
+fallback silenzioso.
+
+Gli errori di validazione FastAPI/Pydantic conservano `loc` e `type`, ma
+restituiscono un messaggio leggibile in italiano e non riflettono l’input
+potenzialmente sensibile. Il controllo frontend `npm run check:i18n` impedisce
+di introdurre nuovamente le più comuni stringhe inglesi direttamente in JSX,
+placeholder, `title` e `aria-label`.
+
+Comandi di verifica:
+
+```powershell
+cd frontend
+npm run check:i18n
+npm run lint
+npm run build
+
+cd ..\backend
+ruff check app tests
+pytest
+alembic upgrade head
+```
+
+Per aggiornare lo stack senza perdere dati, ricostruire `api`, `frontend` e
+`worker-ai`, quindi applicare Alembic. Non usare `docker compose down -v`.
+
+Verifica finale della sessione: Ruff superato e suite backend completa con
+`216 passed`; lint frontend senza errori (restano i due avvisi Fast Refresh
+preesistenti), controllo `check:i18n` e build Vite superati. I 16 test
+Playwright isolati per Panoramica, Record, Riepilogo AI, Fonti, pianificazione,
+proxy, Account e campi personalizzati sono verdi. La migrazione attiva è
+`20260909110000 (head)`; pagina, health API, API, frontend e worker AI sono
+operativi e la pagina pubblicata dichiara `<html lang="it">`.
+
+La suite Playwright che usa l'Admin reale richiede l'allineamento delle
+credenziali locali in `frontend/e2e/fixtures.ts`: sul volume corrente la
+password storica della fixture non corrisponde all'utente e l'API restituisce
+correttamente “Email o password non validi”. Non è stata modificata o
+reimpostata automaticamente alcuna credenziale reale. Il problema non riguarda
+la localizzazione; i flussi equivalenti con API simulate sono coperti dai 16
+test verdi sopra indicati.

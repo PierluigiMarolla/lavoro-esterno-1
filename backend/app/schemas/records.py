@@ -10,6 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.common import CamelModel
 
+CustomFieldValue = str | list[str] | None
+
 
 class AdvertisementRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -19,6 +21,7 @@ class AdvertisementRead(BaseModel):
     source_url: str
     title: str | None
     description: str | None
+    custom_fields: dict[str, CustomFieldValue] = Field(default_factory=dict)
     first_seen_at: datetime
     last_seen_at: datetime
     scraped_at: datetime
@@ -33,6 +36,7 @@ class RecordRead(BaseModel):
     canonical_ad_id: uuid.UUID | None
     created_at: datetime
     updated_at: datetime
+    content_revision: int = 0
 
 
 class RecordDetail(RecordRead):
@@ -111,6 +115,24 @@ class RecordSearchResponseRead(CamelModel):
     page_size: int
 
 
+class CustomFieldValueRead(CamelModel):
+    """Valore custom raccolto da una specifica fonte/occorrenza."""
+
+    value: CustomFieldValue
+    source_id: uuid.UUID
+    source_name: str
+    source_code: str
+    advertisement_id: uuid.UUID
+    is_canonical: bool
+
+
+class CustomFieldGroupRead(CamelModel):
+    """Tutti i valori valorizzati di una chiave custom nel Record."""
+
+    name: str
+    values: list[CustomFieldValueRead] = Field(default_factory=list)
+
+
 class RecordOverviewRead(CamelModel):
     """Dettaglio di un Record per la tab "Overview" della UI, rispecchia
     `frontend/src/types/index.ts:RecordOverview`."""
@@ -127,6 +149,10 @@ class RecordOverviewRead(CamelModel):
     last_seen_at: datetime
     status: str
     tags: list[str] = Field(default_factory=list)
+    # Compatibilita con i client precedenti: snapshot del solo annuncio canonico.
+    custom_fields: dict[str, CustomFieldValue] = Field(default_factory=dict)
+    custom_field_groups: list[CustomFieldGroupRead] = Field(default_factory=list)
+    content_revision: int = 0
 
 
 class RecordOccurrenceRead(CamelModel):
@@ -141,6 +167,20 @@ class RecordOccurrenceRead(CamelModel):
     scraped_at: datetime
     is_canonical: bool
     match_confidence: float
+    custom_fields: dict[str, CustomFieldValue] = Field(default_factory=dict)
+    revision: int = 1
+    last_changed_at: datetime
+    has_updates: bool = False
+
+
+class AdvertisementVersionRead(CamelModel):
+    id: uuid.UUID
+    advertisement_id: uuid.UUID
+    revision: int
+    scrape_run_id: uuid.UUID | None = None
+    changed_fields: list[str] = Field(default_factory=list)
+    snapshot: dict[str, Any]
+    created_at: datetime
 
 
 class RecordMediaRead(CamelModel):
@@ -192,6 +232,8 @@ class RecordAiSummaryRead(CamelModel):
     sources_used: list[SourceUsedRead] = Field(default_factory=list)
     provider: str = "openai"
     model: str = "legacy"
+    record_content_revision: int = 0
+    is_stale: bool = False
 
 
 class RecordAiSummaryVersionRead(RecordAiSummaryRead):
@@ -216,3 +258,4 @@ class SummaryGenerationJobRead(CamelModel):
     created_at: datetime
     started_at: datetime | None = None
     completed_at: datetime | None = None
+    record_content_revision: int = 0

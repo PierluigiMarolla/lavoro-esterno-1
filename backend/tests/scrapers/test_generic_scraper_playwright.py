@@ -15,6 +15,10 @@ browser installato.
 
 from __future__ import annotations
 
+import threading
+from collections.abc import Iterator
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
 import pytest
 
 pytest.importorskip("playwright")
@@ -54,6 +58,52 @@ def _scraper(base_url: str, **overrides) -> GenericScraper:
     return GenericScraper(slug="test_source", base_url=base_url, config=config)
 
 
+@pytest.fixture
+def javascript_pagination_site_url() -> Iterator[str]:
+    listing = b"""<!doctype html><html><body>
+    <div id="overlay" style="position:fixed;inset:0;z-index:20"></div>
+    <div id="ads"></div><a class="next" aria-label="Next">Next</a>
+    <script>
+      const pages = [
+        ['/ad1.html', '/ad2.html'],
+        ['/ad2.html', '/ad3.html'],
+        ['/ad4.html']
+      ];
+      let pageIndex = 0;
+      function render() {
+        document.querySelector('#ads').innerHTML = pages[pageIndex]
+          .map((href) => `<a class="ad-link" href="${href}">${href}</a>`).join('');
+        if (pageIndex === pages.length - 1) document.querySelector('.next')?.remove();
+      }
+      document.querySelector('.next').addEventListener('click', () => {
+        pageIndex += 1;
+        render();
+      });
+      render();
+    </script></body></html>"""
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            body = b"User-agent: *\nAllow: /\n" if self.path == "/robots.txt" else listing
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, message_format: str, *args: object) -> None:
+            return None
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address[:2]
+    try:
+        yield f"http://{host}:{port}"
+    finally:
+        server.shutdown()
+
+
 async def test_discover_follows_pagination_and_collects_all_ad_links(
     _chromium_ready: None, open_site_url: str
 ) -> None:
@@ -67,6 +117,82 @@ async def test_discover_follows_pagination_and_collects_all_ad_links(
     assert urls[0].endswith("/ad1.html")
     assert urls[1].endswith("/ad2.html")
     assert urls[2].endswith("/ad3.html")  # dalla pagina 2, raggiunta via next_page_selector
+    assert scraper.discovery_diagnostics.pages_visited == 2
+    assert scraper.discovery_diagnostics.pagination_mode == "href"
+    assert scraper.discovery_diagnostics.stop_reason == "end_of_pagination"
+
+
+async def test_discover_clicks_javascript_next_under_overlay_and_deduplicates(
+    _chromium_ready: None, javascript_pagination_site_url: str
+) -> None:
+    scraper = _scraper(
+        javascript_pagination_site_url,
+        start_urls=[f"{javascript_pagination_site_url}/listing.html"],
+        next_page_selector='a.next[aria-label="Next"]',
+        max_pages=3,
+    )
+    try:
+        urls = await scraper.discover()
+    finally:
+        await scraper.aclose()
+
+    assert [url.rsplit("/", 1)[-1] for url in urls] == [
+        "ad1.html",
+        "ad2.html",
+        "ad3.html",
+        "ad4.html",
+    ]
+    assert scraper.discovery_diagnostics.pages_visited == 3
+    assert scraper.discovery_diagnostics.pagination_mode == "click"
+    assert scraper.discovery_diagnostics.stop_reason == "max_pages"
+    assert scraper.discovery_diagnostics.unique_ads_found == 4
+
+
+async def test_http_mode_reports_javascript_only_pagination(
+    javascript_pagination_site_url: str,
+) -> None:
+    scraper = _scraper(
+        javascript_pagination_site_url,
+        start_urls=[f"{javascript_pagination_site_url}/listing.html"],
+        render_js=False,
+        fetch_mode="http",
+        next_page_selector='a.next[aria-label="Next"]',
+        max_pages=3,
+    )
+    try:
+        await scraper.discover()
+    finally:
+        await scraper.aclose()
+
+    assert scraper.discovery_diagnostics.pages_visited == 1
+    assert scraper.discovery_diagnostics.stop_reason == "click_requires_browser"
+    assert scraper.discovery_diagnostics.errors == [
+        "Il controllo Next non ha href: usare il mode dynamic o stealth."
+    ]
+
+
+async def test_browser_reports_click_that_does_not_change_page(
+    _chromium_ready: None,
+    javascript_pagination_site_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("app.scrapers.generic._PAGINATION_CHANGE_TIMEOUT_MS", 200)
+    scraper = _scraper(
+        javascript_pagination_site_url,
+        start_urls=[f"{javascript_pagination_site_url}/listing.html"],
+        next_page_selector="#overlay",
+        max_pages=2,
+    )
+    try:
+        await scraper.discover()
+    finally:
+        await scraper.aclose()
+
+    assert scraper.discovery_diagnostics.pages_visited == 1
+    assert scraper.discovery_diagnostics.stop_reason == "page_did_not_change"
+    assert scraper.discovery_diagnostics.errors == [
+        "Il controllo Next non ha modificato URL o annunci entro il timeout."
+    ]
 
 
 async def test_scrape_ad_extracts_configured_fields(

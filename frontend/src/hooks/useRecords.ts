@@ -28,6 +28,14 @@ export function useRecordMedia(id: string) {
   return useQuery({ queryKey: ["records", id, "media"], queryFn: () => recordsApi.fetchRecordMedia(id), enabled: Boolean(id) });
 }
 
+export function useOccurrenceVersions(recordId: string, advertisementId: string, enabled = true) {
+  return useQuery({
+    queryKey: ["records", recordId, "occurrences", advertisementId, "versions"],
+    queryFn: () => recordsApi.fetchOccurrenceVersions(recordId, advertisementId),
+    enabled: enabled && Boolean(recordId && advertisementId),
+  });
+}
+
 export function useReviewMedia(recordId: string) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -62,7 +70,7 @@ export function useRegenerateAiSummary(id: string) {
         await new Promise((resolve) => window.setTimeout(resolve, 2000));
         job = await recordsApi.fetchSummaryGenerationJob(id, job.id);
       }
-      if (job.status === "failed") throw new Error(job.errorMessage ?? "AI summary generation failed.");
+      if (job.status === "failed") throw new Error(job.errorMessage ?? "Generazione del riepilogo AI non riuscita.");
       return job;
     },
     onSuccess: () => {

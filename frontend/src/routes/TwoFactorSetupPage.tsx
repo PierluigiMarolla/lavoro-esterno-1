@@ -74,9 +74,9 @@ export default function TwoFactorSetupPage() {
       <div className="w-full max-w-[480px] bg-surface-container-lowest border border-border rounded-lg shadow-[0_4px_24px_rgba(0,0,0,0.04)] overflow-hidden flex flex-col">
         <div className="p-8 pb-6 text-center border-b border-border bg-surface-bright">
           <Icon name="verified_user" className="text-primary mb-2" size={28} />
-          <h1 className="text-headline-lg text-primary tracking-tight mb-2">Two-Factor Setup Required</h1>
+          <h1 className="text-headline-lg text-primary tracking-tight mb-2">Configurazione a due fattori obbligatoria</h1>
           <p className="text-body-md text-on-surface-variant">
-            Your role requires two-factor authentication before you can continue.
+            Il tuo ruolo richiede l’autenticazione a due fattori prima di poter continuare.
           </p>
         </div>
 
@@ -85,24 +85,24 @@ export default function TwoFactorSetupPage() {
             <div className="px-3 py-2 rounded bg-error-container/40 text-error text-body-md">
               <p className="font-semibold">{error.title}</p>
               <p>{error.description}</p>
-              {isLockedOut && <p className="mt-1 font-mono text-mono-data">Retry in {lockoutRemaining}s</p>}
+              {isLockedOut && <p className="mt-1 font-mono text-mono-data">Riprova tra {lockoutRemaining}s</p>}
             </div>
           )}
 
           {loadingSetup ? (
-            <p className="text-center text-body-md text-on-surface-variant">Preparing setup…</p>
+            <p className="text-center text-body-md text-on-surface-variant">Preparazione configurazione…</p>
           ) : !savedCodesAck ? (
             <>
               <div className="flex flex-col items-center gap-3">
                 {qrCodeBase64 && (
                   <img
                     src={`data:image/png;base64,${qrCodeBase64}`}
-                    alt="TOTP QR code"
+                    alt="Codice QR TOTP"
                     className="w-40 h-40 border border-outline-variant rounded"
                   />
                 )}
                 <p className="text-label-sm text-on-surface-variant text-center">
-                  Scan with Google Authenticator / Microsoft Authenticator, or enter this key manually:
+                  Scansiona con Google Authenticator o Microsoft Authenticator, oppure inserisci manualmente questa chiave:
                 </p>
                 <code className="font-mono text-mono-data text-on-surface bg-surface px-2 py-1 rounded border border-outline-variant">
                   {secret}
@@ -111,8 +111,7 @@ export default function TwoFactorSetupPage() {
 
               <div className="space-y-2">
                 <p className="text-label-sm text-on-surface">
-                  Save these backup codes now — each can be used once if you lose access to your
-                  authenticator app, and they will not be shown again:
+                  Salva ora questi codici di recupero: ciascuno può essere usato una sola volta e non verrà mostrato di nuovo.
                 </p>
                 <div className="grid grid-cols-2 gap-2 font-mono text-mono-data bg-surface border border-outline-variant rounded p-3">
                   {backupCodes.map((c) => (
@@ -126,14 +125,14 @@ export default function TwoFactorSetupPage() {
                 onClick={() => setSavedCodesAck(true)}
                 className="w-full py-2.5 px-4 rounded shadow-sm text-label-sm text-on-primary bg-primary hover:bg-primary-container transition-colors"
               >
-                I&apos;ve saved my secret and backup codes
+                Ho salvato il segreto e i codici di recupero
               </button>
             </>
           ) : (
             <form className="space-y-5" onSubmit={handleVerify}>
               <div className="space-y-1.5">
                 <label className="block text-label-sm text-on-surface" htmlFor="totp-code">
-                  Enter the 6-digit code from your authenticator app
+                  Inserisci il codice a 6 cifre dell’app di autenticazione
                 </label>
                 <input
                   id="totp-code"
@@ -155,7 +154,7 @@ export default function TwoFactorSetupPage() {
                 disabled={submitting || isLockedOut || code.length !== 6}
                 className="w-full py-2.5 px-4 rounded shadow-sm text-label-sm text-on-primary bg-primary hover:bg-primary-container transition-colors disabled:opacity-60"
               >
-                {isLockedOut ? `Retry in ${lockoutRemaining}s` : submitting ? "Verifying…" : "Activate 2FA"}
+                {isLockedOut ? `Riprova tra ${lockoutRemaining}s` : submitting ? "Verifica…" : "Attiva 2FA"}
               </button>
             </form>
           )}
@@ -165,7 +164,7 @@ export default function TwoFactorSetupPage() {
             onClick={() => logout()}
             className="text-center text-label-sm text-on-surface-variant hover:text-primary transition-colors"
           >
-            Sign out instead
+            Esci
           </button>
         </div>
       </div>

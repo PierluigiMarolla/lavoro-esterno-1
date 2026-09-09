@@ -4,18 +4,19 @@ import Icon from "@/components/ui/Icon";
 import SystemStatusDialog from "@/components/operations/SystemStatusDialog";
 import { useTheme } from "@/context/ThemeContext";
 import { useMarkAllNotificationsRead, useMarkNotificationRead, useNotifications } from "@/hooks/useOperations";
+import { useTranslation } from "react-i18next";
 
 const SEGMENT_LABELS: Record<string, string> = {
-  dashboard: "Dashboard",
-  records: "Records",
-  sources: "Sources",
-  exports: "Exports",
-  admin: "Admin",
-  overview: "Overview",
-  occurrences: "Occurrences",
+  dashboard: "Panoramica",
+  records: "Record",
+  sources: "Fonti",
+  exports: "Esportazioni",
+  admin: "Amministrazione",
+  overview: "Riepilogo",
+  occurrences: "Occorrenze",
   media: "Media",
-  "ai-summary": "AI Summary",
-  history: "History",
+  "ai-summary": "Riepilogo AI",
+  history: "Cronologia",
   account: "Account",
 };
 
@@ -35,10 +36,11 @@ export default function Topbar() {
   const notifications = useNotifications();
   const markRead = useMarkNotificationRead();
   const markAll = useMarkAllNotificationsRead();
+  const { t } = useTranslation();
 
   return (
     <header className="flex justify-between items-center px-gutter w-full sticky top-0 z-40 bg-surface h-topbar-height shadow-[0_1px_3px_rgba(0,0,0,0.05)] border-b border-border">
-      <nav aria-label="Breadcrumb" className="hidden md:flex">
+      <nav aria-label={t("header.breadcrumb")} className="hidden md:flex">
         <ol className="flex items-center gap-2 text-label-sm text-on-surface-variant">
           <li>
             <Link to="/dashboard" className="hover:text-primary transition-colors">
@@ -58,24 +60,24 @@ export default function Topbar() {
         <button
           onClick={toggle}
           className="p-2 rounded-full text-on-secondary-container hover:text-primary hover:bg-surface-container-low transition-colors focus:ring-2 focus:ring-primary-container outline-none"
-          title={resolvedTheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-          aria-label={resolvedTheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          title={resolvedTheme === "dark" ? t("header.lightMode") : t("header.darkMode")}
+          aria-label={resolvedTheme === "dark" ? t("header.lightMode") : t("header.darkMode")}
         >
           <Icon name={resolvedTheme === "dark" ? "light_mode" : "dark_mode"} />
         </button>
         <button
           onClick={() => setStatusOpen(true)}
           className="p-2 rounded-full text-on-secondary-container hover:text-primary hover:bg-surface-container-low transition-colors focus:ring-2 focus:ring-primary-container outline-none"
-          title="System status"
-          aria-label="System status"
+          title={t("header.systemStatus")}
+          aria-label={t("header.systemStatus")}
         >
           <Icon name="sensors" />
         </button>
         <button
           onClick={() => setNotificationsOpen((value) => !value)}
           className="p-2 rounded-full text-on-secondary-container hover:text-primary hover:bg-surface-container-low transition-colors focus:ring-2 focus:ring-primary-container outline-none relative"
-          title="Notifications"
-          aria-label="Notifications"
+          title={t("header.notifications")}
+          aria-label={t("header.notifications")}
         >
           <Icon name="notifications" />
           {(notifications.data?.unreadCount ?? 0) > 0 && (
@@ -86,9 +88,9 @@ export default function Topbar() {
         </button>
         {notificationsOpen && (
           <div className="absolute right-24 top-[58px] w-[360px] max-h-[440px] overflow-auto bg-surface-container-lowest border border-border rounded-lg shadow-xl p-3">
-            <div className="flex justify-between items-center mb-2"><strong>Notifiche</strong><button onClick={() => markAll.mutate()} className="text-xs text-primary">Segna tutte come lette</button></div>
-            {notifications.isError && <p className="text-sm text-error">Impossibile caricare le notifiche.</p>}
-            {notifications.data?.items.length === 0 && <p className="text-sm text-on-surface-variant py-4">Nessun avviso operativo.</p>}
+            <div className="flex justify-between items-center mb-2"><strong>{t("header.notifications")}</strong><button onClick={() => markAll.mutate()} className="text-xs text-primary">{t("header.markAllRead")}</button></div>
+            {notifications.isError && <p className="text-sm text-error">{t("header.notificationsError")}</p>}
+            {notifications.data?.items.length === 0 && <p className="text-sm text-on-surface-variant py-4">{t("header.noNotifications")}</p>}
             <div className="space-y-1">
               {notifications.data?.items.map((item) => (
                 <Link key={item.id} to={item.link ?? "#"} onClick={() => { markRead.mutate(item.id); setNotificationsOpen(false); }} className={`block rounded p-3 hover:bg-surface-container-low ${item.isRead ? "opacity-65" : "bg-surface-container-low"}`}>

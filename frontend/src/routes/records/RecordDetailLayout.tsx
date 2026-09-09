@@ -4,6 +4,7 @@ import Icon from "@/components/ui/Icon";
 import Badge, { type BadgeTone } from "@/components/ui/Badge";
 import ProgressBar from "@/components/ui/ProgressBar";
 import Tabs, { type TabItem } from "@/components/ui/Tabs";
+import { formatDate } from "@/lib/format";
 
 // Replicates desing/record_detail_overview/code.html: a record header (phone,
 // status, confidence, counts, dates) shared across all 5 tabs, followed by a
@@ -17,22 +18,18 @@ const STATUS_TONE: Record<string, BadgeTone> = {
 };
 
 const STATUS_LABEL: Record<string, string> = {
-  verified: "Active",
-  unverified: "Unverified",
-  flagged: "Flagged",
+  verified: "Attivo",
+  unverified: "Non verificato",
+  flagged: "Segnalato",
 };
 
 const TAB_ITEMS: TabItem[] = [
-  { to: "overview", label: "Overview", icon: "visibility" },
-  { to: "occurrences", label: "Occurrences", icon: "list_alt" },
+  { to: "overview", label: "Riepilogo", icon: "visibility" },
+  { to: "occurrences", label: "Occorrenze", icon: "list_alt" },
   { to: "media", label: "Media", icon: "perm_media" },
-  { to: "ai-summary", label: "AI Summary", icon: "auto_awesome" },
-  { to: "history", label: "History", icon: "history" },
+  { to: "ai-summary", label: "Riepilogo AI", icon: "auto_awesome" },
+  { to: "history", label: "Cronologia", icon: "history" },
 ];
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
-}
 
 export default function RecordDetailLayout() {
   const { id = "" } = useParams();
@@ -43,7 +40,7 @@ export default function RecordDetailLayout() {
       <div className="px-margin-page pt-margin-page pb-0 bg-surface-container-lowest border-b border-border">
         {overview.isLoading && <div className="h-20 mb-6 animate-pulse bg-surface-container-low rounded" />}
         {overview.isError && (
-          <div className="mb-6 text-body-md text-error">Failed to load record header.</div>
+          <div className="mb-6 text-body-md text-error">Impossibile caricare l’intestazione del record.</div>
         )}
         {overview.data && (
           <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 mb-6">
@@ -58,22 +55,22 @@ export default function RecordDetailLayout() {
               <div className="flex flex-wrap items-center gap-4 text-body-md text-on-surface-variant">
                 <span className="flex items-center gap-1.5">
                   <Icon name="find_in_page" size={18} />
-                  {overview.data.occurrencesCount} Occurrences
+                  {overview.data.occurrencesCount} occorrenze
                 </span>
                 <span className="w-1 h-1 rounded-full bg-outline-variant" />
                 <span className="flex items-center gap-1.5">
                   <Icon name="source" size={18} />
-                  {overview.data.sourcesCount} Sources
+                  {overview.data.sourcesCount} fonti
                 </span>
                 <span className="w-1 h-1 rounded-full bg-outline-variant" />
                 <span className="flex items-center gap-1.5">
                   <Icon name="calendar_today" size={18} />
-                  First seen: {formatDate(overview.data.firstSeenAt)}
+                  Prima rilevazione: {formatDate(overview.data.firstSeenAt)}
                 </span>
                 <span className="w-1 h-1 rounded-full bg-outline-variant" />
                 <span className="flex items-center gap-1.5">
                   <Icon name="update" size={18} />
-                  Last seen: {formatDate(overview.data.lastSeenAt)}
+                  Ultima rilevazione: {formatDate(overview.data.lastSeenAt)}
                 </span>
               </div>
               {overview.data.tags.length > 0 && (
@@ -87,7 +84,7 @@ export default function RecordDetailLayout() {
               )}
             </div>
             <div className="flex flex-col items-end gap-2 shrink-0">
-              <span className="text-label-sm text-on-surface-variant">Confidence Score</span>
+              <span className="text-label-sm text-on-surface-variant">Punteggio di affidabilità</span>
               <div className="flex items-center gap-3 w-40">
                 <ProgressBar value={overview.data.confidenceScore} tone="success" />
                 <span className="text-body-md font-medium text-success">{overview.data.confidenceScore}%</span>

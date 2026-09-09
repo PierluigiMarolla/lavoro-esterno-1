@@ -28,6 +28,7 @@ from sqlalchemy.orm import aliased, selectinload
 
 from app.db import get_db
 from app.models.advertisement import Advertisement
+from app.models.advertisement_versions import AdvertisementVersion
 from app.models.ai_settings import AIProviderConfig, AISettings
 from app.models.audit_log import AuditLog
 from app.models.canonical_history import CanonicalHistory
@@ -39,6 +40,9 @@ from app.models.summary_generation_jobs import SummaryGenerationJob
 from app.models.summary_versions import SummaryVersion
 from app.models.users import User
 from app.schemas.records import (
+    AdvertisementVersionRead,
+    CustomFieldGroupRead,
+    CustomFieldValueRead,
     RecordAiSummaryRead,
     RecordAiSummaryVersionRead,
     RecordDetail,
@@ -63,6 +67,85 @@ from app.services.record_search import (
 )
 
 router = APIRouter()
+
+
+def _tags_from_custom_fields(custom_fields: dict) -> list[str]:
+    raw_tags = custom_fields.get("tags")
+    tag_values = raw_tags if isinstance(raw_tags, list) else [raw_tags]
+    return list(
+        dict.fromkeys(
+            value.strip() for value in tag_values if isinstance(value, str) and value.strip()
+        )
+    )
+
+
+def _has_custom_field_value(value: object) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, list):
+        return any(isinstance(item, str) and item.strip() for item in value)
+    return False
+
+
+def _aggregate_custom_fields(
+    rows: list[tuple[Advertisement, uuid.UUID, str, str]],
+    canonical_ad_id: uuid.UUID | None,
+) -> list[CustomFieldGroupRead]:
+    """Raggruppa i campi di tutte le occorrenze senza perdere la provenienza.
+
+    Un duplicato e definito dalla stessa chiave, dallo stesso valore JSON e
+    dalla stessa fonte. L'annuncio canonico viene considerato per primo cosi,
+    in caso di duplicato, e quello a fornire il riferimento conservato.
+    """
+    groups: dict[str, list[CustomFieldValueRead]] = {}
+    seen: dict[str, set[tuple[uuid.UUID, str]]] = {}
+    ordered_rows = sorted(
+        rows,
+        key=lambda row: (
+            row[0].id != canonical_ad_id,
+            row[2].casefold(),
+            str(row[0].id),
+        ),
+    )
+    for advertisement, source_id, source_name, source_code in ordered_rows:
+        for name, value in (advertisement.custom_fields or {}).items():
+            if not _has_custom_field_value(value):
+                continue
+            serialized = json.dumps(
+                value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            )
+            duplicate_key = (source_id, serialized)
+            field_seen = seen.setdefault(name, set())
+            if duplicate_key in field_seen:
+                continue
+            field_seen.add(duplicate_key)
+            groups.setdefault(name, []).append(
+                CustomFieldValueRead(
+                    value=value,
+                    source_id=source_id,
+                    source_name=source_name,
+                    source_code=source_code,
+                    advertisement_id=advertisement.id,
+                    is_canonical=advertisement.id == canonical_ad_id,
+                )
+            )
+    return [
+        CustomFieldGroupRead(name=name, values=values)
+        for name, values in sorted(groups.items(), key=lambda item: item[0])
+    ]
+
+
+def _tags_from_groups(groups: list[CustomFieldGroupRead]) -> list[str]:
+    tags: list[str] = []
+    for group in groups:
+        if group.name != "tags":
+            continue
+        for entry in group.values:
+            raw_values = entry.value if isinstance(entry.value, list) else [entry.value]
+            tags.extend(
+                value.strip() for value in raw_values if isinstance(value, str) and value.strip()
+            )
+    return list(dict.fromkeys(tags))
 
 
 def _safe_decrypt_phone(encrypted: bytes) -> str:
@@ -308,6 +391,16 @@ async def get_record_overview(
             details={"count": 1},
         )
         await db.commit()
+    custom_rows = (
+        await db.execute(
+            select(Advertisement, Source.id, Source.name, Source.slug)
+            .join(Source, Source.id == Advertisement.source_id)
+            .where(Advertisement.record_id == record_id)
+        )
+    ).all()
+    custom_field_groups = _aggregate_custom_fields(custom_rows, record.canonical_ad_id)
+    custom_fields = canonical_ad.custom_fields or {} if canonical_ad else {}
+    tags = _tags_from_groups(custom_field_groups)
     return RecordOverviewRead(
         id=record.id,
         phone=phone,
@@ -323,11 +416,10 @@ async def get_record_overview(
         first_seen_at=first_seen_at or record.created_at,
         last_seen_at=last_seen_at or record.updated_at,
         status=confidence_to_status(confidence),
-        # Nessun sistema di tag/etichette manuali è implementato lato
-        # dominio (nessuna tabella dedicata): la UI gestisce già
-        # correttamente una lista vuota (vedi RecordOverviewTab.tsx, la
-        # sezione "Tags" è renderizzata solo se non vuota).
-        tags=[],
+        tags=tags,
+        custom_fields=custom_fields,
+        custom_field_groups=custom_field_groups,
+        content_revision=record.content_revision,
     )
 
 
@@ -359,8 +451,51 @@ async def get_record_occurrences(
             scraped_at=ad.scraped_at,
             is_canonical=(ad.id == record.canonical_ad_id),
             match_confidence=round(ad.confidence * 100, 1),
+            custom_fields=ad.custom_fields or {},
+            revision=ad.revision,
+            last_changed_at=ad.last_changed_at,
+            has_updates=ad.revision > 1,
         )
         for ad, source_name, source_slug in rows
+    ]
+
+
+@router.get(
+    "/{record_id}/occurrences/{advertisement_id}/versions",
+    response_model=list[AdvertisementVersionRead],
+)
+async def get_occurrence_versions(
+    record_id: uuid.UUID,
+    advertisement_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> list[AdvertisementVersionRead]:
+    await _get_record_or_404(db, record_id)
+    advertisement = await db.get(Advertisement, advertisement_id)
+    if advertisement is None or advertisement.record_id != record_id:
+        raise HTTPException(status_code=404, detail="Occorrenza non trovata.")
+    versions = (
+        (
+            await db.execute(
+                select(AdvertisementVersion)
+                .where(AdvertisementVersion.advertisement_id == advertisement_id)
+                .order_by(AdvertisementVersion.revision.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        AdvertisementVersionRead(
+            id=version.id,
+            advertisement_id=version.advertisement_id,
+            revision=version.revision,
+            scrape_run_id=version.scrape_run_id,
+            changed_fields=version.changed_fields or [],
+            snapshot=version.snapshot_json or {},
+            created_at=version.created_at,
+        )
+        for version in versions
     ]
 
 
@@ -389,6 +524,7 @@ async def get_record_media(
         .join(Advertisement, Advertisement.id == Media.advertisement_id)
         .join(Source, Source.id == Advertisement.source_id)
         .where(Advertisement.record_id == record_id)
+        .where(Media.is_current.is_(True))
         .order_by(Media.created_at.desc())
     )
     rows = (await db.execute(stmt)).all()
@@ -480,6 +616,21 @@ async def get_record_history(
         )
     ).all()
 
+    version_rows = (
+        (
+            await db.execute(
+                select(AdvertisementVersion)
+                .join(Advertisement, Advertisement.id == AdvertisementVersion.advertisement_id)
+                .where(
+                    Advertisement.record_id == record_id,
+                    AdvertisementVersion.revision > 1,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
     events: list[RecordHistoryEventRead] = []
 
     for row, overridden_by_email in canonical_rows:
@@ -536,11 +687,24 @@ async def get_record_history(
             )
         )
 
+    for row in version_rows:
+        fields = ", ".join(row.changed_fields) or "contenuto"
+        events.append(
+            RecordHistoryEventRead(
+                id=f"advertisement:{row.id}",
+                actor="system",
+                actor_label="Scraper",
+                action=f"Occorrenza aggiornata (revisione {row.revision})",
+                detail=f"Campi modificati: {fields}",
+                occurred_at=row.created_at,
+            )
+        )
+
     events.sort(key=lambda e: e.occurred_at, reverse=True)
     return events
 
 
-def _summary_version_fields(version: SummaryVersion) -> dict:
+def _summary_version_fields(version: SummaryVersion, current_revision: int) -> dict:
     """Campi comuni tra `RecordAiSummaryRead` (ultima versione) e
     `RecordAiSummaryVersionRead` (voce di storico) — evita di duplicare il
     parsing di `summary_json` nei due endpoint che lo consumano."""
@@ -564,15 +728,23 @@ def _summary_version_fields(version: SummaryVersion) -> dict:
         "sources_used": sources_used,
         "provider": version.model_provider,
         "model": version.model_name,
+        "record_content_revision": version.record_content_revision,
+        "is_stale": version.record_content_revision < current_revision,
     }
 
 
-def _summary_version_to_schema(version: SummaryVersion) -> RecordAiSummaryRead:
-    return RecordAiSummaryRead(**_summary_version_fields(version))
+def _summary_version_to_schema(
+    version: SummaryVersion, current_revision: int
+) -> RecordAiSummaryRead:
+    return RecordAiSummaryRead(**_summary_version_fields(version, current_revision))
 
 
-def _summary_version_to_versioned_schema(version: SummaryVersion) -> RecordAiSummaryVersionRead:
-    return RecordAiSummaryVersionRead(**_summary_version_fields(version), version=version.version)
+def _summary_version_to_versioned_schema(
+    version: SummaryVersion, current_revision: int
+) -> RecordAiSummaryVersionRead:
+    return RecordAiSummaryVersionRead(
+        **_summary_version_fields(version, current_revision), version=version.version
+    )
 
 
 @router.get("/{record_id}/ai-summary/versions", response_model=list[RecordAiSummaryVersionRead])
@@ -587,7 +759,7 @@ async def get_record_ai_summary_versions(
     riepilogo più recente (`frontend/src/routes/records/
     RecordAiSummaryTab.tsx`). Ordinate dalla più recente alla più vecchia.
     """
-    await _get_record_or_404(db, record_id)
+    record = await _get_record_or_404(db, record_id)
 
     stmt = (
         select(SummaryVersion)
@@ -595,7 +767,7 @@ async def get_record_ai_summary_versions(
         .order_by(SummaryVersion.version.desc())
     )
     versions = (await db.execute(stmt)).scalars().all()
-    return [_summary_version_to_versioned_schema(v) for v in versions]
+    return [_summary_version_to_versioned_schema(v, record.content_revision) for v in versions]
 
 
 @router.get(
@@ -619,7 +791,7 @@ async def get_record_ai_summary(
     mostrando un messaggio di errore fuorviante per uno stato in realtà
     normale ("non ancora generato").
     """
-    await _get_record_or_404(db, record_id)
+    record = await _get_record_or_404(db, record_id)
 
     stmt = (
         select(SummaryVersion)
@@ -631,7 +803,7 @@ async def get_record_ai_summary(
     if version is None:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
-    return _summary_version_to_schema(version)
+    return _summary_version_to_schema(version, record.content_revision)
 
 
 @router.post(
@@ -645,7 +817,7 @@ async def regenerate_record_ai_summary(
     user: User = Depends(require_role("admin", "operator")),
 ) -> SummaryGenerationJobRead:
     """Accoda un job persistente; nessun provider viene chiamato dal processo API."""
-    await _get_record_or_404(db, record_id)
+    record = await _get_record_or_404(db, record_id)
     ai = await db.get(AISettings, 1)
     if ai is None:
         raise HTTPException(status_code=503, detail="Configurazione AI non inizializzata.")
@@ -665,6 +837,7 @@ async def regenerate_record_ai_summary(
         provider_config_revision=provider.revision,
         prompt_version=ai.prompt_version,
         input_hash="pending-" + uuid.uuid4().hex,
+        record_content_revision=record.content_revision,
     )
     db.add(job)
     await db.commit()

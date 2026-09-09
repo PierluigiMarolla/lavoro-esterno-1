@@ -150,12 +150,12 @@ precedenti. Corretto con un alias esplicito in
 Tutti i punti sottostanti sono stati implementati e verificati dal vivo
 (`docker compose up --build`, `npx playwright test` contro lo stack reale,
 non solo test statici). Due piccoli endpoint backend sono stati aggiunti
-per supportare onestamente i requisiti (storico versioni AI Summary,
+per supportare onestamente i requisiti (storico versioni Riepilogo AI,
 storico run per fonte) invece di limitare la UI ai dati già disponibili —
 vedi `docs/API.md`. Durante la verifica sono stati trovati e corretti 3 bug
 reali (dettagli nelle note dei singoli punti e in `docs/API.md`).
 
-- [x] Rifinire la pagina/tab di **Login + 2FA**: `describeError()`
+- [x] Rifinire la pagina/tab di **Accesso + 2FA**: `describeError()`
       (`src/lib/errors.ts`, nuovo) legge `retry_after_seconds` dal body
       429/403 del backend; countdown live (`useCountdown`,
       `src/hooks/useCountdown.ts`) che disabilita il submit fino a fine
@@ -166,12 +166,12 @@ reali (dettagli nelle note dei singoli punti e in `docs/API.md`).
       TOTP generato a runtime nei test E2E).
 - [x] Rifinire la pagina/tab di **Ricerca**: filtri sincronizzati con la
       query string (`useSearchParams`, sopravvivono al refresh), opzione
-      "Source Origin" popolata da `GET /sources` (prima 3 valori hardcoded
+      "Origine fonte" popolata da `GET /sources` (prima 3 valori inseriti nel codice
       mai esistiti: `web`/`forum`/`manual`), errori di rete uniformati
       (`ErrorRow error={...} onRetry={...}`). Paginazione a pagine
       numerate mantenuta deliberatamente (volume atteso non giustifica
       infinite scroll).
-- [x] Rifinire la pagina/tab di **Dettaglio Record**: AI Summary ha ora
+- [x] Rifinire la pagina/tab di **Dettaglio Record**: Riepilogo AI ha ora
       un selettore storico versioni (nuovo endpoint `GET /records/{id}/
       ai-summary/versions`, prima il backend esponeva solo l'ultima); gli
       eventi "Cambio annuncio canonico" nello storico sono ora
@@ -183,7 +183,7 @@ reali (dettagli nelle note dei singoli punti e in `docs/API.md`).
       /sources/{id}/runs`, prima assente: solo `errorRate` aggregato era
       visibile); azioni Run/Pause/Disable nascoste lato client per il
       ruolo Viewer (il backend le rifiutava già con 403, qui solo UX).
-- [x] Rifinire la pagina/tab di **Export**: polling automatico
+- [x] Rifinire la pagina/tab di **Esportazioni**: polling automatico
       (`refetchInterval` TanStack Query, ogni 3s solo se esiste un job
       `processing`) in aggiunta al refresh manuale già presente.
 - [x] Rifinire la pagina/tab di **Amministrazione utenti**: form "Create
@@ -245,16 +245,16 @@ reali (dettagli nelle note dei singoli punti e in `docs/API.md`).
 
 ### Aggiornamento interfaccia e console operative — 4 settembre 2026
 
-- [x] Record e Search unificati in `/records`; `/search` resta un redirect
+- [x] Record e Ricerca unificati in `/records`; `/search` resta un reindirizzamento
       compatibile che conserva la query string. L'elenco è paginato anche
-      senza filtri e “All Sources” non blocca più la richiesta.
-- [x] AI Summary interpreta correttamente `204 No Content` come assenza del
+      senza filtri e “Tutte le fonti” non blocca più la richiesta.
+- [x] Riepilogo AI interpreta correttamente `204 No Content` come assenza del
       riepilogo, senza passare `undefined` a React Query.
 - [x] Utenti sospesi riattivabili da Admin con 2FA e revoca delle vecchie
       sessioni; protette auto-sospensione e sospensione dell'ultimo Admin.
 - [x] Pagina `/account` collegata dall'header con cambio password, setup 2FA e
       rigenerazione monouso dei backup code. Profile e Support sono rimossi.
-- [x] Console Source Priorities con job asincrono persistente e scelta canonica
+- [x] Console Priorità fonti con job asincrono persistente e scelta canonica
       basata su priorità, completezza, recenza e ID, senza eccezioni per slug.
 - [x] Console Classifiers con soglie NudeNet revisionate, statistiche e
       riaccodamento bulk che preserva gli override manuali.
@@ -271,7 +271,7 @@ costruito un **motore di scraping generico e reale**
 via Scrapling, nessun sito specifico conosciuto dal motore. La conoscenza
 del sito (URL, selettori CSS per
 link annunci/paginazione/campi) è fornita dall'operatore tramite l'app
-(`PATCH /sources/{id}` o il form "Add/Edit Source" in UI), non scritta da
+(`PATCH /sources/{id}` o il form "Aggiungi/Modifica fonte" nell'interfaccia), non scritta da
 chi ha sviluppato il progetto. Motivazione: implementare selettori reali
 per queste 9 fonti specifiche (siti commerciali di annunci di servizi
 sessuali) avrebbe significato raccogliere sistematicamente numeri di
@@ -282,7 +282,7 @@ indipendentemente dal contesto d'uso dichiarato. Per questo le 9 checkbox
 per-fonte restano non spuntate: il lavoro rimanente per ciascuna è ora
 "verificare ToS/robots.txt e trovare i selettori CSS giusti", non più
 "scrivere codice" — vedi `docs/SVILUPPO.md` § 7 per la procedura completa
-(Check robots.txt -> Test configuration su un annuncio reale, senza
+(Controlla robots.txt -> Testa configurazione su un annuncio reale, senza
 scrivere su DB -> scan reale).
 
 - [x] Rendere configurabile lo **User-Agent** dello scraper per singola
@@ -309,7 +309,7 @@ scrivere su DB -> scan reale).
       annunci, upload media su MinIO, ricalcolo canonico — la PRIMA
       pipeline di scraping->persistenza end-to-end del progetto.
 - [x] **CRUD completo per le fonti dall'applicazione**: `POST/PATCH/
-      DELETE /sources`, form "Add/Edit Source" in UI (solo Admin per
+      DELETE /sources`, form "Aggiungi/Modifica fonte" nell'interfaccia (solo Admin per
       creazione/modifica/eliminazione; eliminazione bloccata con 409 se
       esistono annunci collegati). Unico modo per creare una fonte oggi:
       i 9 connettori stub e lo script di seed sono stati rimossi in un
@@ -318,6 +318,23 @@ scrivere su DB -> scan reale).
       + strumento di verifica manuale in UI (`POST /sources/{id}/
       check-robots`, scarica solo il file pubblico `robots.txt`, nessun
       altro contenuto della fonte).
+
+- [x] **Proxy rotator globale**: pool riutilizzabili amministrati con 2FA,
+      selezione least-recently-used, credenziali AES-256-GCM, cooldown passivo,
+      test manuale e policy fail-closed. Listing, annunci e media condividono
+      il proxy di sessione; gli errori ritentabili ruotano fino a tre endpoint.
+- [x] **Scraping automatico fixed-delay per fonte**: intervallo configurabile
+      Admin/2FA tra 15 minuti e 30 giorni. Il timer parte dalla conclusione del
+      run precedente (anche manuale o fallito); run persistenti `pending`,
+      dispatcher Celery Beat, recupero pubblicazioni e vincolo DB assicurano
+      che una fonte non abbia mai due scan pending/running contemporanei.
+- [x] **Aggiornamento continuo e versionato delle occorrenze**: ogni scan
+      confronta titolo, descrizione, JSON custom e set SHA-256 dei media per la
+      terna record/fonte/URL. Un contenuto identico aggiorna soltanto
+      `last_seen_at`; una modifica incrementa le revisioni, crea uno snapshot
+      in `advertisement_versions`, aggiorna il canonico e rende obsoleto il
+      riepilogo AI precedente. I download parziali non rimuovono media e gli
+      annunci assenti da un run non vengono marcati rimossi.
 
 **Nota successiva (rimozione dei 9 connettori stub)**: i 9 connettori
 Python per-sito descritti nella sezione seguente e il loro
@@ -346,7 +363,7 @@ DAVVERO il motore (non solo in teoria) + 8 test di validazione schema
 (`backend/tests/test_sources_schemas.py`) — suite completa a 85/85.
 
 Bug pre-esistente trovato e corretto in questo passaggio: la colonna
-"Priority" della tabella Sources in UI mostrava in realtà un'etichetta
+"Priorità" della tabella Fonti nell'interfaccia mostrava in realtà un'etichetta
 High/Medium/Low derivata da `errorRate` (il campo `priority` non era mai
 stato esposto da `GET /sources`) — il tasso di errore travestito da
 priorità. Corretto aggiungendo `priority` allo schema `SourceRead`.
@@ -423,7 +440,7 @@ di codec/risoluzione, thumbnail, cinque frame e originali invariati. La
 verifica dell'intero stack Docker resta dipendente dall'accesso al daemon
 Docker dell'host.
 
-## 7. Export
+## 7. Esportazioni
 
 - [x] Implementare la **generazione reale del pacchetto zip con
       manifest**: JSON/CSV, provenienza, hash, esclusioni e sole varianti
@@ -640,3 +657,17 @@ Resta da fare un giro di verifica **eseguendo davvero** `docker compose up
 --build` end-to-end (non ancora testato in questo ambiente per assenza di
 Docker), e generare un `uv.lock`/`package-lock.json` reali eseguendo
 `uv sync` e `npm install` in locale.
+
+## 13. Localizzazione italiana
+
+- [x] Catalogo i18n frontend con lingua fissa italiana e fallback italiano.
+- [x] Navigazione, pagine operative, form, errori, stati e testi accessibili in italiano.
+- [x] Formattazione `it-IT` e orari applicativi in `Europe/Rome`.
+- [x] Messaggi di validazione API italiani senza modifica del contratto JSON.
+- [x] Prompt storici `summary-v1` preservati e nuovi riepiloghi su `summary-v2-it`.
+- [x] Migrazione idempotente della configurazione AI, senza rigenerazione dello storico.
+- [x] Controllo automatico delle nuove stringhe UI inglesi (`npm run check:i18n`).
+
+Gli identificatori tecnici, le route, i campi JSON, gli enum e lo schema dati
+restano in inglese per compatibilità. Rimangono invariati anche contenuti
+acquisiti, campi custom, marchi, provider e modelli AI.

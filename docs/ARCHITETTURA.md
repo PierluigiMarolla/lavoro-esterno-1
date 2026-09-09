@@ -113,7 +113,7 @@ verificato dal vivo, è più preciso su questi punti (vedi PROGETTO.md § 4):
   `Source.scrape_config` valorizzato — nessuna fonte specifica è hardcoded
   nel motore, i selettori CSS (URL di partenza, link annunci, paginazione,
   campi) sono forniti dall'operatore via `PATCH /sources/{id}` o il form
-  "Add/Edit Source" in UI. Rispetta sempre `robots.txt` (verificato PRIMA
+  "Aggiungi/Modifica fonte" nell'interfaccia. Rispetta sempre `robots.txt` (verificato PRIMA
   di ogni richiesta, non solo come check manuale), un rate limit minimo e
   lo User-Agent configurato per la fonte (con fallback al default del
   progetto).
@@ -152,8 +152,11 @@ verificato dal vivo, è più preciso su questi punti (vedi PROGETTO.md § 4):
 - **`ollama` / `ollama-init`**: runtime LLM interno e inizializzazione
   idempotente di `gemma4:e2b`. Il modello vive nel volume `ollama-data`, la
   porta 11434 non è pubblicata sull'host e `worker-ai` usa concorrenza 1.
-- **`scheduler`**: unico processo Celery Beat che pianifica periodicamente
-  i run di scraping per fonte e i task di manutenzione ricorrenti.
+- **`scheduler`**: Celery Beat invoca ogni minuto un dispatcher DB-backed.
+  Il dispatcher blocca le fonti dovute con `FOR UPDATE SKIP LOCKED`, crea il
+  run `pending` prima della pubblicazione e recupera i task non acquisiti.
+  La pianificazione è fixed-delay: la nuova scadenza nasce dalla conclusione
+  (anche fallita o manuale), mai dall'orario di partenza.
 - **`postgres`**: unica fonte di verità relazionale, mai raggiungibile da
   fuori la rete Docker interna.
 - **`redis`**: broker/result-backend Celery; se compromesso o perso,
@@ -226,3 +229,12 @@ verificato dal vivo, è più preciso su questi punti (vedi PROGETTO.md § 4):
 - **Retention DB-aware**: il task notturno elimina prima gli oggetti,
   invalida gli export derivati e solo dopo modifica il database; un errore
   storage impedisce di dichiarare completata la cancellazione.
+## Refresh continuo e rilevamento modifiche
+
+La pipeline di ingestione calcola separatamente il fingerprint deterministico
+di titolo/descrizione/campi custom e quello del set di SHA-256 media. Un
+riscontro identico aggiorna solo `last_seen_at`; una differenza crea una
+revisione immutabile, incrementa `Record.content_revision` e ricalcola il
+canonico. Download media parziali non possono far sparire media precedenti.
+I riepiloghi AI prodotti su revisioni precedenti vengono segnalati come
+obsoleti, senza generazione automatica.

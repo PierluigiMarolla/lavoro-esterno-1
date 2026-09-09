@@ -18,6 +18,7 @@ from app.config import settings
 from app.models.advertisement import Advertisement
 from app.models.ai_settings import AIProviderConfig, AISettings
 from app.models.audit_log import AuditLog
+from app.models.record import Record
 from app.models.sources import Source
 from app.models.summary_generation_jobs import SummaryGenerationJob
 from app.models.summary_versions import SummaryVersion
@@ -121,12 +122,14 @@ def summary_input_hash(
     provider: str | None = None,
     model: str | None = None,
     prompt_version: str | None = None,
+    record_content_revision: int = 0,
 ) -> str:
     envelope = {
         "provider": provider or "openai",
         "model": model or settings.OPENAI_MODEL,
         "prompt_version": prompt_version or settings.OPENAI_PROMPT_VERSION,
         "payload": payload,
+        "record_content_revision": record_content_revision,
     }
     return hashlib.sha256(
         json.dumps(envelope, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
@@ -148,6 +151,14 @@ def generate_summary(self, job_id: str) -> dict:
         job.started_at = datetime.now(UTC)
         job.error_message = None
         session.commit()
+
+        record = session.get(Record, job.record_id)
+        if record is None:
+            raise AIDisabledError("Record non disponibile.")
+        if record.content_revision != job.record_content_revision:
+            raise AIDisabledError(
+                "Il record e cambiato dopo la richiesta: rilanciare il riepilogo."
+            )
 
         rows = session.execute(
             select(Advertisement, Source)
@@ -172,7 +183,11 @@ def generate_summary(self, job_id: str) -> dict:
             raise AIDisabledError("Credenziale del provider AI non configurata.")
         payload, source_urls = _sanitized_input(rows)
         input_hash = summary_input_hash(
-            payload, job.model_provider, job.model_name, job.prompt_version
+            payload,
+            job.model_provider,
+            job.model_name,
+            job.prompt_version,
+            job.record_content_revision,
         )
         job.input_hash = input_hash
 
@@ -235,6 +250,7 @@ def generate_summary(self, job_id: str) -> dict:
             output_tokens=generated.output_tokens,
             cached_input_tokens=generated.cached_input_tokens,
             generation_job_id=job.id,
+            record_content_revision=job.record_content_revision,
         )
         session.add(version)
         job.status = "completed"

@@ -6,15 +6,11 @@ import Button from "@/components/ui/Button";
 import ErrorState from "@/components/ui/ErrorState";
 import { cn } from "@/lib/cn";
 import type { RecordAiSummary, RecordAiSummaryVersion } from "@/types";
+import { formatDateTime } from "@/lib/format";
 
 // Replicates desing/record_detail_ai_summary/code.html. The whole tab uses a
 // tinted surface + explicit "AI-generated" framing per DESIGN.md, so this
 // content is never mistaken for verified scraped data.
-
-function formatDateTime(iso: string | null): string {
-  if (!iso) return "Not yet generated";
-  return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-}
 
 export default function RecordAiSummaryTab() {
   const { id = "" } = useParams();
@@ -44,10 +40,10 @@ export default function RecordAiSummaryTab() {
   if (!summary.data) {
     return (
       <div className="space-y-4">
-        <p className="text-body-md text-on-surface-variant">No AI summary available for this record.</p>
+        <p className="text-body-md text-on-surface-variant">Nessun riepilogo AI disponibile per questo record.</p>
         <Button onClick={() => regenerate.mutate()} disabled={regenerate.isPending}>
           <Icon name="auto_awesome" size={18} className={regenerate.isPending ? "animate-spin" : undefined} />
-          {regenerate.isPending ? "Generating asynchronously..." : "Generate Summary"}
+          {regenerate.isPending ? "Generazione asincrona…" : "Genera riepilogo"}
         </Button>
         {regenerate.isError && <ErrorState error={regenerate.error} />}
       </div>
@@ -66,36 +62,47 @@ export default function RecordAiSummaryTab() {
         <div>
           <h2 className="text-headline-lg text-on-surface mb-2 flex items-center gap-2">
             <Icon name="auto_awesome" className="text-info" />
-            AI Synthesis
+            Sintesi AI
           </h2>
           <div className="flex items-center gap-2 text-body-md text-on-surface-variant">
             <Icon name="schedule" size={16} />
-            <span>Generated: {formatDateTime(data.generatedAt)}</span>
+            <span>Generato: {formatDateTime(data.generatedAt)}</span>
           </div>
           <p className="text-label-sm text-on-surface-variant mt-1">
-            Provider: {data.provider} · Model: <span className="font-mono">{data.model}</span>
+            Provider: {data.provider} · Modello: <span className="font-mono">{data.model}</span>
           </p>
         </div>
         <Button onClick={() => regenerate.mutate()} disabled={regenerate.isPending}>
           <Icon name="autorenew" size={18} className={regenerate.isPending ? "animate-spin" : undefined} />
-          {regenerate.isPending ? "Regenerating..." : "Regenerate Summary"}
+          {regenerate.isPending ? "Rigenerazione…" : "Rigenera riepilogo"}
         </Button>
       </div>
       {regenerate.isError && <ErrorState error={regenerate.error} className="mb-4" />}
+      {summary.data.isStale && (
+        <div className="mb-4 flex items-center gap-3 rounded-lg border border-warning bg-warning/10 px-4 py-3 text-on-surface">
+          <Icon name="update" size={20} className="text-warning" />
+          <div>
+            <p className="font-semibold">Riepilogo non aggiornato</p>
+            <p className="text-body-sm text-on-surface-variant">
+              I dati acquisiti sono cambiati dopo la generazione. Rigenera il riepilogo per usare la revisione corrente del record.
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-12 gap-gutter">
         <div className="col-span-12 lg:col-span-8 flex flex-col gap-gutter">
           {!isViewingLatest && (
             <div className="flex items-center gap-2 bg-info/10 border border-info/30 text-info rounded-lg px-4 py-2 text-body-md">
               <Icon name="history" size={18} />
-              <span>You&apos;re viewing an older version of this summary. Regenerating will create a new latest version.</span>
+              <span>Stai visualizzando una versione precedente. La rigenerazione creerà una nuova versione aggiornata.</span>
             </div>
           )}
 
           <section className="bg-surface-container-lowest border border-border rounded-lg p-6 shadow-sm">
             <div className="flex items-center gap-2 mb-4 border-b border-border pb-3">
               <Icon name="psychology" className="text-primary" size={24} />
-              <h3 className="text-headline-sm text-on-surface">Executive Synthesis</h3>
+              <h3 className="text-headline-sm text-on-surface">Sintesi generale</h3>
             </div>
             <p className="text-body-md text-on-surface-variant leading-relaxed whitespace-pre-line">
               {data.executiveSynthesis}
@@ -106,10 +113,10 @@ export default function RecordAiSummaryTab() {
             <div className="absolute top-0 left-0 w-1 h-full bg-warning" />
             <div className="flex items-center gap-2 mb-4 border-b border-warning/30 pb-3">
               <Icon name="warning" className="text-warning" size={24} />
-              <h3 className="text-headline-sm text-[#92400e]">Unverified Claims &amp; Anomalies</h3>
+              <h3 className="text-headline-sm text-[#92400e]">Affermazioni non verificate e anomalie</h3>
             </div>
             {data.unverifiedClaims.length === 0 ? (
-              <p className="text-body-md text-[#92400e]">No unverified claims flagged.</p>
+              <p className="text-body-md text-[#92400e]">Nessuna affermazione non verificata segnalata.</p>
             ) : (
               <ul className="space-y-3">
                 {data.unverifiedClaims.map((claim, i) => (
@@ -137,10 +144,10 @@ export default function RecordAiSummaryTab() {
           <section className="bg-surface-container-lowest border border-border rounded-lg p-6 shadow-sm">
             <div className="flex items-center gap-2 mb-4 border-b border-border pb-3">
               <Icon name="forum" className="text-secondary" size={24} />
-              <h3 className="text-headline-sm text-on-surface">Forum Chatter</h3>
+              <h3 className="text-headline-sm text-on-surface">Discussioni nei forum</h3>
             </div>
             {data.forumChatter.length === 0 ? (
-              <p className="text-body-md text-on-surface-variant">No forum chatter captured.</p>
+              <p className="text-body-md text-on-surface-variant">Nessuna discussione nei forum acquisita.</p>
             ) : (
               <div className="space-y-4">
                 {data.forumChatter.map((entry, i) => (
@@ -155,10 +162,10 @@ export default function RecordAiSummaryTab() {
           <section className="bg-surface-container-lowest border border-border rounded-lg p-6 shadow-sm">
             <div className="flex items-center gap-2 mb-4 border-b border-border pb-3">
               <Icon name="dataset" className="text-secondary" size={24} />
-              <h3 className="text-headline-sm text-on-surface">Sources Used</h3>
+              <h3 className="text-headline-sm text-on-surface">Fonti utilizzate</h3>
             </div>
             {data.sourcesUsed.length === 0 ? (
-              <p className="text-body-md text-on-surface-variant">No sources recorded.</p>
+              <p className="text-body-md text-on-surface-variant">Nessuna fonte registrata.</p>
             ) : (
               <ul className="space-y-2">
                 {data.sourcesUsed.map((source) => (
@@ -204,12 +211,12 @@ function VersionPicker({
     <section className="bg-surface-container-lowest border border-border rounded-lg p-6 shadow-sm">
       <div className="flex items-center gap-2 mb-4 border-b border-border pb-3">
         <Icon name="history" className="text-secondary" size={24} />
-        <h3 className="text-headline-sm text-on-surface">Version History</h3>
+        <h3 className="text-headline-sm text-on-surface">Cronologia versioni</h3>
       </div>
-      {isLoading && <p className="text-body-md text-on-surface-variant">Loading versions…</p>}
+      {isLoading && <p className="text-body-md text-on-surface-variant">Caricamento versioni…</p>}
       {error !== undefined && error !== null && <ErrorState error={error} onRetry={onRetry} className="py-4" />}
       {versions && versions.length === 0 && (
-        <p className="text-body-md text-on-surface-variant">No prior versions recorded.</p>
+        <p className="text-body-md text-on-surface-variant">Nessuna versione precedente registrata.</p>
       )}
       {versions && versions.length > 0 && (
         <ul className="space-y-1.5 max-h-72 overflow-y-auto">
@@ -229,11 +236,11 @@ function VersionPicker({
                   )}
                 >
                   <span>
-                    Version {version.version} — {formatDateTime(version.generatedAt)}
+                    Versione {version.version} — {formatDateTime(version.generatedAt)}
                   </span>
                   {isLatest && (
                     <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wider uppercase bg-primary-container text-on-primary border border-primary/20">
-                      Current
+                      Corrente
                     </span>
                   )}
                 </button>

@@ -97,11 +97,10 @@ export default function LoginPage() {
         <div className="w-full max-w-[420px] bg-surface-container-lowest border border-border rounded-lg shadow-[0_4px_24px_rgba(0,0,0,0.04)] overflow-hidden flex flex-col p-8 gap-4">
           <div className="flex items-center gap-2">
             <span className="material-symbols-outlined text-warning">warning</span>
-            <h2 className="text-headline-sm text-on-surface">New backup codes generated</h2>
+            <h2 className="text-headline-sm text-on-surface">Nuovi codici di recupero generati</h2>
           </div>
           <p className="text-body-md text-on-surface-variant">
-            You just used your last backup code, so a new set was generated automatically. Save
-            these now — they will not be shown again:
+            Hai appena utilizzato l’ultimo codice di recupero. È stato generato automaticamente un nuovo insieme: salvalo ora, perché non verrà mostrato di nuovo.
           </p>
           <div className="grid grid-cols-2 gap-2 font-mono text-mono-data bg-surface border border-outline-variant rounded p-3">
             {newBackupCodes.map((c) => (
@@ -113,7 +112,7 @@ export default function LoginPage() {
             onClick={() => navigate(pendingRedirect ?? "/dashboard", { replace: true })}
             className="w-full py-2.5 px-4 rounded shadow-sm text-label-sm text-on-primary bg-primary hover:bg-primary-container transition-colors"
           >
-            I&apos;ve saved my new backup codes
+            Ho salvato i nuovi codici di recupero
           </button>
         </div>
       </div>
@@ -125,7 +124,7 @@ export default function LoginPage() {
       <div className="w-full max-w-[420px] bg-surface-container-lowest border border-border rounded-lg shadow-[0_4px_24px_rgba(0,0,0,0.04)] overflow-hidden flex flex-col">
         <div className="p-8 pb-6 text-center border-b border-border bg-surface-bright">
           <h1 className="text-headline-lg text-primary tracking-tight mb-2">Lavoro Esterno</h1>
-          <p className="text-label-sm text-on-surface-variant uppercase tracking-widest">Enterprise Data</p>
+          <p className="text-label-sm text-on-surface-variant uppercase tracking-widest">Gestione dati aziendali</p>
         </div>
 
         <div className="p-8 pt-6 flex-1 flex flex-col justify-center">
@@ -133,7 +132,7 @@ export default function LoginPage() {
             <div className="mb-4 px-3 py-2 rounded bg-error-container/40 text-error text-body-md">
               <p className="font-semibold">{error.title}</p>
               <p>{error.description}</p>
-              {isLockedOut && <p className="mt-1 font-mono text-mono-data">Retry in {lockoutRemaining}s</p>}
+              {isLockedOut && <p className="mt-1 font-mono text-mono-data">Riprova tra {lockoutRemaining}s</p>}
             </div>
           )}
 
@@ -141,7 +140,7 @@ export default function LoginPage() {
             <form className="space-y-5" onSubmit={handleCredentialsSubmit}>
               <div className="space-y-1.5">
                 <label className="block text-label-sm text-on-surface" htmlFor="email">
-                  Email / Username
+                  Email / Nome utente
                 </label>
                 <div className="relative">
                   <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline text-[18px]">
@@ -187,7 +186,7 @@ export default function LoginPage() {
                   disabled={submitting || isLockedOut}
                   className="w-full flex justify-center py-2.5 px-4 rounded shadow-sm text-label-sm text-on-primary bg-primary hover:bg-primary-container focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary transition-colors disabled:opacity-60"
                 >
-                  {isLockedOut ? `Retry in ${lockoutRemaining}s` : submitting ? "Signing in…" : "Sign in"}
+                  {isLockedOut ? `Riprova tra ${lockoutRemaining}s` : submitting ? "Accesso…" : "Accedi"}
                 </button>
               </div>
             </form>
@@ -197,13 +196,13 @@ export default function LoginPage() {
                 <Icon name="verified_user" className="text-primary" size={28} />
                 <p className="text-body-md text-on-surface-variant">
                   {useBackupCode
-                    ? "Enter one of your 10-character backup codes."
-                    : "Enter the 6-digit code from your authenticator app."}
+                    ? "Inserisci uno dei codici di recupero di 10 caratteri."
+                    : "Inserisci il codice a 6 cifre dell’app di autenticazione."}
                 </p>
               </div>
               <div className="space-y-1.5">
                 <label className="block text-label-sm text-on-surface" htmlFor="mfa-code">
-                  Verification Code
+                  Codice di verifica
                 </label>
                 {useBackupCode ? (
                   <input
@@ -243,7 +242,7 @@ export default function LoginPage() {
                   }
                   className="w-full flex justify-center py-2.5 px-4 rounded shadow-sm text-label-sm text-on-primary bg-primary hover:bg-primary-container focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary transition-colors disabled:opacity-60"
                 >
-                  {isLockedOut ? `Retry in ${lockoutRemaining}s` : submitting ? "Verifying…" : "Verify"}
+                  {isLockedOut ? `Riprova tra ${lockoutRemaining}s` : submitting ? "Verifica…" : "Verifica"}
                 </button>
               </div>
               <button
@@ -254,7 +253,7 @@ export default function LoginPage() {
                 }}
                 className="w-full text-center text-label-sm text-on-surface-variant hover:text-primary transition-colors"
               >
-                {useBackupCode ? "Use authenticator code instead" : "Use a backup code instead"}
+                {useBackupCode ? "Usa il codice dell’app" : "Usa un codice di recupero"}
               </button>
               <button
                 type="button"
@@ -265,7 +264,7 @@ export default function LoginPage() {
                 }}
                 className="w-full text-center text-label-sm text-on-surface-variant hover:text-primary transition-colors"
               >
-                Back to sign in
+                Torna all’accesso
               </button>
             </form>
           )}
@@ -275,7 +274,7 @@ export default function LoginPage() {
           <span className="material-symbols-outlined text-warning" style={{ fontSize: 16 }}>
             warning
           </span>
-          <p className="text-label-sm text-on-surface-variant">Restricted Access / Internal System</p>
+          <p className="text-label-sm text-on-surface-variant">Accesso riservato / Sistema interno</p>
         </div>
       </div>
     </div>

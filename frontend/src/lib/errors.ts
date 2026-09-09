@@ -37,7 +37,7 @@ export function describeError(error: unknown): ErrorPresentation {
 
     if (error.status === 429 || detail?.error_code === "too_many_attempts") {
       return {
-        title: "Too many attempts",
+        title: "Troppi tentativi",
         description: detail?.message ?? error.message,
         retryable: false,
         retryAfterSeconds: detail?.retry_after_seconds,
@@ -45,44 +45,44 @@ export function describeError(error: unknown): ErrorPresentation {
     }
     if (error.status === 403) {
       return {
-        title: "Access denied",
+        title: "Accesso negato",
         description:
-          detail?.message ?? error.message ?? "You don't have permission to do this.",
+          detail?.message ?? error.message ?? "Non disponi dei permessi necessari.",
         retryable: false,
       };
     }
     if (error.status === 404) {
       return {
-        title: "Not found",
-        description: error.message || "The requested resource doesn't exist (or was removed).",
+        title: "Risorsa non trovata",
+        description: error.message || "La risorsa richiesta non esiste oppure è stata rimossa.",
         retryable: false,
       };
     }
     if (error.status >= 500) {
       return {
-        title: "Server error",
-        description: "Something went wrong on the server. Please try again in a moment.",
+        title: "Errore del server",
+        description: "Si è verificato un errore sul server. Riprova tra poco.",
         retryable: true,
       };
     }
     // 400/401/409/422/... — no dedicated case, but still a real message
     // from the API worth showing verbatim rather than a generic fallback.
-    return { title: "Request failed", description: error.message || "Please try again.", retryable: true };
+    return { title: "Richiesta non riuscita", description: error.message || "Riprova.", retryable: true };
   }
 
   // fetch() throws a plain TypeError (not an ApiError) when the network is
   // unreachable entirely — CORS failure, DNS failure, server not running.
   if (error instanceof TypeError) {
     return {
-      title: "Network error",
-      description: "Couldn't reach the server. Check your connection and try again.",
+      title: "Errore di rete",
+      description: "Impossibile raggiungere il server. Controlla la connessione e riprova.",
       retryable: true,
     };
   }
 
   return {
-    title: "Unexpected error",
-    description: error instanceof Error ? error.message : "Something went wrong.",
+    title: "Errore imprevisto",
+    description: error instanceof Error ? error.message : "Si è verificato un errore.",
     retryable: true,
   };
 }

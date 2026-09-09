@@ -18,11 +18,11 @@ export async function loginAsAdmin(page: Page): Promise<void> {
   await page.goto("/login");
   await page.locator("#email").fill(ADMIN_EMAIL);
   await page.locator("#password").fill(ADMIN_PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.getByRole("button", { name: "Accedi" }).click();
 
   await page.locator("#mfa-code").waitFor({ state: "visible" });
   await page.locator("#mfa-code").fill(generateTotp(ADMIN_TOTP_SECRET));
-  await page.getByRole("button", { name: "Verify" }).click();
+  await page.getByRole("button", { name: "Verifica" }).click();
 
   await page.waitForURL(/\/dashboard/);
 }

@@ -91,7 +91,7 @@ export default function Dialog({
           <button
             onClick={onClose}
             className="p-1 rounded-full text-on-surface-variant hover:text-primary hover:bg-surface-container-low"
-            aria-label="Close"
+            aria-label="Chiudi"
           >
             <Icon name="close" size={18} />
           </button>

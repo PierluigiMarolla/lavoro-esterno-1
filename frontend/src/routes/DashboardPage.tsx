@@ -30,11 +30,11 @@ const STATUS_TONE: Record<ScrapingRunStatus, BadgeTone> = {
 };
 
 const STATUS_LABEL: Record<ScrapingRunStatus, string> = {
-  running: "Running",
-  completed: "Completed",
-  failed: "Failed",
-  rate_limited: "Rate Limited",
-  queued: "Queued",
+  running: "In esecuzione",
+  completed: "Completata",
+  failed: "Non riuscita",
+  rate_limited: "Limitata",
+  queued: "In coda",
 };
 
 function formatDuration(seconds: number | null): string {
@@ -47,7 +47,7 @@ function formatDuration(seconds: number | null): string {
 
 function formatTime(iso: string | null): string {
   if (!iso) return "-";
-  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return new Date(iso).toLocaleTimeString("it-IT", { timeZone: "Europe/Rome", hour: "2-digit", minute: "2-digit" });
 }
 
 interface KpiCardConfig {
@@ -101,7 +101,7 @@ export default function DashboardPage() {
   const applyCustomRange = () => {
     const result = validateCustomDashboardRange(customStart, customEnd);
     if (!result.range) {
-      setRangeError(result.error ?? "Invalid interval.");
+      setRangeError(result.error ?? "Intervallo non valido.");
       return;
     }
     setSearchParams({ range: "custom", start: result.range.start, end: result.range.end });
@@ -123,12 +123,12 @@ export default function DashboardPage() {
       ]);
       const failed = results.filter((result) => result.isError).length;
       if (failed > 0) {
-        setRefreshError(`${failed} dashboard section${failed === 1 ? "" : "s"} could not be refreshed.`);
+        setRefreshError(`Impossibile aggiornare ${failed} ${failed === 1 ? "sezione" : "sezioni"} della panoramica.`);
       } else {
         setLastUpdatedAt(new Date());
       }
     } catch {
-      setRefreshError("The dashboard could not be refreshed.");
+      setRefreshError("Impossibile aggiornare la panoramica.");
     } finally {
       setIsRefreshing(false);
     }
@@ -137,7 +137,7 @@ export default function DashboardPage() {
   const rangeLabel =
     selection.preset === "custom"
       ? `${formatRomeDateTime(selection.range.start)} – ${formatRomeDateTime(selection.range.end)}`
-      : { "24h": "Last 24 Hours", "7d": "Last 7 Days", "30d": "Last 30 Days" }[
+      : { "24h": "Ultime 24 ore", "7d": "Ultimi 7 giorni", "30d": "Ultimi 30 giorni" }[
           selection.preset
         ];
 
@@ -145,47 +145,47 @@ export default function DashboardPage() {
     ? [
         {
           key: "total",
-          label: "Total Records",
+          label: "Record totali",
           icon: "database",
           accent: "bg-primary text-primary",
           value: kpis.data.totalRecords.toLocaleString(),
-          trend: { icon: "add", label: `+${kpis.data.newRecordsInRange} in selected period`, tone: "text-success" },
+          trend: { icon: "add", label: `+${kpis.data.newRecordsInRange} nel periodo selezionato`, tone: "text-success" },
         },
         {
           key: "sources",
-          label: "Active Sources",
+          label: "Fonti attive",
           icon: "source",
           accent: "bg-info text-info",
           value: kpis.data.activeSources.toLocaleString(),
-          trend: { icon: "check_circle", label: `${kpis.data.activeSourcesHealthyPct}% healthy`, tone: "text-on-surface-variant" },
+          trend: { icon: "check_circle", label: `${kpis.data.activeSourcesHealthyPct}% operative`, tone: "text-on-surface-variant" },
         },
         {
           key: "new-today",
-          label: "New Records",
+          label: "Nuovi record",
           icon: "add_box",
           accent: "bg-success text-success",
           value: kpis.data.newRecordsInRange.toLocaleString(),
           trend: {
             icon: kpis.data.newRecordsDeltaPct >= 0 ? "trending_up" : "trending_down",
-            label: `${kpis.data.newRecordsDeltaPct >= 0 ? "+" : ""}${kpis.data.newRecordsDeltaPct}% vs previous period`,
+            label: `${kpis.data.newRecordsDeltaPct >= 0 ? "+" : ""}${kpis.data.newRecordsDeltaPct}% rispetto al periodo precedente`,
             tone: kpis.data.newRecordsDeltaPct >= 0 ? "text-success" : "text-error",
           },
         },
         {
           key: "errors",
-          label: "Scraping Errors",
+          label: "Errori di acquisizione",
           icon: "warning",
           accent: "bg-error text-error",
           value: kpis.data.scrapingErrors.toLocaleString(),
-          trend: { icon: "trending_up", label: `${kpis.data.scrapingErrorsDelta >= 0 ? "+" : ""}${kpis.data.scrapingErrorsDelta} vs yesterday`, tone: "text-error" },
+          trend: { icon: "trending_up", label: `${kpis.data.scrapingErrorsDelta >= 0 ? "+" : ""}${kpis.data.scrapingErrorsDelta} rispetto a ieri`, tone: "text-error" },
         },
         {
           key: "exports",
-          label: "Active Exports",
+          label: "Esportazioni attive",
           icon: "sync",
           accent: "bg-warning text-warning",
           value: kpis.data.activeExports.toLocaleString(),
-          trend: { icon: "hourglass_empty", label: "Processing...", tone: "text-warning" },
+          trend: { icon: "hourglass_empty", label: "In elaborazione…", tone: "text-warning" },
         },
       ]
     : null;
@@ -194,8 +194,8 @@ export default function DashboardPage() {
     <div className="grid grid-cols-12 gap-gutter">
       <div className="col-span-12 mb-2 flex items-end justify-between">
         <div>
-          <h2 className="text-headline-md text-on-surface">Operational Overview</h2>
-          <p className="text-body-md text-on-surface-variant mt-1">Real-time telemetry and extraction metrics.</p>
+          <h2 className="text-headline-md text-on-surface">Panoramica operativa</h2>
+          <p className="text-body-md text-on-surface-variant mt-1">Telemetria e metriche di acquisizione aggiornate.</p>
         </div>
         <div className="flex flex-col items-end gap-1">
           <div className="flex gap-2">
@@ -220,14 +220,14 @@ export default function DashboardPage() {
                     onClick={() => selectPreset(preset)}
                     className={`rounded border px-2 py-1.5 text-label-sm ${selection.preset === preset ? "border-primary bg-primary/10 text-primary" : "border-border hover:bg-surface-container-low"}`}
                   >
-                    {preset === "24h" ? "24 hours" : preset === "7d" ? "7 days" : "30 days"}
+                    {preset === "24h" ? "24 ore" : preset === "7d" ? "7 giorni" : "30 giorni"}
                   </button>
                 ))}
               </div>
               <div className="mt-4 border-t border-border pt-4 space-y-3">
-                <p className="text-label-sm font-semibold text-on-surface">Custom interval</p>
+                <p className="text-label-sm font-semibold text-on-surface">Intervallo personalizzato</p>
                 <label className="block text-label-sm text-on-surface-variant">
-                  Start (Europe/Rome)
+                  Inizio (Europe/Rome)
                   <input
                     type="datetime-local"
                     value={customStart}
@@ -236,7 +236,7 @@ export default function DashboardPage() {
                   />
                 </label>
                 <label className="block text-label-sm text-on-surface-variant">
-                  End (Europe/Rome)
+                  Fine (Europe/Rome)
                   <input
                     type="datetime-local"
                     value={customEnd}
@@ -247,7 +247,7 @@ export default function DashboardPage() {
                 </label>
                 {rangeError && <p className="text-label-sm text-error" role="alert">{rangeError}</p>}
                 <button type="button" onClick={applyCustomRange} className="w-full rounded bg-primary px-3 py-2 text-label-sm text-on-primary hover:bg-primary-container">
-                  Apply interval
+                  Applica intervallo
                 </button>
               </div>
             </div>
@@ -260,12 +260,12 @@ export default function DashboardPage() {
             className="flex items-center gap-1 px-3 py-1.5 bg-primary text-on-primary rounded text-label-sm hover:bg-primary-container transition-colors shadow-sm"
           >
             <Icon name="refresh" size={16} className={isRefreshing ? "animate-spin" : undefined} />
-            {isRefreshing ? "Refreshing…" : "Refresh Data"}
+            {isRefreshing ? "Aggiornamento…" : "Aggiorna dati"}
           </button>
           </div>
           {lastUpdatedAt && (
             <p className="text-label-sm text-on-surface-variant">
-              Updated {lastUpdatedAt.toLocaleTimeString("en-GB", { timeZone: "Europe/Rome", hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+              Aggiornato alle {lastUpdatedAt.toLocaleTimeString("it-IT", { timeZone: "Europe/Rome", hour: "2-digit", minute: "2-digit", second: "2-digit" })}
             </p>
           )}
         </div>
@@ -317,24 +317,24 @@ export default function DashboardPage() {
           <div className="px-5 py-4 border-b border-border flex justify-between items-center bg-surface-container-lowest">
             <h3 className="text-headline-sm text-on-surface flex items-center gap-2">
               <Icon name="data_usage" className="text-primary" />
-              Scraping Activity
+              Attività di acquisizione
             </h3>
           </div>
           <Table>
             <THead>
               <Tr className="hover:bg-transparent">
-                <Th className="w-1/4">Source</Th>
-                <Th>Status</Th>
-                <Th>Started</Th>
-                <Th className="text-right">Duration</Th>
-                <Th className="text-right">Items</Th>
-                <Th className="text-right">Errors</Th>
+                <Th className="w-1/4">Fonte</Th>
+                <Th>Stato</Th>
+                <Th>Avvio</Th>
+                <Th className="text-right">Durata</Th>
+                <Th className="text-right">Elementi</Th>
+                <Th className="text-right">Errori</Th>
               </Tr>
             </THead>
             <TBody>
               {activity.isLoading && <LoadingRow colSpan={6} />}
               {activity.isError && <ErrorRow colSpan={6} error={activity.error} onRetry={() => activity.refetch()} />}
-              {activity.data && activity.data.length === 0 && <EmptyRow colSpan={6} message="No scraping runs yet." />}
+              {activity.data && activity.data.length === 0 && <EmptyRow colSpan={6} message="Nessuna acquisizione presente." />}
               {activity.data?.map((run) => (
                 <Tr key={run.id}>
                   <Td>
@@ -362,22 +362,22 @@ export default function DashboardPage() {
         <div className="bg-surface-container-lowest border border-border rounded-lg shadow-[0_1px_2px_rgba(0,0,0,0.02)] p-5">
           <h3 className="text-headline-sm text-on-surface mb-4 flex items-center gap-2">
             <Icon name="monitor_heart" className="text-info" />
-            Source Health
+            Stato delle fonti
           </h3>
-          {health.isLoading && <p className="text-body-md text-on-surface-variant">Loading…</p>}
+          {health.isLoading && <p className="text-body-md text-on-surface-variant">Caricamento…</p>}
           {health.isError && <ErrorState error={health.error} onRetry={() => health.refetch()} className="py-4" />}
           {health.data && (
             <div className="space-y-4">
-              <HealthRow label="Healthy" value={health.data.healthy} total={health.data.total} tone="success" />
-              <HealthRow label="Rate Limited" value={health.data.rateLimited} total={health.data.total} tone="warning" />
-              <HealthRow label="Error State" value={health.data.error} total={health.data.total} tone="error" />
+              <HealthRow label="Operative" value={health.data.healthy} total={health.data.total} tone="success" />
+              <HealthRow label="Limitate" value={health.data.rateLimited} total={health.data.total} tone="warning" />
+              <HealthRow label="In errore" value={health.data.error} total={health.data.total} tone="error" />
             </div>
           )}
           <button
             onClick={() => setDiagnosticsOpen(true)}
             className="w-full mt-5 py-2 border border-border rounded text-label-sm text-on-surface hover:bg-surface-container-lowest transition-colors flex items-center justify-center gap-2"
           >
-            View Detailed Diagnostics
+            Visualizza diagnostica dettagliata
             <Icon name="arrow_forward" size={16} />
           </button>
         </div>
@@ -386,14 +386,14 @@ export default function DashboardPage() {
           <div className="px-5 py-4 border-b border-border bg-surface-container-lowest">
             <h3 className="text-headline-sm text-on-surface flex items-center gap-2">
               <Icon name="history" className="text-outline" />
-              Recent Activity
+              Attività recente
             </h3>
           </div>
           <div className="p-5 overflow-y-auto flex-1 space-y-5">
-            {recent.isLoading && <p className="text-body-md text-on-surface-variant">Loading…</p>}
+            {recent.isLoading && <p className="text-body-md text-on-surface-variant">Caricamento…</p>}
             {recent.isError && <ErrorState error={recent.error} onRetry={() => recent.refetch()} className="py-4" />}
             {recent.data && recent.data.length === 0 && (
-              <p className="text-body-md text-on-surface-variant">No recent activity.</p>
+              <p className="text-body-md text-on-surface-variant">Nessuna attività recente.</p>
             )}
             {recent.data?.map((event, i) => (
               <div key={event.id} className="relative pl-6">

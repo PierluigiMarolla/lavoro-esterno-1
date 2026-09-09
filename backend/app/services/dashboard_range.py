@@ -36,12 +36,12 @@ def resolve_dashboard_range(
     if start is None or end is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Both start and end are required",
+            detail="Sono richiesti sia l'inizio sia la fine dell'intervallo",
         )
     if start.tzinfo is None or end.tzinfo is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Dashboard timestamps must include a timezone offset",
+            detail="Le date della panoramica devono includere il fuso orario",
         )
 
     start_utc = start.astimezone(UTC)
@@ -49,16 +49,16 @@ def resolve_dashboard_range(
     if start_utc >= end_utc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Dashboard start must be earlier than end",
+            detail="L'inizio dell'intervallo deve precedere la fine",
         )
     if end_utc > now:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Dashboard end cannot be in the future",
+            detail="La fine dell'intervallo non può essere nel futuro",
         )
     if end_utc - start_utc > MAX_DASHBOARD_RANGE:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Dashboard range cannot exceed 90 days",
+            detail="L'intervallo della panoramica non può superare 90 giorni",
         )
     return DashboardRange(start=start_utc, end=end_utc)

@@ -1,5 +1,9 @@
 # Lavoro Esterno
 
+L’interfaccia e i messaggi applicativi sono in italiano. Gli orari sono
+visualizzati in `Europe/Rome` e i valori numerici con locale `it-IT`; API,
+route e identificatori tecnici restano invariati per compatibilità.
+
 Web app ad accesso riservato per raccogliere annunci da più fonti,
 deduplicarli per numero di telefono, arricchirli con classificazione
 automatica dei media e riepiloghi generati da AI, e permetterne la
@@ -46,6 +50,7 @@ cp .env.example .env
 openssl rand -base64 32   # PHONE_ENCRYPTION_KEY
 openssl rand -base64 32   # PHONE_HMAC_SECRET
 openssl rand -base64 64   # JWT_SECRET_KEY
+openssl rand -base64 32   # PROXY_CREDENTIAL_ENCRYPTION_KEY (se necessaria)
 
 docker compose up --build
 
@@ -53,16 +58,26 @@ docker compose up --build
 docker compose exec api alembic upgrade head
 
 # ...creare il primo utente Admin (nessun endpoint API può farlo)
-docker compose exec api python -m app.scripts.create_admin \
-    --email admin@lavoro.internal --password "una-password-forte"
+docker compose exec api python -m app.scripts.create_admin --email admin@lavoro.internal --password "una-password-forte"
 
-# ...e creare le fonti da scrapare via API/UI (form "Add Source" nella
-# pagina Sources, o POST /sources) — vedi docs/SVILUPPO.md § 5
+# ...e creare le fonti da acquisire via API/UI (form "Aggiungi fonte" nella
+# pagina Fonti, o POST /sources) — vedi docs/SVILUPPO.md § 5
 ```
 
 Applicazione raggiungibile su `http://localhost/` (reverse proxy nginx),
 documentazione API interattiva su `http://localhost/docs`. Sequenza
 verificata su un ambiente Docker reale in questa sessione di sviluppo.
+
+Su Docker Desktop/Windows, se `localhost` resta in attesa mentre
+`http://127.0.0.1` funziona, eseguire prima la diagnosi non distruttiva:
+
+```powershell
+.\scripts\windows\Repair-Localhost.ps1
+```
+
+Lo script indica se `[::1]:80` è occupato da un relay WSL non responsivo e
+spiega come avviare la riparazione verificata da PowerShell elevata. Non
+arresta processi in modalità diagnostica e non elimina volumi Docker.
 
 Per il dettaglio di ogni comando (migrazioni Alembic, test, sviluppo
 frontend con hot reload) vedi [`docs/SVILUPPO.md`](docs/SVILUPPO.md).
@@ -95,7 +110,9 @@ frontend con hot reload) vedi [`docs/SVILUPPO.md`](docs/SVILUPPO.md).
 ## Stato del progetto
 
 L'infrastruttura e i flussi principali sono implementati, inclusi scraper
-generico, pipeline media ONNX/FFmpeg e riepiloghi OpenAI asincroni. Restano
-attività di produzione come generazione export, GDPR e deploy. Vedi
+generici con proxy rotator e schedulazione fixed-delay per fonte (il timer
+riparte soltanto dalla conclusione dello scan precedente), pipeline media
+ONNX/FFmpeg, riepiloghi AI multiprovider, export e flussi GDPR. Restano i gate
+di produzione e la validazione esterna. Vedi
 [`PROGETTO.md`](PROGETTO.md) per l'elenco dettagliato del lavoro
 rimanente.

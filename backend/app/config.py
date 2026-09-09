@@ -90,9 +90,23 @@ class Settings(BaseSettings):
     # Compatibilita temporanea: non sono piu la fonte runtime dei provider.
     OPENAI_API_KEY: str | None = Field(default=None, description="API key OpenAI server-side.")
     OPENAI_MODEL: str = Field(default="gpt-5.6-luna")
-    OPENAI_PROMPT_VERSION: str = Field(default="summary-v1")
+    OPENAI_PROMPT_VERSION: str = Field(default="summary-v2-it")
     OPENAI_TIMEOUT_SECONDS: float = Field(default=60.0, gt=0, le=300)
     AI_MAX_INPUT_CHARS: int = Field(default=100_000, ge=1)
+
+    # --- Proxy scraper ---------------------------------------------------
+    PROXY_CREDENTIAL_ENCRYPTION_KEY: str | None = Field(
+        default=None, description="Chiave AES-256 base64 dedicata alle credenziali proxy."
+    )
+    PROXY_PRIVATE_HOST_ALLOWLIST: str = Field(
+        default="", description="Host proxy privati consentiti, separati da virgola."
+    )
+    PROXY_MAX_ATTEMPTS: int = Field(default=3, ge=1, le=10)
+
+    # --- Scheduling scraper -----------------------------------------------
+    SCRAPE_PENDING_RETRY_MINUTES: int = Field(default=2, ge=1, le=60)
+    SCRAPE_STALE_HOURS: int = Field(default=6, ge=1, le=72)
+    SCRAPE_SCHEDULER_BATCH_SIZE: int = Field(default=100, ge=1, le=1000)
 
     # --- JWT (autenticazione) -------------------------------------------
     JWT_SECRET_KEY: str = Field(

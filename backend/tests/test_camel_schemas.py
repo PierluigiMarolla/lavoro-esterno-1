@@ -98,6 +98,7 @@ def test_scrape_run_read_serializes_camel_case_with_nested_errors() -> None:
     run = ScrapeRunRead(
         id=run_id,
         started_at=now,
+        queued_at=now,
         finished_at=now,
         status="failed",
         items_found=10,

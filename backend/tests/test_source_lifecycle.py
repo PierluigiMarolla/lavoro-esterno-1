@@ -11,10 +11,12 @@ from fastapi.testclient import TestClient
 
 from app import main
 from app.api.v1.sources import duplicate_source, enable_source
+from app.api.v1.sources import test_source_config as execute_test_source_config
 from app.db import get_db
 from app.models.audit_log import AuditLog
 from app.models.sources import Source
-from app.schemas.sources import SourceDuplicate
+from app.schemas.sources import ScrapeConfigInput, SourceDuplicate
+from app.schemas.sources import TestConfigInput as DraftTestConfigInput
 from app.security.deps import get_current_user
 
 
@@ -41,6 +43,9 @@ class _FakeSession:
         return None
 
     async def execute(self, _statement: object) -> _ScalarResult:
+        descriptions = getattr(_statement, "column_descriptions", [])
+        if descriptions and descriptions[0].get("expr") is Source:
+            return _ScalarResult(self.source)
         return _ScalarResult(uuid.uuid4() if self.conflicting_slug else None)
 
     def add(self, value: object) -> None:
@@ -74,7 +79,6 @@ def _source(*, enabled: bool = True, status: str = "healthy") -> Source:
             "start_urls": ["https://example.test/list"],
             "fetch_mode": "stealth",
             "user_agent": "Configured agent",
-            "proxy": "http://proxy.internal:8080",
             "fields": {"phone": {"selector": ".phone", "attribute": "text", "multiple": False}},
         },
         watermark_removal_enabled=True,
@@ -130,7 +134,10 @@ async def test_duplicate_source_rejects_missing_source_and_slug_collision() -> N
     payload = SourceDuplicate(name="Copy", slug="copy")
     with pytest.raises(HTTPException) as missing:
         await duplicate_source(
-            uuid.uuid4(), payload, db=_FakeSession(None), user=user  # type: ignore[arg-type]
+            uuid.uuid4(),
+            payload,
+            db=_FakeSession(None),
+            user=user,  # type: ignore[arg-type]
         )
     assert missing.value.status_code == 404
 
@@ -182,6 +189,64 @@ async def test_enable_source_is_idempotent_when_already_enabled() -> None:
     assert source.status == "degraded"
     assert db.commits == 0
     assert db.added == []
+
+
+@pytest.mark.asyncio
+async def test_configuration_uses_draft_without_persisting_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _source()
+    saved_config = source.scrape_config.copy()
+    received_configs: list[dict] = []
+
+    class FakeScraper:
+        def __init__(
+            self, *, slug: str, base_url: str, config: dict, proxy_candidates=None
+        ) -> None:
+            received_configs.append(config)
+            self.discovery_diagnostics = SimpleNamespace(
+                pages_visited=2,
+                configured_max_pages=5,
+                pagination_mode="click",
+                stop_reason="end_of_pagination",
+                unique_ads_found=2,
+                warnings=[],
+                errors=[],
+            )
+
+        async def discover(self) -> list[str]:
+            return ["https://example.test/ad/1", "https://example.test/ad/2"]
+
+        async def scrape_ad(self, url: str) -> dict:
+            return {"phone": "redacted", "source_url": url}
+
+        def media_extraction_warnings(self, raw: dict) -> list[str]:
+            return []
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr("app.scrapers.generic.GenericScraper", FakeScraper)
+    draft = ScrapeConfigInput(
+        start_urls=["https://example.test/list"],
+        ad_link_selector="a.ad",
+        next_page_selector="button.next",
+        max_pages=5,
+        fetch_mode="dynamic",
+        fields={"phone": {"selector": ".phone", "attribute": "text"}},
+    )
+
+    result = await execute_test_source_config(
+        source.id,
+        DraftTestConfigInput(scrape_config=draft),
+        db=_FakeSession(source),  # type: ignore[arg-type]
+        _user=SimpleNamespace(id=uuid.uuid4()),  # type: ignore[arg-type]
+    )
+
+    assert received_configs[0]["max_pages"] == 5
+    assert result.pages_visited == 2
+    assert result.pagination_mode == "click"
+    assert source.scrape_config == saved_config
 
 
 @pytest.mark.parametrize("path", ["duplicate", "enable"])

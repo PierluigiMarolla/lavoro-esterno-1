@@ -7,7 +7,11 @@
 //    original request, so callers (hooks/pages) never have to think about it.
 //  - Normalize error responses into a typed ApiError.
 
-const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000/api/v1";
+// Same-origin is the safe production default: nginx exposes both the SPA and
+// `/api/v1`, so the bundle also works through the IPv4 diagnostic URL without
+// baking a second hostname into fetch requests. Vite development may still
+// override this with VITE_API_URL.
+const API_BASE_URL = import.meta.env.VITE_API_URL ?? "/api/v1";
 
 const ACCESS_TOKEN_KEY = "lavoro_esterno_access_token";
 const REFRESH_TOKEN_KEY = "lavoro_esterno_refresh_token";

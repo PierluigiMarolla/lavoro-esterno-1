@@ -19,14 +19,24 @@ def upgrade() -> None:
         "media_classifier_settings",
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("model_name", sa.String(100), server_default="NudeNet", nullable=False),
-        sa.Column("model_version", sa.String(100), server_default="nudenet-3.4.2-320n", nullable=False),
+        sa.Column(
+            "model_version", sa.String(100), server_default="nudenet-3.4.2-320n", nullable=False
+        ),
         sa.Column("safe_threshold", sa.Float(), server_default="0.20", nullable=False),
         sa.Column("explicit_threshold", sa.Float(), server_default="0.65", nullable=False),
         sa.Column("revision", sa.Integer(), server_default="1", nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
         sa.CheckConstraint("id = 1", name="ck_media_classifier_settings_singleton"),
-        sa.CheckConstraint("safe_threshold >= 0 AND explicit_threshold <= 1 AND safe_threshold < explicit_threshold", name="ck_media_classifier_thresholds"),
+        sa.CheckConstraint(
+            "safe_threshold >= 0 AND explicit_threshold <= 1 "
+            "AND safe_threshold < explicit_threshold",
+            name="ck_media_classifier_thresholds",
+        ),
         sa.PrimaryKeyConstraint("id"),
     )
     op.execute("INSERT INTO media_classifier_settings (id) VALUES (1)")
@@ -44,14 +54,22 @@ def upgrade() -> None:
         sa.Column("error_message", sa.Text(), nullable=True),
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
         sa.ForeignKeyConstraint(["source_id"], ["sources.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["requested_by_user_id"], ["users.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index("ix_source_priority_jobs_source", "source_priority_recalculation_jobs", ["source_id"])
-    op.create_index("ix_source_priority_jobs_status", "source_priority_recalculation_jobs", ["status"])
+    op.create_index(
+        "ix_source_priority_jobs_source", "source_priority_recalculation_jobs", ["source_id"]
+    )
+    op.create_index(
+        "ix_source_priority_jobs_status", "source_priority_recalculation_jobs", ["status"]
+    )
     op.create_table(
         "notification_events",
         sa.Column("id", sa.Uuid(), nullable=False),
@@ -63,8 +81,15 @@ def upgrade() -> None:
         sa.Column("audience", sa.String(20), server_default="operator", nullable=False),
         sa.Column("owner_user_id", sa.Uuid(), nullable=True),
         sa.Column("dedup_key", sa.String(250), nullable=False),
-        sa.Column("details_json", postgresql.JSONB(), server_default=sa.text("'{}'::jsonb"), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "details_json",
+            postgresql.JSONB(),
+            server_default=sa.text("'{}'::jsonb"),
+            nullable=False,
+        ),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
         sa.ForeignKeyConstraint(["owner_user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("dedup_key"),
@@ -76,8 +101,12 @@ def upgrade() -> None:
         "notification_reads",
         sa.Column("notification_id", sa.Uuid(), nullable=False),
         sa.Column("user_id", sa.Uuid(), nullable=False),
-        sa.Column("read_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.ForeignKeyConstraint(["notification_id"], ["notification_events.id"], ondelete="CASCADE"),
+        sa.Column(
+            "read_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
+        sa.ForeignKeyConstraint(
+            ["notification_id"], ["notification_events.id"], ondelete="CASCADE"
+        ),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("notification_id", "user_id"),
     )

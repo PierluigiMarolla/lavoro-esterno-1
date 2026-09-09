@@ -42,7 +42,11 @@ async def list_media_for_advertisement(
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> list[MediaRead]:
-    result = await db.execute(select(Media).where(Media.advertisement_id == advertisement_id))
+    result = await db.execute(
+        select(Media).where(
+            Media.advertisement_id == advertisement_id, Media.is_current.is_(True)
+        )
+    )
     return [_media_read(m) for m in result.scalars().all()]
 
 

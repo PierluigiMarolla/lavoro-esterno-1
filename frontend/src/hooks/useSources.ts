@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient, type Query } from "@tanstack/react-query";
 import * as sourcesApi from "@/api/sources";
-import type { ScrapeRun } from "@/types";
+import type { ScrapeConfig, ScrapeRun } from "@/types";
 
 const sourcesKey = ["sources"] as const;
 const summaryKey = ["sources", "summary"] as const;
@@ -8,7 +8,7 @@ const summaryKey = ["sources", "summary"] as const;
 const ACTIVE_POLL_INTERVAL_MS = 3000;
 
 export function useSources() {
-  return useQuery({ queryKey: sourcesKey, queryFn: sourcesApi.fetchSources });
+  return useQuery({ queryKey: sourcesKey, queryFn: sourcesApi.fetchSources, refetchInterval: 30000 });
 }
 
 export function useSourcesSummary() {
@@ -76,7 +76,7 @@ export function useSourceRuns(id: string, enabled: boolean) {
     enabled,
     refetchInterval: (query: Query<ScrapeRun[]>) => {
       const runs = query.state.data;
-      const hasActiveRun = runs?.some((run) => run.status === "running");
+      const hasActiveRun = runs?.some((run) => run.status === "pending" || run.status === "running");
       return hasActiveRun ? ACTIVE_POLL_INTERVAL_MS : false;
     },
   });
@@ -120,5 +120,20 @@ export function useCheckSourceRobots() {
 }
 
 export function useTestSourceConfig() {
-  return useMutation({ mutationFn: sourcesApi.testSourceConfig });
+  return useMutation({
+    mutationFn: ({ id, scrapeConfig, proxyPoolId }: {
+      id: string;
+      scrapeConfig: ScrapeConfig;
+      proxyPoolId: string | null;
+    }) => sourcesApi.testSourceConfig(id, scrapeConfig, proxyPoolId),
+  });
+}
+
+export function useUpdateSourceSchedule() {
+  const invalidate = useInvalidateSources();
+  return useMutation({
+    mutationFn: ({ id, input }: { id: string; input: sourcesApi.SourceScheduleInput }) =>
+      sourcesApi.updateSourceSchedule(id, input),
+    onSuccess: invalidate,
+  });
 }

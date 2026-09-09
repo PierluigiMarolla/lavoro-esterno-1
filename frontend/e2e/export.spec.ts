@@ -8,8 +8,8 @@ test.describe("Exports", () => {
 
   test("an explicit record selection or filter is required", async ({ page }) => {
     await page.goto("/exports");
-    await expect(page.getByTestId("export-card-text_only").getByRole("button", { name: "Create Export" })).toBeDisabled();
-    await expect(page.getByText("no scope selected", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("export-card-text_only").getByRole("button", { name: "Crea esportazione" })).toBeDisabled();
+    await expect(page.getByText("nessun ambito selezionato", { exact: true })).toBeVisible();
   });
 
   test("a selected record enables creation and pending-job polling", async ({ page }) => {
@@ -36,7 +36,7 @@ test.describe("Exports", () => {
       else await route.fulfill({ json: [response] });
     });
     await page.goto(`/exports?recordIds=${recordId}`);
-    await page.getByTestId("export-card-text_only").getByRole("button", { name: "Create Export" }).click();
-    await expect(page.getByText("pending", { exact: true })).toBeVisible();
+    await page.getByTestId("export-card-text_only").getByRole("button", { name: "Crea esportazione" }).click();
+    await expect(page.getByText("In attesa", { exact: true })).toBeVisible();
   });
 });

@@ -1,5 +1,5 @@
 import { apiRequest } from "./client";
-import type { RobotsCheckResult, ScrapeConfig, ScrapeRun, Source, SourcePriority, TestConfigResult, WatermarkRemovalConfig } from "@/types";
+import type { RobotsCheckResult, ScrapeConfig, ScrapeIntervalUnit, ScrapeRun, Source, SourcePriority, TestConfigResult, WatermarkRemovalConfig } from "@/types";
 
 export interface SourcesSummary {
   total: number;
@@ -20,6 +20,7 @@ export interface CreateSourceInput {
   priority: SourcePriority;
   scrapeConfig?: ScrapeConfig | null;
   watermarkRemoval?: WatermarkRemovalConfig;
+  proxyPoolId?: string | null;
 }
 
 export interface UpdateSourceInput {
@@ -28,11 +29,25 @@ export interface UpdateSourceInput {
   priority?: SourcePriority;
   scrapeConfig?: ScrapeConfig | null;
   watermarkRemoval?: WatermarkRemovalConfig;
+  proxyPoolId?: string | null;
 }
 
 export interface DuplicateSourceInput {
   name: string;
   slug: string;
+}
+
+export interface SourceScheduleInput {
+  enabled: boolean;
+  intervalValue?: number;
+  intervalUnit?: ScrapeIntervalUnit;
+  revision: number;
+}
+
+export interface ScanTriggerResponse {
+  taskId: string;
+  sourceId: string;
+  runId: string;
 }
 
 export function fetchSources(): Promise<Source[]> {
@@ -43,8 +58,12 @@ export function fetchSourcesSummary(): Promise<SourcesSummary> {
   return apiRequest<SourcesSummary>("/sources/summary");
 }
 
-export function runSourceScan(id: string): Promise<void> {
-  return apiRequest<void>(`/sources/${id}/scan`, { method: "POST" });
+export function runSourceScan(id: string): Promise<ScanTriggerResponse> {
+  return apiRequest<ScanTriggerResponse>(`/sources/${id}/scan`, { method: "POST" });
+}
+
+export function updateSourceSchedule(id: string, input: SourceScheduleInput): Promise<Source> {
+  return apiRequest<Source>(`/sources/${id}/schedule`, { method: "PATCH", body: input });
 }
 
 export function pauseSource(id: string): Promise<void> {
@@ -96,6 +115,13 @@ export function checkSourceRobots(id: string): Promise<RobotsCheckResult> {
 
 // Dry-runs the source's scrape config against ONE real ad (nothing is
 // saved to the DB) so an operator can verify selectors before a real scan.
-export function testSourceConfig(id: string): Promise<TestConfigResult> {
-  return apiRequest<TestConfigResult>(`/sources/${id}/test-config`, { method: "POST" });
+export function testSourceConfig(
+  id: string,
+  scrapeConfig: ScrapeConfig,
+  proxyPoolId: string | null,
+): Promise<TestConfigResult> {
+  return apiRequest<TestConfigResult>(`/sources/${id}/test-config`, {
+    method: "POST",
+    body: { scrapeConfig, proxyPoolId },
+  });
 }

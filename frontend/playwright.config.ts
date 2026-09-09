@@ -12,10 +12,11 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: false, // tests share one seeded Admin account; avoid racing logins/lockouts
+  workers: 1, // files also share that account; serialize them to avoid triggering lockout
   retries: 0,
   reporter: [["list"]],
   use: {
-    baseURL: "http://localhost",
+    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost",
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },

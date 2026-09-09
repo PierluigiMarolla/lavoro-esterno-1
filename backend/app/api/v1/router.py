@@ -13,6 +13,7 @@ from app.api.v1 import (
     media,
     operations,
     privacy,
+    proxies,
     records,
     search,
     sources,
@@ -28,6 +29,7 @@ api_router.include_router(sources.router, prefix="/sources", tags=["sources"])
 api_router.include_router(exports.router, prefix="/exports", tags=["exports"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(ai_settings.router, prefix="/admin", tags=["ai-settings"])
+api_router.include_router(proxies.router, prefix="/admin", tags=["proxy-settings"])
 api_router.include_router(media.router, prefix="/media", tags=["media"])
 api_router.include_router(privacy.router, prefix="/privacy", tags=["privacy"])
 api_router.include_router(operations.router, tags=["operations"])

@@ -11,6 +11,7 @@ audit/derivate dopo) per leggibilità.
 """
 
 from app.models.advertisement import Advertisement
+from app.models.advertisement_versions import AdvertisementVersion
 from app.models.ai_settings import AIProviderConfig, AISettings
 from app.models.audit_log import AuditLog
 from app.models.base import Base
@@ -25,6 +26,7 @@ from app.models.operations import (
     SourcePriorityRecalculationJob,
 )
 from app.models.privacy import ErasureRequest, SuppressionEntry
+from app.models.proxies import ProxyEndpoint, ProxyPool, ProxyPoolMember, ScrapeRunProxyAttempt
 from app.models.record import Record
 from app.models.scrape_errors import ScrapeError
 from app.models.scrape_runs import ScrapeRun
@@ -41,6 +43,7 @@ __all__ = [
     "Source",
     "Record",
     "Advertisement",
+    "AdvertisementVersion",
     "Media",
     "CanonicalHistory",
     "ScrapeRun",
@@ -56,5 +59,9 @@ __all__ = [
     "ExportJobRecord",
     "ErasureRequest",
     "SuppressionEntry",
+    "ProxyPool",
+    "ProxyEndpoint",
+    "ProxyPoolMember",
+    "ScrapeRunProxyAttempt",
     "AuditLog",
 ]

@@ -42,3 +42,30 @@ async def test_collect_ads_surfaces_empty_media_selector_and_keeps_ad(
         error.url.endswith("/ad3.html") and error.message == "Nessun numero di telefono estratto."
         for error in result.errors
     )
+
+
+async def test_collect_ads_surfaces_ambiguous_pagination_selector(
+    open_site_url: str,
+) -> None:
+    source = Source(
+        name="Synthetic source",
+        slug="synthetic_source",
+        base_url=open_site_url,
+        scrape_config={
+            "start_urls": [f"{open_site_url}/listing.html"],
+            "ad_link_selector": "a.ad-link",
+            "next_page_selector": "a",
+            "max_pages": 2,
+            "max_ads_per_run": 50,
+            "rate_limit_seconds": 0,
+            "fields": {
+                "phone": {"selector": "span.ad-phone", "attribute": "text"},
+            },
+        },
+    )
+
+    result = await collect_ads(source)
+
+    assert len(result.ads) == 2
+    assert result.discovery_diagnostics.stop_reason == "ambiguous_next_control"
+    assert any("esattamente un controllo Next" in error.message for error in result.errors)

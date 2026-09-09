@@ -15,9 +15,9 @@ test("records lists all sources without an explicit filter", async ({ page }) =>
   await page.route("**/api/v1/sources", (route) => route.fulfill({ json: [] }));
   await page.route("**/api/v1/records/search?*", (route) => route.fulfill({ json: { results: [], total: 0, page: 1, pageSize: 25 } }));
   await page.goto("/records");
-  await expect(page.getByRole("heading", { name: "Records" })).toBeVisible();
-  await expect(page.getByLabel("Source Origin")).toHaveValue("");
-  await expect(page.getByText("No records match these filters.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Record", exact: true })).toBeVisible();
+  await expect(page.getByLabel("Fonte di origine")).toHaveValue("");
+  await expect(page.getByText("Nessun record corrisponde ai filtri.")).toBeVisible();
 });
 
 test("missing AI summary is an empty state rather than a query error", async ({ page }) => {
@@ -26,8 +26,8 @@ test("missing AI summary is an empty state rather than a query error", async ({ 
   await page.route(`**/api/v1/records/${id}/ai-summary`, (route) => route.fulfill({ status: 204 }));
   await page.route(`**/api/v1/records/${id}/ai-summary/versions`, (route) => route.fulfill({ json: [] }));
   await page.goto(`/records/${id}/ai-summary`);
-  await expect(page.getByText("No AI summary available for this record.")).toBeVisible();
-  await expect(page.getByRole("button", { name: /Generate Summary/ })).toBeVisible();
+  await expect(page.getByText("Nessun riepilogo AI disponibile per questo record.")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Genera riepilogo/ })).toBeVisible();
 });
 
 test("account button opens the account page", async ({ page }) => {
@@ -80,9 +80,9 @@ test("dashboard detailed diagnostics opens and loads system status", async ({ pa
   });
 
   await page.goto("/dashboard");
-  await page.getByRole("button", { name: "View Detailed Diagnostics" }).click();
+  await page.getByRole("button", { name: "Visualizza diagnostica dettagliata" }).click();
 
-  await expect(page.getByRole("dialog", { name: "System status" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Stato del sistema" })).toBeVisible();
   await expect(page.getByText("PostgreSQL")).toBeVisible();
   expect(diagnosticsRequests).toBe(1);
 });
@@ -99,23 +99,23 @@ test("dashboard range selector persists the range and refresh reports completion
   });
 
   await page.goto("/dashboard");
-  await expect(page.getByText("New Records", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: /Last 24 Hours/ }).click();
-  await page.getByRole("button", { name: "7 days" }).click();
+  await expect(page.getByText("Nuovi record", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: /Ultime 24 ore/ }).click();
+  await page.getByRole("button", { name: "7 giorni" }).click();
   await expect(page).toHaveURL(/range=7d/);
-  await expect(page.getByRole("button", { name: /Last 7 Days/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Ultimi 7 giorni/ })).toBeVisible();
 
   const beforeRefresh = kpiRequests;
   const endBeforeRefresh = requestedEnds.at(-1)!;
-  await page.getByRole("button", { name: "Refresh Data" }).click();
-  await expect(page.getByText(/Updated \d{2}:\d{2}:\d{2}/)).toBeVisible();
+  await page.getByRole("button", { name: "Aggiorna dati" }).click();
+  await expect(page.getByText(/Aggiornato alle \d{2}:\d{2}:\d{2}/)).toBeVisible();
   expect(kpiRequests).toBeGreaterThan(beforeRefresh);
   expect(new Date(requestedEnds.at(-1)!).valueOf()).toBeGreaterThan(
     new Date(endBeforeRefresh).valueOf(),
   );
 
-  await page.getByRole("button", { name: /Last 7 Days/ }).click();
-  await page.getByRole("button", { name: "Apply interval" }).click();
+  await page.getByRole("button", { name: /Ultimi 7 giorni/ }).click();
+  await page.getByRole("button", { name: "Applica intervallo" }).click();
   await expect(page).toHaveURL(/range=custom/);
   await expect(page).toHaveURL(/start=/);
   await expect(page).toHaveURL(/end=/);
@@ -124,7 +124,7 @@ test("dashboard range selector persists the range and refresh reports completion
 test("create-user dialog keeps focus while typing", async ({ page }) => {
   await page.route("**/api/v1/admin/users", (route) => route.fulfill({ json: [] }));
   await page.goto("/admin");
-  await page.getByRole("button", { name: "Create user" }).click();
+  await page.getByRole("button", { name: "Crea utente" }).click();
 
   const email = page.getByLabel("Email");
   await expect(email).toBeFocused();

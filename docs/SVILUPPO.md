@@ -39,8 +39,8 @@ docker compose exec api python -m app.scripts.create_admin \
     --email admin@lavoro.internal --password "una-password-forte"
 
 # 6. Creare le fonti da scrapare: nessun seed automatico, si usa il CRUD
-#    completo via API/UI (POST /sources, form "Add Source" nella pagina
-#    Sources — vedi docs/API.md e § 5 sotto). /sources e /search restano
+#    completo via API/UI (POST /sources, form "Aggiungi fonte" nella pagina
+#    Fonti — vedi docs/API.md e § 5 sotto). /sources e /search restano
 #    vuoti finché non se ne crea almeno una.
 ```
 
@@ -58,6 +58,28 @@ Servizi raggiungibili dopo l'avvio:
 - Grafana: `http://localhost:3000` (utente `admin`, password da
   `GF_SECURITY_ADMIN_PASSWORD`)
 - Prometheus: `http://localhost:9090`
+
+Il bundle Docker usa `VITE_API_URL=/api/v1`: frontend e API sono quindi
+same-origin sia tramite `localhost` sia tramite il fallback diagnostico
+`127.0.0.1`. Se su Windows `localhost` non risponde ma IPv4 sì, controllare il
+relay WSL senza modificare lo stack:
+
+```powershell
+.\scripts\windows\Repair-Localhost.ps1
+```
+
+Solo dopo aver verificato che lo script identifichi `wslrelay.exe` su
+`[::1]:80`, aprire PowerShell come amministratore ed eseguire:
+
+```powershell
+.\scripts\windows\Repair-Localhost.ps1 -Repair
+```
+
+La riparazione viene rifiutata se nginx IPv4 non restituisce `200`, se il PID
+appartiene a un processo diverso o se il percorso non è quello ufficiale di
+WSL. Se il relay viene ricreato, usare `wsl --shutdown`, riavviare Docker
+Desktop e quindi `docker compose up -d --force-recreate nginx`; non usare
+`docker compose down -v`.
 
 Grafana carica automaticamente le dashboard del folder **Lavoro Esterno** e
 gli alert. L'endpoint `http://api:8000/metrics` è deliberatamente interno: una
@@ -127,8 +149,8 @@ scraping è quello generico configurabile, guidato interamente da
 aggiungere una fonte.
 
 - Esiste un CRUD completo via API/UI (`POST /sources`, `PATCH
-  /sources/{id}`, `DELETE /sources/{id}`, form "Add/Edit Source" nella
-  pagina Sources — vedi `docs/API.md`) per creare/configurare una fonte.
+  /sources/{id}`, `DELETE /sources/{id}`, form "Aggiungi/Modifica fonte" nella
+  pagina Fonti — vedi `docs/API.md`) per creare/configurare una fonte.
 - Dopo aver creato/configurato la fonte: `POST
   /api/v1/sources/{source_id}/scan` accoda un run reale (coda `scraping`,
   vedi `backend/app/workers/tasks_scraper.py`) — controllare
@@ -136,6 +158,12 @@ aggiungere una fonte.
   lasciare la fonte attiva su uno schedule. Una fonte senza
   `scrape_config` fallisce esplicitamente il run (nessuna azione
   possibile senza una configurazione).
+- Un Admin con 2FA può attivare lo schedule dalla pagina Sources o con
+  `PATCH /api/v1/sources/{id}/schedule`. Sono ammessi intervalli tra 15 e
+  43.200 minuti. Il primo scan parte dopo un intervallo; quelli successivi
+  vengono pianificati dalla fine del run precedente. Il dispatcher Beat gira
+  ogni minuto, recupera pending non acquisiti dopo due minuti e chiude come
+  falliti i run oltre il limite operativo di sei ore.
 
 ## 6. Configurare il motore di scraping generico
 
@@ -147,25 +175,35 @@ l'unico modo per attivare una fonte, PURCHÉ prima si verifichino ToS/
 robots.txt per quel sito specifico (vedi PROGETTO.md § 4 sul perché questo
 progetto non lo fa per te).
 
-1. Nel form "Add Source" (o via `PATCH /sources/{id}` con `scrapeConfig`),
+1. Nel form "Aggiungi fonte" (o via `PATCH /sources/{id}` con `scrapeConfig`),
    fornire: uno o più `startUrls` (pagine di elenco annunci),
    `adLinkSelector` (selettore CSS dei link ai singoli annunci),
    opzionalmente `nextPageSelector` (paginazione), `fetchMode`,
    `userAgent`, opzioni browser/stealth (`waitSelector`, `waitMs`,
    `solveCloudflare`, `blockWebrtc`, `hideCanvas`, `realChrome`,
-   `blockAds`, `proxy`) e i `fields` da estrarre da ogni pagina annuncio
+   `blockAds`) e i `fields` da estrarre da ogni pagina annuncio
    (selettore CSS + `attribute` `text`/`href`/`src` + `multiple` per liste
    come le immagini). Un campo `phone` è obbligatorio: senza telefono un
    annuncio non può essere collegato a nessun Record.
+   Ogni nome non standard, per esempio `tags`, `city` o `price`, viene salvato
+   automaticamente in `advertisements.custom_fields`. Usare `multiple: true`
+   quando il campo deve produrre una lista. Non serve registrare preventivamente
+   il nome: chiavi arbitrarie come `paperino` e `pippo` sono valide e vengono
+   preservate esattamente. L'Overview aggrega i valori valorizzati di tutte le
+   fonti indicandone la provenienza; la tab Occurrences consente di ispezionare
+   lo snapshot originale di ciascuna fonte.
 2. Usare "Check robots.txt" per verificare che il sito non vieti
    esplicitamente l'accesso (il motore lo verifica comunque ad ogni
    richiesta reale, ma è utile saperlo prima).
-3. Usare "Test configuration" (`POST /sources/{id}/test-config`, richiede
-   la fonte già salvata) per provare i selettori su UN solo annuncio reale
-   senza scrivere nulla su database/MinIO — utile per iterare rapidamente
-   sui selettori CSS ispezionando l'HTML del sito target nel browser.
+3. Usare "Testa configurazione" (`POST /sources/{id}/test-config`, richiede
+   la fonte già salvata) per provare la bozza corrente su annunci reali senza
+   scriverla nel database e senza usare MinIO. Per la paginazione il selettore
+   deve individuare un solo controllo Next: per esempio
+   `a.page-link[aria-label="Next"]`, non il generico `a.page-link`. Il risultato
+   mostra pagine visitate, URL annunci unici, modalità `href`/`click` e motivo
+   di arresto.
 4. Solo quando l'estrazione di prova è corretta, lanciare uno scan reale
-   (`POST /sources/{id}/scan` o il bottone "Run Scan" in UI, visibile solo
+   (`POST /sources/{id}/scan` o il bottone "Avvia scansione" in UI, visibile solo
    quando `hasScrapeConfig` è vero).
 
 Rate limiting (minimo 1s tra le richieste) e rispetto di `robots.txt` sono
@@ -185,7 +223,8 @@ La configurazione è disponibile in `/settings/ai`. I provider cloud richiedono
 una credenziale salvata, un test riuscito e budget token positivo; budget zero
 non blocca Ollama. Prima di salvare credenziali generare una chiave AES da 32
 byte in base64 e impostarla come `AI_CREDENTIAL_ENCRYPTION_KEY`. Il prompt
-corrente è `summary-v1`: modificarlo richiede una nuova versione e il
+corrente è `summary-v2-it`: `summary-v1` conserva il prompt inglese storico;
+modificarlo richiede una nuova versione e il
 superamento dei test/dataset in `backend/tests/fixtures/summary_eval.json`.
 
 Comandi locali di verifica:
@@ -306,3 +345,24 @@ La retention Loki è di 90 giorni (`2160h`), coerente con
 `TECHNICAL_LOG_RETENTION_DAYS`. I dati Prometheus e le posizioni Alloy vivono
 nei volumi `prometheus-data` e `alloy-data`; non usare `docker compose down
 -v`, che eliminerebbe anche questi dati oltre ai volumi applicativi.
+
+## Proxy rotator
+
+Gli Admin configurano endpoint e pool in `/settings/proxies`, quindi assegnano
+il pool nel form Fonte. Elenchi, robots.txt, pagine annuncio e media usano lo
+stesso proxy di sessione. Timeout, errori di trasporto e HTTP 403/407/429
+causano rotazione; un pool senza endpoint disponibili blocca lo scan senza
+fallback diretto.
+
+Per le credenziali impostare `PROXY_CREDENTIAL_ENCRYPTION_KEY` con 32 byte
+casuali in base64. Gli host privati sono rifiutati, salvo quelli elencati in
+`PROXY_PRIVATE_HOST_ALLOWLIST` (CSV). Il cooldown progressivo e 5/15/30/60
+minuti e `PROXY_MAX_ATTEMPTS` vale 3 per default.
+## Verificare il refresh continuo
+
+Dopo la migrazione `20260909100000`, due scan identici devono incrementare
+`itemsUnchanged` e soltanto i timestamp `last_seen_at`. Modificando titolo,
+descrizione, un campo custom o il set media, il run incrementa `itemsUpdated`
+e crea una riga in `advertisement_versions`. Il timer automatico resta
+fixed-delay: il prossimo intervallo decorre dalla conclusione anche quando il
+contenuto non cambia.

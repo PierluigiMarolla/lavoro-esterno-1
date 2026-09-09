@@ -6,7 +6,7 @@ test.describe("Login + 2FA", () => {
     await page.goto("/login");
     await page.locator("#email").fill(ADMIN_EMAIL);
     await page.locator("#password").fill("definitely-not-the-password");
-    await page.getByRole("button", { name: "Sign in" }).click();
+    await page.getByRole("button", { name: "Accedi" }).click();
 
     // Generic "Invalid credentials"-style message from the backend (see
     // app/api/v1/auth.py:login — deliberately identical for wrong password
@@ -20,11 +20,11 @@ test.describe("Login + 2FA", () => {
     await page.goto("/login");
     await page.locator("#email").fill(ADMIN_EMAIL);
     await page.locator("#password").fill(ADMIN_PASSWORD);
-    await page.getByRole("button", { name: "Sign in" }).click();
+    await page.getByRole("button", { name: "Accedi" }).click();
 
     await page.locator("#mfa-code").waitFor({ state: "visible" });
     await page.locator("#mfa-code").fill("000000");
-    await page.getByRole("button", { name: "Verify" }).click();
+    await page.getByRole("button", { name: "Verifica" }).click();
 
     await expect(page.getByText(/invalid|non valid/i)).toBeVisible();
     await expect(page).toHaveURL(/\/login/);
@@ -32,6 +32,6 @@ test.describe("Login + 2FA", () => {
 
   test("full login flow: credentials + real TOTP code reaches the dashboard", async ({ page }) => {
     await loginAsAdmin(page);
-    await expect(page.getByRole("heading", { name: "Operational Overview" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Panoramica operativa" })).toBeVisible();
   });
 });

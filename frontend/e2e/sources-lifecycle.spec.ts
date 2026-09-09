@@ -22,6 +22,16 @@ const enabledSource = {
   errorRate: 0,
   consecutiveFailures: 0,
   hasScrapeConfig: true,
+  proxyPoolId: null,
+  proxyPoolStatus: "direct",
+  automaticScrapingEnabled: false,
+  scrapeIntervalMinutes: null,
+  nextScrapeAt: null,
+  lastScheduledAt: null,
+  lastCompletedScrapeAt: null,
+  lastScheduleSkipReason: null,
+  scheduleRevision: 1,
+  automaticScrapingState: "paused",
 };
 
 const disabledSource = {
@@ -50,6 +60,9 @@ async function mockSourcesPage(page: Page, role = "admin", extraSources: typeof 
   await page.route("**/api/v1/sources", (route) =>
     route.fulfill({ json: [enabledSource, disabledSource, ...extraSources] }),
   );
+  await page.route("**/api/v1/admin/proxy-pools", (route) =>
+    route.fulfill({ json: [] }),
+  );
 }
 
 test("admin duplicates a source with a collision-safe suggested identity", async ({ page }) => {
@@ -68,7 +81,7 @@ test("admin duplicates a source with a collision-safe suggested identity", async
         ...enabledSource,
         id: "30000000-0000-4000-8000-000000000003",
         code: "original_copy_2",
-        name: "Original source (copy)",
+        name: "Original source (copia)",
         status: "offline",
         enabled: false,
       },
@@ -78,15 +91,15 @@ test("admin duplicates a source with a collision-safe suggested identity", async
   await page.goto("/sources");
   const originalRow = page.getByRole("row").filter({ hasText: "Original source" });
   await originalRow.hover();
-  await originalRow.getByRole("button", { name: "Duplicate Original source" }).click();
+  await originalRow.getByRole("button", { name: "Duplica Original source" }).click();
 
-  const dialog = page.getByRole("dialog", { name: "Duplicate source" });
-  await expect(dialog.getByLabel("Name")).toHaveValue("Original source (copy)");
-  await expect(dialog.getByLabel("Slug (unique identifier)")).toHaveValue("original_copy_2");
-  await dialog.getByRole("button", { name: "Duplicate", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Duplica fonte" });
+  await expect(dialog.getByLabel("Nome")).toHaveValue("Original source (copia)");
+  await expect(dialog.getByLabel("Slug (identificatore univoco)")).toHaveValue("original_copy_2");
+  await dialog.getByRole("button", { name: "Duplica", exact: true }).click();
 
   await expect(dialog).toBeHidden();
-  expect(requestBody).toEqual({ name: "Original source (copy)", slug: "original_copy_2" });
+  expect(requestBody).toEqual({ name: "Original source (copia)", slug: "original_copy_2" });
 });
 
 test("disabled source exposes Enable and hides operational stop actions", async ({ page }) => {
@@ -100,19 +113,19 @@ test("disabled source exposes Enable and hides operational stop actions", async 
   await page.goto("/sources");
   const disabledRow = page.getByRole("row").filter({ hasText: "Disabled source" });
   await disabledRow.hover();
-  await expect(disabledRow.getByRole("button", { name: "Enable Disabled source" })).toBeVisible();
-  await expect(disabledRow.getByTitle("Pause")).toHaveCount(0);
-  await expect(disabledRow.getByTitle("Disable")).toHaveCount(0);
-  await expect(disabledRow.getByTitle("Run Scan")).toHaveCount(0);
-  await disabledRow.getByRole("button", { name: "Enable Disabled source" }).click();
+  await expect(disabledRow.getByRole("button", { name: "Abilita Disabled source" })).toBeVisible();
+  await expect(disabledRow.getByTitle("Metti in pausa")).toHaveCount(0);
+  await expect(disabledRow.getByTitle("Disabilita")).toHaveCount(0);
+  await expect(disabledRow.getByTitle("Avvia scansione")).toHaveCount(0);
+  await disabledRow.getByRole("button", { name: "Abilita Disabled source" }).click();
   await expect.poll(() => enabled).toBe(true);
 });
 
 test("duplicate action is hidden from operators", async ({ page }) => {
   await mockSourcesPage(page, "operator");
   await page.goto("/sources");
-  await expect(page.getByRole("button", { name: /Duplicate / })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Enable Disabled source" })).toBeAttached();
+  await expect(page.getByRole("button", { name: /Duplica / })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Abilita Disabled source" })).toBeAttached();
 });
 
 test("slug collision keeps the duplicate dialog open and shows the API error", async ({ page }) => {
@@ -123,9 +136,9 @@ test("slug collision keeps the duplicate dialog open and shows the API error", a
 
   await page.goto("/sources");
   await page.getByRole("row").filter({ hasText: "Original source" }).hover();
-  await page.getByRole("button", { name: "Duplicate Original source" }).click();
-  const dialog = page.getByRole("dialog", { name: "Duplicate source" });
-  await dialog.getByRole("button", { name: "Duplicate", exact: true }).click();
+  await page.getByRole("button", { name: "Duplica Original source" }).click();
+  const dialog = page.getByRole("dialog", { name: "Duplica fonte" });
+  await dialog.getByRole("button", { name: "Duplica", exact: true }).click();
 
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText("Una fonte con slug 'original_copy' esiste gia.")).toBeVisible();
@@ -139,8 +152,106 @@ test("enable failure is surfaced without hiding the source", async ({ page }) =>
 
   await page.goto("/sources");
   await page.getByRole("row").filter({ hasText: "Disabled source" }).hover();
-  await page.getByRole("button", { name: "Enable Disabled source" }).click();
+  await page.getByRole("button", { name: "Abilita Disabled source" }).click();
 
-  await expect(page.getByRole("alert")).toContainText("Something went wrong on the server.");
+  await expect(page.getByRole("alert")).toContainText("Si è verificato un errore sul server.");
   await expect(page.getByText("Disabled source")).toBeVisible();
+});
+
+test("configuration test sends the unsaved pagination draft and shows diagnostics", async ({
+  page,
+}) => {
+  await mockSourcesPage(page);
+  const savedConfig = {
+    startUrls: ["https://example.test/list"],
+    adLinkSelector: "a.ad",
+    nextPageSelector: "a.old-next",
+    maxPages: 1,
+    maxAdsPerRun: 50,
+    rateLimitSeconds: 2,
+    fetchMode: "stealth",
+    renderJs: true,
+    fields: { phone: { selector: ".phone", attribute: "text", multiple: false } },
+  };
+  await page.route(`**/api/v1/sources/${enabledSource.id}`, (route) =>
+    route.fulfill({
+      json: {
+        ...enabledSource,
+        scrapeConfig: savedConfig,
+        watermarkRemoval: { enabled: false, authorizationReference: null, regions: [] },
+      },
+    }),
+  );
+  let testBody: { scrapeConfig?: { maxPages?: number; nextPageSelector?: string } } = {};
+  await page.route(`**/api/v1/sources/${enabledSource.id}/test-config`, async (route) => {
+    testBody = route.request().postDataJSON();
+    await route.fulfill({
+      json: {
+        adUrlsFound: 80,
+        sampleUrl: "https://example.test/ad/1",
+        extractedFields: { phone: "redacted" },
+        warnings: [],
+        error: null,
+        pagesVisited: 5,
+        configuredMaxPages: 5,
+        paginationMode: "click",
+        paginationStopReason: "max_pages",
+        uniqueAdsFound: 80,
+      },
+    });
+  });
+
+  await page.goto("/sources");
+  const row = page.getByRole("row").filter({ hasText: "Original source" });
+  await row.hover();
+  await row.getByTitle("Modifica configurazione").click();
+  const dialog = page.getByRole("dialog", { name: "Modifica fonte" });
+  await dialog.getByLabel("Pagine massime").fill("5");
+  await dialog.getByLabel("Selettore pagina successiva (opzionale)").fill(
+    'a.page-link[aria-label="Next"]',
+  );
+  await dialog.getByRole("button", { name: "Prova configurazione" }).click();
+
+  await expect(dialog.getByText("Pagine: 5/5")).toBeVisible();
+  await expect(dialog.getByText("Annunci unici: 80")).toBeVisible();
+  await expect(dialog.getByText("Modalità: click")).toBeVisible();
+  expect(testBody.scrapeConfig?.maxPages).toBe(5);
+  expect(testBody.scrapeConfig?.nextPageSelector).toBe('a.page-link[aria-label="Next"]');
+});
+
+test("admin configures a fixed-delay schedule and sees the next execution", async ({ page }) => {
+  await mockSourcesPage(page);
+  let requestBody: unknown;
+  await page.route(`**/api/v1/sources/${enabledSource.id}/schedule`, async (route) => {
+    requestBody = route.request().postDataJSON();
+    await route.fulfill({
+      json: {
+        ...enabledSource,
+        automaticScrapingEnabled: true,
+        scrapeIntervalMinutes: 120,
+        nextScrapeAt: "2026-09-08T13:20:00Z",
+        scheduleRevision: 2,
+        automaticScrapingState: "waiting",
+      },
+    });
+  });
+
+  await page.goto("/sources");
+  const row = page.getByRole("row").filter({ hasText: "Original source" });
+  await row.hover();
+  await row.getByRole("button", { name: "Pianifica Original source" }).click();
+
+  const dialog = page.getByRole("dialog", { name: "Pianificazione acquisizione automatica" });
+  await dialog.getByLabel("Abilita acquisizione automatica").check();
+  await dialog.getByLabel("Intervallo").fill("2");
+  await dialog.getByLabel("Unità").selectOption("hours");
+  await dialog.getByRole("button", { name: "Salva pianificazione" }).click();
+
+  await expect(dialog).toBeHidden();
+  expect(requestBody).toEqual({
+    enabled: true,
+    intervalValue: 2,
+    intervalUnit: "hours",
+    revision: 1,
+  });
 });

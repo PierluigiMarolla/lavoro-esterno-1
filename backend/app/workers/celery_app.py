@@ -41,6 +41,7 @@ celery_app.conf.update(
     task_send_sent_event=True,
     task_track_started=True,
     task_routes={
+        "app.workers.tasks_scraper.dispatch_due_source_scrapes": {"queue": "maintenance"},
         "app.workers.tasks_scraper.*": {"queue": "scraping"},
         "app.workers.tasks_media.*": {"queue": "media"},
         "app.workers.tasks_ai.*": {"queue": "ai"},
@@ -56,10 +57,12 @@ celery_app.conf.update(
     },
 )
 
-# Celery Beat schedule: un solo task periodico per ora (pulizia retention
-# dati, vedi app/workers/tasks_maintenance.py). Orario notturno per non
-# competere con eventuale traffico di scraping/uso interattivo dell'API.
+# Celery Beat: dispatcher scraping ogni minuto e manutenzioni notturne.
 celery_app.conf.beat_schedule = {
+    "dispatch-due-source-scrapes": {
+        "task": "app.workers.tasks_scraper.dispatch_due_source_scrapes",
+        "schedule": 60.0,
+    },
     "cleanup-expired-data-nightly": {
         "task": "app.workers.tasks_maintenance.cleanup_expired_data",
         "schedule": crontab(hour=3, minute=0),

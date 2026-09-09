@@ -19,9 +19,9 @@ const STATUS_TONE: Record<RecordSearchResult["status"], BadgeTone> = {
 };
 
 const STATUS_LABEL: Record<RecordSearchResult["status"], string> = {
-  verified: "Verified",
-  flagged: "Flagged",
-  unverified: "Unverified",
+  verified: "Verificato",
+  flagged: "Segnalato",
+  unverified: "Non verificato",
 };
 
 const PAGE_SIZE = 25;
@@ -106,15 +106,15 @@ export default function SearchPage() {
       {/* Records header and filters */}
       <section className="space-y-4">
         <div>
-          <h2 className="text-headline-md text-on-surface">Records</h2>
+          <h2 className="text-headline-md text-on-surface">Record</h2>
           <p className="text-body-md text-on-surface-variant mt-1">
-            Browse and filter records collected from all synchronized sources.
+            Consulta e filtra i record raccolti da tutte le fonti sincronizzate.
           </p>
         </div>
         <div className="max-w-3xl">
           <Input
             icon="search"
-            placeholder="e.g. +39 345 678 9012"
+              placeholder="es. +39 345 678 9012"
             value={phone}
             onChange={(e) => updateParams({ phone: e.target.value })}
             className="py-4 text-body-lg rounded-xl"
@@ -127,16 +127,16 @@ export default function SearchPage() {
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-body-md font-semibold text-on-surface flex items-center gap-2">
             <Icon name="tune" size={18} className="text-primary" />
-            Advanced Filters
+            Filtri avanzati
           </h3>
           <button onClick={clearAll} className="text-label-sm text-primary hover:text-primary-container transition-colors">
-            Clear all
+            Azzera tutto
           </button>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="space-y-2">
             <label htmlFor="filter-source" className="text-label-sm text-on-surface-variant block">
-              Source Origin
+              Fonte di origine
             </label>
             <Select
               id="filter-source"
@@ -144,7 +144,7 @@ export default function SearchPage() {
               value={source}
               onChange={(e) => updateParams({ source: e.target.value })}
             >
-              <option value="">All Sources</option>
+              <option value="">Tutte le fonti</option>
               {sources.data?.map((s) => (
                 <option key={s.code} value={s.code}>
                   {s.name}
@@ -154,7 +154,7 @@ export default function SearchPage() {
           </div>
           <div className="space-y-2">
             <label htmlFor="filter-status" className="text-label-sm text-on-surface-variant block">
-              Verification Status
+              Stato di verifica
             </label>
             <Select
               id="filter-status"
@@ -162,20 +162,20 @@ export default function SearchPage() {
               value={status}
               onChange={(e) => updateParams({ status: e.target.value })}
             >
-              <option value="">Any Status</option>
-              <option value="verified">Verified</option>
-              <option value="flagged">Flagged</option>
-              <option value="unverified">Unverified</option>
+              <option value="">Qualsiasi stato</option>
+              <option value="verified">Verificato</option>
+              <option value="flagged">Segnalato</option>
+              <option value="unverified">Non verificato</option>
             </Select>
           </div>
           <div className="space-y-2">
             <span id="filter-last-seen-label" className="text-label-sm text-on-surface-variant block">
-              Last Seen Date
+              Data ultimo rilevamento
             </span>
             <div className="flex items-center gap-2" role="group" aria-labelledby="filter-last-seen-label">
               <input
                 type="date"
-                aria-label="Last seen from"
+                aria-label="Ultimo rilevamento dal"
                 value={dateFrom}
                 onChange={(e) => updateParams({ dateFrom: e.target.value })}
                 className="w-full rounded border border-outline-variant bg-surface text-body-md text-on-surface focus:ring-2 focus:ring-primary-container focus:border-primary-container py-2 px-3 outline-none transition-colors"
@@ -183,7 +183,7 @@ export default function SearchPage() {
               <span className="text-outline" aria-hidden="true">-</span>
               <input
                 type="date"
-                aria-label="Last seen to"
+                aria-label="Ultimo rilevamento al"
                 value={dateTo}
                 onChange={(e) => updateParams({ dateTo: e.target.value })}
                 className="w-full rounded border border-outline-variant bg-surface text-body-md text-on-surface focus:ring-2 focus:ring-primary-container focus:border-primary-container py-2 px-3 outline-none transition-colors"
@@ -197,10 +197,10 @@ export default function SearchPage() {
       <section className="space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <h3 className="text-headline-sm text-on-surface">Record list</h3>
+            <h3 className="text-headline-sm text-on-surface">Elenco record</h3>
             {search.data && (
               <span className="bg-surface-container-high text-on-surface-variant text-label-sm px-2 py-0.5 rounded-full border border-border">
-                {total.toLocaleString()} found
+                {total.toLocaleString("it-IT")} trovati
               </span>
             )}
           </div>
@@ -211,14 +211,14 @@ export default function SearchPage() {
                   to={`/exports?recordIds=${encodeURIComponent([...selectedIds].join(","))}`}
                   className="px-3 py-2 rounded bg-surface-container-high text-label-sm text-on-surface"
                 >
-                  Export selected ({selectedIds.size})
+                  Esporta selezionati ({selectedIds.size})
                 </Link>
               )}
               <Link
                 to={`/exports?${filterExportParams.toString()}`}
                 className="px-3 py-2 rounded bg-primary text-on-primary text-label-sm"
               >
-                Export all matching
+                Esporta tutti i risultati
               </Link>
             </div>
           )}
@@ -228,26 +228,26 @@ export default function SearchPage() {
           <Table>
             <THead>
               <Tr className="hover:bg-transparent">
-                <Th className="text-center">Select</Th>
-                <Th>Phone Number</Th>
-                <Th>Canonical Title</Th>
-                <Th className="text-right">Sources</Th>
-                <Th className="text-right">Occurrences</Th>
-                <Th>Timeline (First / Last)</Th>
-                <Th>Status</Th>
-                <Th className="text-center">Action</Th>
+                <Th className="text-center">Seleziona</Th>
+                <Th>Numero di telefono</Th>
+                <Th>Titolo canonico</Th>
+                <Th className="text-right">Fonti</Th>
+                <Th className="text-right">Occorrenze</Th>
+                <Th>Cronologia (prima / ultima)</Th>
+                <Th>Stato</Th>
+                <Th className="text-center">Azione</Th>
               </Tr>
             </THead>
             <TBody>
               {!phoneReady && (
-                <EmptyRow colSpan={8} message="Enter at least 9 digits to search by phone number." />
+                <EmptyRow colSpan={8} message="Inserisci almeno 9 cifre per cercare per numero di telefono." />
               )}
               {phoneReady && search.isLoading && <LoadingRow colSpan={8} />}
               {phoneReady && search.isError && (
                 <ErrorRow colSpan={8} error={search.error} onRetry={() => search.refetch()} />
               )}
               {phoneReady && search.data && search.data.results.length === 0 && (
-                <EmptyRow colSpan={8} message="No records match these filters." />
+                <EmptyRow colSpan={8} message="Nessun record corrisponde ai filtri." />
               )}
               {phoneReady &&
                 search.data?.results.map((record) => (
@@ -255,7 +255,7 @@ export default function SearchPage() {
                     <Td className="text-center">
                       <input
                         type="checkbox"
-                        aria-label={`Select record ${record.id}`}
+                        aria-label={`Seleziona record ${record.id}`}
                         checked={selectedIds.has(record.id)}
                         onChange={(event) => {
                           setSelectedIds((current) => {
@@ -277,7 +277,7 @@ export default function SearchPage() {
                       </div>
                     </Td>
                     <Td className="text-on-surface font-medium truncate max-w-[220px]" title={record.canonicalTitle}>
-                      {record.canonicalTitle || <span className="text-outline italic">No title found</span>}
+                      {record.canonicalTitle || <span className="text-outline italic">Nessun titolo trovato</span>}
                     </Td>
                     <Td className="text-right font-mono text-on-surface-variant">{record.sourcesCount}</Td>
                     <Td className="text-right font-mono text-on-surface-variant">{record.occurrencesCount}</Td>
@@ -306,7 +306,7 @@ export default function SearchPage() {
           {phoneReady && search.data && total > 0 && (
             <div className="border-t border-border px-4 py-3 flex items-center justify-between">
               <div className="text-label-sm text-on-surface-variant">
-                Showing {(page - 1) * PAGE_SIZE + 1} to {Math.min(page * PAGE_SIZE, total)} of {total.toLocaleString()} results
+                Risultati da {(page - 1) * PAGE_SIZE + 1} a {Math.min(page * PAGE_SIZE, total)} di {total.toLocaleString("it-IT")}
               </div>
               <div className="flex items-center gap-1">
                 <button
@@ -317,7 +317,7 @@ export default function SearchPage() {
                   <Icon name="chevron_left" size={16} />
                 </button>
                 <span className="px-2 text-label-sm text-on-surface-variant">
-                  Page {page} of {totalPages}
+                  Pagina {page} di {totalPages}
                 </span>
                 <button
                   onClick={() => setPage((p) => Math.min(totalPages, p + 1))}

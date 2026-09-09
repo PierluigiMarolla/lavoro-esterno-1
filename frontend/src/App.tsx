@@ -9,6 +9,7 @@ import SourcesPage from "@/routes/SourcesPage";
 import ExportsPage from "@/routes/ExportsPage";
 import AdminPage from "@/routes/AdminPage";
 import AISettingsPage from "@/routes/AISettingsPage";
+import ProxySettingsPage from "@/routes/ProxySettingsPage";
 import AccountPage from "@/routes/AccountPage";
 import RecordDetailLayout from "@/routes/records/RecordDetailLayout";
 import RecordOverviewTab from "@/routes/records/RecordOverviewTab";
@@ -47,6 +48,7 @@ export default function App() {
           <Route path="/exports" element={<ExportsPage />} />
           <Route path="/admin" element={<AdminPage />} />
           <Route path="/settings/ai" element={<AISettingsPage />} />
+          <Route path="/settings/proxies" element={<ProxySettingsPage />} />
           <Route path="/account" element={<AccountPage />} />
         </Route>
       </Route>

@@ -20,21 +20,29 @@ Il worker Celery (`run_scrape_source`) chiama prima la fase 1 (dentro
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.advertisement import Advertisement
+from app.models.advertisement_versions import AdvertisementVersion
 from app.models.canonical_history import CanonicalHistory
 from app.models.media import Media
 from app.models.record import Record
 from app.models.sources import Source
-from app.scrapers.generic import GenericScraper, PageFetchError, RobotsDisallowedError
+from app.scrapers.generic import (
+    DiscoveryDiagnostics,
+    GenericScraper,
+    PageFetchError,
+    RobotsDisallowedError,
+)
 from app.services.canonical import (
     CandidateAdvertisement,
     CandidateSource,
@@ -43,7 +51,7 @@ from app.services.canonical import (
     resolve_canonical,
 )
 from app.services.dedup import content_sha256
-from app.services.media_processing import MediaValidationError, probe_video, validate_image
+from app.services.media_processing import probe_video, validate_image
 from app.services.media_storage import sniff_mime_type, upload_media_object
 from app.services.phone_crypto import (
     PhoneCryptoError,
@@ -51,14 +59,43 @@ from app.services.phone_crypto import (
     normalize_phone,
     phone_lookup_hash,
 )
+from app.services.proxy_rotation import ProxyRuntimeConfig, ProxyRuntimeEvent
 
 logger = logging.getLogger(__name__)
+
+
+def advertisement_content_hash(normalized: dict) -> str:
+    """Hash core and custom content with stable JSON ordering."""
+    return content_sha256(
+        json.dumps(
+            {
+                "title": normalized.get("title") or "",
+                "description": normalized.get("description") or "",
+                "custom_fields": normalized.get("custom_fields") or {},
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
+
+
+def non_empty_custom_field_count(custom_fields: dict | None) -> int:
+    """Count informative custom values for canonical completeness scoring."""
+    return sum(
+        1
+        for value in (custom_fields or {}).values()
+        if value is not None
+        and (not isinstance(value, str) or bool(value.strip()))
+        and (not isinstance(value, list) or bool(value))
+    )
 
 
 @dataclass
 class CollectedAd:
     normalized: dict
     media_bytes: list[bytes] = field(default_factory=list)
+    media_download_complete: bool = True
 
 
 @dataclass
@@ -71,13 +108,17 @@ class ScrapeErrorDetail:
 class CollectionResult:
     ads: list[CollectedAd]
     errors: list[ScrapeErrorDetail] = field(default_factory=list)
+    discovery_diagnostics: DiscoveryDiagnostics = field(default_factory=DiscoveryDiagnostics)
+    proxy_events: list[ProxyRuntimeEvent] = field(default_factory=list)
 
     @property
     def errors_count(self) -> int:
         return len(self.errors)
 
 
-async def collect_ads(source: Source) -> CollectionResult:
+async def collect_ads(
+    source: Source, proxy_candidates: list[ProxyRuntimeConfig] | None = None
+) -> CollectionResult:
     """Fase 1: esegue davvero `discover -> scrape_ad -> normalize ->
     download_media` per la fonte, senza toccare il database.
 
@@ -87,7 +128,10 @@ async def collect_ads(source: Source) -> CollectionResult:
     questa fonte in questo run).
     """
     scraper = GenericScraper(
-        slug=source.slug, base_url=source.base_url, config=source.scrape_config
+        slug=source.slug,
+        base_url=source.base_url,
+        config=source.scrape_config,
+        proxy_candidates=proxy_candidates,
     )
 
     try:
@@ -98,16 +142,25 @@ async def collect_ads(source: Source) -> CollectionResult:
                 "robots.txt vieta l'accesso alla pagina di elenco per '%s': %s", source.slug, exc
             )
             return CollectionResult(
-                ads=[], errors=[ScrapeErrorDetail(url=exc.url, message=str(exc))]
+                ads=[],
+                errors=[ScrapeErrorDetail(url=exc.url, message=str(exc))],
+                discovery_diagnostics=scraper.discovery_diagnostics,
+                proxy_events=scraper.proxy_events,
             )
         except (httpx.HTTPError, PageFetchError) as exc:
             logger.warning("Errore durante discover() per '%s': %s", source.slug, exc)
             return CollectionResult(
-                ads=[], errors=[ScrapeErrorDetail(url=source.base_url, message=str(exc))]
+                ads=[],
+                errors=[ScrapeErrorDetail(url=source.base_url, message=str(exc))],
+                discovery_diagnostics=scraper.discovery_diagnostics,
+                proxy_events=scraper.proxy_events,
             )
 
         collected: list[CollectedAd] = []
-        errors: list[ScrapeErrorDetail] = []
+        errors = [
+            ScrapeErrorDetail(url=source.base_url, message=message)
+            for message in scraper.discovery_diagnostics.errors
+        ]
 
         for url in ad_urls:
             try:
@@ -128,17 +181,20 @@ async def collect_ads(source: Source) -> CollectionResult:
                 continue
 
             media_bytes: list[bytes] = []
+            media_download_complete = True
             media_issues = scraper.media_extraction_warnings(raw)
             try:
                 media_result = await scraper.download_media(normalized)
                 media_bytes = media_result.media_bytes
                 if media_result.failures:
+                    media_download_complete = False
                     media_issues.append(
                         "Download media: "
                         f"{media_result.failed_count} di {media_result.attempted_count} file "
                         f"non scaricati. Primo errore: {media_result.failures[0].message}"
                     )
             except Exception as exc:  # noqa: BLE001 - protezione best-effort del run
+                media_download_complete = False
                 # Non serializzare l'eccezione: potrebbe contenere l'URL media.
                 logger.error(
                     "Download media fallito per un annuncio della fonte '%s' (%s).",
@@ -150,14 +206,33 @@ async def collect_ads(source: Source) -> CollectionResult:
             if media_issues:
                 errors.append(ScrapeErrorDetail(url=url, message=" ".join(media_issues)))
 
-            collected.append(CollectedAd(normalized=normalized, media_bytes=media_bytes))
+            collected.append(
+                CollectedAd(
+                    normalized=normalized,
+                    media_bytes=media_bytes,
+                    media_download_complete=media_download_complete,
+                )
+            )
 
-        return CollectionResult(ads=collected, errors=errors)
+        return CollectionResult(
+            ads=collected,
+            errors=errors,
+            discovery_diagnostics=scraper.discovery_diagnostics,
+            proxy_events=scraper.proxy_events,
+        )
     finally:
         await scraper.aclose()
 
 
 def _get_or_create_record(session: Session, phone_lookup: str, phone_normalized: str) -> Record:
+    # Serialize creation for the same HMAC across concurrent source workers.
+    # The database unique key remains the final guard; the advisory lock avoids
+    # turning a normal race into a failed scrape transaction.
+    if session.bind is not None and session.bind.dialect.name == "postgresql":
+        lock_key = int(phone_lookup[:16], 16)
+        if lock_key >= 2**63:
+            lock_key -= 2**64
+        session.execute(select(func.pg_advisory_xact_lock(lock_key)))
     record = session.execute(
         select(Record).where(Record.phone_lookup_hash == phone_lookup)
     ).scalar_one_or_none()
@@ -170,74 +245,53 @@ def _get_or_create_record(session: Session, phone_lookup: str, phone_normalized:
     return record
 
 
-def _upsert_advertisement(
-    session: Session, record: Record, source: Source, normalized: dict
-) -> tuple[Advertisement, bool]:
-    """Trova un Advertisement esistente per (record, fonte, URL) e lo
-    aggiorna, o ne crea uno nuovo. Restituisce `(advertisement, is_new)`.
-
-    L'idempotenza è per URL esatto: ri-scrapare lo stesso annuncio non
-    duplica righe, aggiorna solo `last_seen_at`/`scraped_at`/contenuto.
-    """
-    now = datetime.now(UTC)
-    source_url = normalized["source_url"]
-
-    existing = session.execute(
-        select(Advertisement).where(
-            Advertisement.record_id == record.id,
-            Advertisement.source_id == source.id,
-            Advertisement.source_url == source_url,
-        )
-    ).scalar_one_or_none()
-
-    content_hash = content_sha256(
-        f"{normalized.get('title') or ''}\n{normalized.get('description') or ''}"
-    )
-
-    if existing is not None:
-        existing.title = normalized.get("title")
-        existing.description = normalized.get("description")
-        existing.content_hash = content_hash
-        existing.last_seen_at = now
-        existing.scraped_at = now
-        session.add(existing)
-        return existing, False
-
-    advertisement = Advertisement(
-        record_id=record.id,
-        source_id=source.id,
-        source_url=source_url,
-        title=normalized.get("title"),
-        description=normalized.get("description"),
-        content_hash=content_hash,
-        confidence=1.0,
-        status="active",
-    )
-    session.add(advertisement)
-    session.flush()
-    return advertisement, True
+def media_set_hash(hashes: list[str] | set[str]) -> str:
+    """Return an order-independent hash for the deduplicated current set."""
+    payload = json.dumps(sorted(set(hashes)), separators=(",", ":"))
+    return hashlib.sha256(payload.encode()).hexdigest()
 
 
-def _persist_media(
+def occurrence_fingerprint(content_hash: str, current_media_hash: str) -> str:
+    return hashlib.sha256(f"{content_hash}:{current_media_hash}".encode()).hexdigest()
+
+
+@dataclass
+class MediaPersistResult:
+    new_media_ids: list[uuid.UUID]
+    current_hashes: list[str]
+    complete: bool
+
+
+def _reconcile_media(
     session: Session,
     record_id: uuid.UUID,
     advertisement: Advertisement,
     media_bytes_list: list[bytes],
-) -> list[uuid.UUID]:
-    """Validate and persist originals; expensive processing starts after commit."""
-    import hashlib
+    *,
+    download_complete: bool,
+) -> MediaPersistResult:
+    """Reconcile current media while preserving immutable original objects."""
+    now = datetime.now(UTC)
+    existing_media = (
+        session.execute(
+            select(Media).where(Media.advertisement_id == advertisement.id).with_for_update()
+        )
+        .scalars()
+        .all()
+    )
+    by_hash = {media.sha256: media for media in existing_media}
+    incoming = {hashlib.sha256(data).hexdigest(): data for data in media_bytes_list}
+    accepted_hashes: set[str] = set()
+    new_ids: list[uuid.UUID] = []
+    effective_complete = download_complete
 
-    media_ids: list[uuid.UUID] = []
-    for data in media_bytes_list:
-        sha256 = hashlib.sha256(data).hexdigest()
-        already_exists = session.execute(
-            select(Media.id).where(
-                Media.advertisement_id == advertisement.id, Media.sha256 == sha256
-            )
-        ).scalar_one_or_none()
-        if already_exists:
+    for sha256, data in incoming.items():
+        existing = by_hash.get(sha256)
+        if existing is not None:
+            existing.last_seen_at = now
+            existing.is_current = True
+            accepted_hashes.add(sha256)
             continue
-
         mime_type = sniff_mime_type(data)
         try:
             metadata = (
@@ -245,17 +299,15 @@ def _persist_media(
                 if mime_type.startswith("image/")
                 else probe_video(data, mime_type)
             )
-        except MediaValidationError:
-            logger.warning("Media rifiutato dalla validazione per annuncio %s.", advertisement.id)
-            continue
-        try:
             object_key = upload_media_object(record_id, data, mime_type)
-        except Exception:  # noqa: BLE001
-            logger.exception(
-                "Upload MinIO fallito per un media dell'annuncio %s.", advertisement.id
+        except Exception as exc:  # noqa: BLE001
+            effective_complete = False
+            logger.warning(
+                "Media non persistito per annuncio %s (%s).",
+                advertisement.id,
+                type(exc).__name__,
             )
             continue
-
         media = Media(
             advertisement_id=advertisement.id,
             original_object_key=object_key,
@@ -269,11 +321,70 @@ def _persist_media(
             width=metadata.width,
             height=metadata.height,
             duration_seconds=metadata.duration_seconds,
+            is_current=True,
+            last_seen_at=now,
         )
         session.add(media)
         session.flush()
-        media_ids.append(media.id)
-    return media_ids
+        accepted_hashes.add(sha256)
+        new_ids.append(media.id)
+
+    if effective_complete:
+        for media in existing_media:
+            if media.is_current and media.sha256 not in accepted_hashes:
+                media.is_current = False
+    else:
+        accepted_hashes.update(media.sha256 for media in existing_media if media.is_current)
+    return MediaPersistResult(new_ids, sorted(accepted_hashes), effective_complete)
+
+
+def _changed_fields(
+    advertisement: Advertisement, normalized: dict, media_changed: bool
+) -> list[str]:
+    changed: list[str] = []
+    if (advertisement.title or "") != (normalized.get("title") or ""):
+        changed.append("title")
+    if (advertisement.description or "") != (normalized.get("description") or ""):
+        changed.append("description")
+    if (advertisement.custom_fields or {}) != (normalized.get("custom_fields") or {}):
+        changed.append("customFields")
+    if media_changed:
+        changed.append("media")
+    return changed
+
+
+def _save_version(
+    session: Session,
+    advertisement: Advertisement,
+    run_id: uuid.UUID | None,
+    changed_fields: list[str],
+    current_media_hashes: list[str],
+) -> None:
+    content_hash = advertisement.content_hash or advertisement_content_hash(
+        {
+            "title": advertisement.title,
+            "description": advertisement.description,
+            "custom_fields": advertisement.custom_fields,
+        }
+    )
+    current_media_set_hash = advertisement.media_set_hash or media_set_hash(current_media_hashes)
+    session.add(
+        AdvertisementVersion(
+            advertisement_id=advertisement.id,
+            revision=advertisement.revision,
+            scrape_run_id=run_id,
+            content_hash=content_hash,
+            media_set_hash=current_media_set_hash,
+            fingerprint=occurrence_fingerprint(content_hash, current_media_set_hash),
+            changed_fields=changed_fields,
+            snapshot_json={
+                "title": advertisement.title,
+                "description": advertisement.description,
+                "customFields": advertisement.custom_fields or {},
+                "mediaHashes": current_media_hashes,
+            },
+        )
+    )
 
 
 def recompute_canonical(session: Session, record: Record) -> bool:
@@ -292,6 +403,7 @@ def recompute_canonical(session: Session, record: Record) -> bool:
             title=ad.title,
             description=ad.description,
             source_url=ad.source_url,
+            extra_non_empty_fields=non_empty_custom_field_count(ad.custom_fields),
         )
         for ad, src in rows
     ]
@@ -311,12 +423,19 @@ def recompute_canonical(session: Session, record: Record) -> bool:
     return True
 
 
-def persist_collected_ads(session: Session, source: Source, result: CollectionResult) -> dict:
+def persist_collected_ads(
+    session: Session,
+    source: Source,
+    result: CollectionResult,
+    run_id: uuid.UUID | None = None,
+) -> dict:
     """Fase 2: scrive su DB gli annunci raccolti dalla fase 1 (dedup per
     telefono, upsert per URL, upload media, ricalcolo canonico). Nessuna
     richiesta di rete qui: solo operazioni DB (+ upload MinIO, anch'esso
     locale/interno alla rete Docker, non verso la fonte scrapata)."""
     items_new = 0
+    items_updated = 0
+    items_unchanged = 0
     persist_errors: list[ScrapeErrorDetail] = []
     media_ids: list[uuid.UUID] = []
 
@@ -348,21 +467,97 @@ def persist_collected_ads(session: Session, source: Source, result: CollectionRe
             continue
         record = _get_or_create_record(session, lookup_hash, phone_normalized)
 
-        advertisement, is_new = _upsert_advertisement(session, record, source, item.normalized)
-        if is_new:
+        now = datetime.now(UTC)
+        advertisement = session.execute(
+            select(Advertisement)
+            .where(
+                Advertisement.record_id == record.id,
+                Advertisement.source_id == source.id,
+                Advertisement.source_url == item.normalized["source_url"],
+            )
+            .with_for_update()
+        ).scalar_one_or_none()
+        is_new = advertisement is None
+        new_content_hash = advertisement_content_hash(item.normalized)
+        if advertisement is None:
+            advertisement = Advertisement(
+                record_id=record.id,
+                source_id=source.id,
+                source_url=item.normalized["source_url"],
+                title=item.normalized.get("title"),
+                description=item.normalized.get("description"),
+                custom_fields=item.normalized.get("custom_fields") or {},
+                content_hash=new_content_hash,
+                confidence=1.0,
+                status="active",
+                revision=1,
+                first_seen_at=now,
+                last_seen_at=now,
+                scraped_at=now,
+                last_changed_at=now,
+            )
+            session.add(advertisement)
+            session.flush()
             items_new += 1
 
-        if item.media_bytes:
-            media_ids.extend(_persist_media(session, record.id, advertisement, item.media_bytes))
+        previous_hashes = (
+            session.execute(
+                select(Media.sha256).where(
+                    Media.advertisement_id == advertisement.id, Media.is_current.is_(True)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        previous_media_hash = advertisement.media_set_hash or media_set_hash(previous_hashes)
+        media_result = _reconcile_media(
+            session,
+            record.id,
+            advertisement,
+            item.media_bytes,
+            download_complete=item.media_download_complete,
+        )
+        media_ids.extend(media_result.new_media_ids)
+        new_media_hash = media_set_hash(media_result.current_hashes)
 
-        recompute_canonical(session, record)
+        if is_new:
+            advertisement.media_set_hash = new_media_hash
+            record.content_revision += 1
+            _save_version(session, advertisement, run_id, ["initial"], media_result.current_hashes)
+            recompute_canonical(session, record)
+        else:
+            changed = _changed_fields(
+                advertisement, item.normalized, new_media_hash != previous_media_hash
+            )
+            advertisement.last_seen_at = now
+            if not changed:
+                items_unchanged += 1
+            else:
+                advertisement.title = item.normalized.get("title")
+                advertisement.description = item.normalized.get("description")
+                advertisement.custom_fields = item.normalized.get("custom_fields") or {}
+                advertisement.content_hash = new_content_hash
+                advertisement.media_set_hash = new_media_hash
+                advertisement.scraped_at = now
+                advertisement.last_changed_at = now
+                advertisement.revision += 1
+                record.content_revision += 1
+                items_updated += 1
+                _save_version(session, advertisement, run_id, changed, media_result.current_hashes)
+                recompute_canonical(session, record)
         session.commit()
 
     all_errors = result.errors + persist_errors
     return {
         "items_found": len(result.ads) + result.errors_count,
         "items_new": items_new,
+        "items_updated": items_updated,
+        "items_unchanged": items_unchanged,
         "errors": all_errors,
         "errors_count": len(all_errors),
         "media_ids": [str(media_id) for media_id in media_ids],
+        "pages_visited": result.discovery_diagnostics.pages_visited,
+        "pagination_mode": result.discovery_diagnostics.pagination_mode,
+        "pagination_stop_reason": result.discovery_diagnostics.stop_reason,
+        "proxy_events": result.proxy_events,
     }

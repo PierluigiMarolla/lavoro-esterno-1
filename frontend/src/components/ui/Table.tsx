@@ -60,7 +60,7 @@ export function LoadingRow({ colSpan }: { colSpan: number }) {
   return (
     <tr>
       <td colSpan={colSpan} className="px-5 py-12 text-center text-body-md text-on-surface-variant">
-        Loading…
+        Caricamento…
       </td>
     </tr>
   );
@@ -86,16 +86,16 @@ export function ErrorRow({
   return (
     <tr>
       <td colSpan={colSpan} className="px-5 py-10 text-center">
-        <p className="text-body-md font-semibold text-error">{presentation?.title ?? "Error"}</p>
+        <p className="text-body-md font-semibold text-error">{presentation?.title ?? "Errore"}</p>
         <p className="text-body-md text-on-surface-variant mt-1">
-          {presentation?.description ?? message ?? "Something went wrong."}
+          {presentation?.description ?? message ?? "Si è verificato un errore."}
         </p>
         {presentation?.retryable && onRetry && (
           <button
             onClick={onRetry}
             className="mt-3 px-3 py-1.5 border border-border rounded text-label-sm text-on-surface hover:bg-surface-container-low transition-colors"
           >
-            Retry
+            Riprova
           </button>
         )}
       </td>

@@ -11,10 +11,12 @@ import {
   useSource,
   useCreateSource,
   useUpdateSource,
+  useUpdateSourceSchedule,
   useDeleteSource,
   useCheckSourceRobots,
   useTestSourceConfig,
 } from "@/hooks/useSources";
+import { useProxyPools } from "@/hooks/useProxies";
 import { useAuth } from "@/context/AuthContext";
 import Icon from "@/components/ui/Icon";
 import Badge, { type BadgeTone } from "@/components/ui/Badge";
@@ -25,6 +27,7 @@ import Dialog from "@/components/ui/Dialog";
 import { EmptyRow, ErrorRow, LoadingRow, Table, TBody, Td, Th, THead, Tr } from "@/components/ui/Table";
 import ErrorState from "@/components/ui/ErrorState";
 import { describeError } from "@/lib/errors";
+import { formatDateTime } from "@/lib/format";
 import type {
   ScrapeConfig,
   ScrapeFetchMode,
@@ -33,6 +36,7 @@ import type {
   SourcePriority,
   SourceStatus,
   ScrapeRunStatus,
+  ScrapeIntervalUnit,
   TestConfigResult,
 } from "@/types";
 
@@ -49,27 +53,29 @@ const STATUS_TONE: Record<SourceStatus, BadgeTone> = {
 };
 
 const STATUS_LABEL: Record<SourceStatus, string> = {
-  healthy: "Healthy",
-  degraded: "Degraded",
-  offline: "Offline",
+  healthy: "Operativa",
+  degraded: "Degradata",
+  offline: "Fuori linea",
 };
 
 const PRIORITY_LABEL: Record<SourcePriority, string> = {
-  high: "High",
-  medium: "Medium",
-  low: "Low",
+  high: "Alta",
+  medium: "Media",
+  low: "Bassa",
 };
 
 const RUN_STATUS_TONE: Record<ScrapeRunStatus, BadgeTone> = {
+  pending: "neutral",
   running: "warning",
   completed: "success",
   failed: "error",
 };
 
 const RUN_STATUS_LABEL: Record<ScrapeRunStatus, string> = {
-  running: "Running",
-  completed: "Completed",
-  failed: "Failed",
+  pending: "In attesa",
+  running: "In esecuzione",
+  completed: "Completata",
+  failed: "Non riuscita",
 };
 
 // Threshold mirrors backend/app/api/v1/sources.py:CONSECUTIVE_FAILURES_ALERT_THRESHOLD.
@@ -82,9 +88,11 @@ interface SummaryCardConfig {
   accent: string;
 }
 
-function formatDateTime(iso: string | null): string {
-  if (!iso) return "-";
-  return new Date(iso).toLocaleString([], { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+function formatInterval(minutes: number | null): string {
+  if (!minutes) return "Non configurato";
+  if (minutes % 1440 === 0) return `${minutes / 1440} ${minutes === 1440 ? "giorno" : "giorni"}`;
+  if (minutes % 60 === 0) return `${minutes / 60} ${minutes === 60 ? "ora" : "ore"}`;
+  return `${minutes} minuti`;
 }
 
 function truncate(text: string, max = 80): string {
@@ -101,10 +109,10 @@ function SourceRunsPanel({ sourceId, colSpan }: { sourceId: string; colSpan: num
   return (
     <tr className="bg-surface-container-low">
       <td colSpan={colSpan} className="px-5 py-4">
-        {runs.isLoading && <p className="text-body-md text-on-surface-variant">Loading run history…</p>}
+        {runs.isLoading && <p className="text-body-md text-on-surface-variant">Caricamento cronologia esecuzioni…</p>}
         {runs.isError && <ErrorState error={runs.error} onRetry={() => runs.refetch()} />}
         {runs.data && runs.data.length === 0 && (
-          <p className="text-body-md text-on-surface-variant">No scan runs recorded yet.</p>
+          <p className="text-body-md text-on-surface-variant">Nessuna scansione ancora registrata.</p>
         )}
         {runs.data && runs.data.length > 0 && (
           <div className="space-y-3">
@@ -113,16 +121,38 @@ function SourceRunsPanel({ sourceId, colSpan }: { sourceId: string; colSpan: num
                 <div className="flex flex-wrap items-center gap-3 justify-between">
                   <div className="flex items-center gap-3">
                     <Badge tone={RUN_STATUS_TONE[run.status]}>{RUN_STATUS_LABEL[run.status]}</Badge>
+                    <Badge tone="neutral">{run.triggerType === "scheduled" ? "Pianificata" : "Manuale"}</Badge>
                     <span className="text-body-md text-on-surface-variant">
-                      {formatDateTime(run.startedAt)} → {formatDateTime(run.finishedAt)}
+                      {formatDateTime(run.startedAt ?? run.queuedAt)} → {formatDateTime(run.finishedAt)}
                     </span>
                   </div>
                   <div className="flex gap-4 text-label-sm text-on-surface-variant font-mono">
-                    <span>Found: {run.itemsFound.toLocaleString()}</span>
-                    <span>New: {run.itemsNew.toLocaleString()}</span>
-                    <span className={run.errorsCount > 0 ? "text-error" : undefined}>Errors: {run.errorsCount}</span>
+                    <span>Trovati: {run.itemsFound.toLocaleString("it-IT")}</span>
+                    <span>Nuovi: {run.itemsNew.toLocaleString("it-IT")}</span>
+                    <span>Aggiornati: {run.itemsUpdated.toLocaleString("it-IT")}</span>
+                    <span>Invariati: {run.itemsUnchanged.toLocaleString("it-IT")}</span>
+                    <span>Pagine: {run.pagesVisited.toLocaleString("it-IT")}</span>
+                    <span>Pagination: {run.paginationMode}</span>
+                    <span>Proxy attempts: {run.proxyAttemptsCount}</span>
+                    <span>Rotations: {run.proxyRotationsCount}</span>
+                    <span className={run.errorsCount > 0 ? "text-error" : undefined}>Errori: {run.errorsCount}</span>
                   </div>
                 </div>
+                {run.paginationStopReason && (
+                  <p className="mt-1 text-label-sm text-on-surface-variant">
+                    Stop reason: <span className="font-mono">{run.paginationStopReason}</span>
+                  </p>
+                )}
+                {run.scheduledFor && (
+                  <p className="mt-1 text-label-sm text-on-surface-variant">
+                    Planned for: {formatDateTime(run.scheduledFor)}
+                  </p>
+                )}
+                {run.proxyStopReason && (
+                  <p className="mt-1 text-label-sm text-error">
+                    Proxy stop: <span className="font-mono">{run.proxyStopReason}</span>
+                  </p>
+                )}
                 {run.errorsCount > 0 && run.errors.length > 0 && (
                   <ul className="mt-2 space-y-1 border-t border-border pt-2">
                     {run.errors.map((err) => (
@@ -144,15 +174,15 @@ function SourceRunsPanel({ sourceId, colSpan }: { sourceId: string; colSpan: num
 }
 
 function formatRelativeTime(iso: string | null): string {
-  if (!iso) return "Never";
+  if (!iso) return "Mai";
   const diffMs = Date.now() - new Date(iso).getTime();
   const minutes = Math.round(diffMs / 60000);
-  if (minutes < 1) return "Just now";
-  if (minutes < 60) return `${minutes} min${minutes === 1 ? "" : "s"} ago`;
+  if (minutes < 1) return "Adesso";
+  if (minutes < 60) return `${minutes} min fa`;
   const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  if (hours < 24) return `${hours} ${hours === 1 ? "ora" : "ore"} fa`;
   const days = Math.round(hours / 24);
-  return `${days} day${days === 1 ? "" : "s"} ago`;
+  return `${days} ${days === 1 ? "giorno" : "giorni"} fa`;
 }
 
 interface FieldRow {
@@ -198,6 +228,7 @@ function SourceFormDialog({
   const createSource = useCreateSource();
   const updateSource = useUpdateSource();
   const testConfig = useTestSourceConfig();
+  const proxyPools = useProxyPools(open);
 
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
@@ -216,7 +247,7 @@ function SourceFormDialog({
   const [hideCanvas, setHideCanvas] = useState(false);
   const [realChrome, setRealChrome] = useState(false);
   const [blockAds, setBlockAds] = useState(false);
-  const [proxy, setProxy] = useState("");
+  const [proxyPoolId, setProxyPoolId] = useState("");
   const [waitSelector, setWaitSelector] = useState("");
   const [waitMs, setWaitMs] = useState<number | "">("");
   const [fieldRows, setFieldRows] = useState<FieldRow[]>(EMPTY_FIELD_ROWS);
@@ -248,7 +279,7 @@ function SourceFormDialog({
       setHideCanvas(false);
       setRealChrome(false);
       setBlockAds(false);
-      setProxy("");
+      setProxyPoolId("");
       setWaitSelector("");
       setWaitMs("");
       setFieldRows(EMPTY_FIELD_ROWS);
@@ -265,6 +296,7 @@ function SourceFormDialog({
     setName(detail.data.name);
     setBaseUrl(""); // base_url isn't part of Source (list shape); left blank unless re-typed
     setPriority(detail.data.priority);
+    setProxyPoolId(detail.data.proxyPoolId ?? "");
     const cfg = detail.data.scrapeConfig;
     const watermark = detail.data.watermarkRemoval;
     setWatermarkEnabled(watermark.enabled);
@@ -284,7 +316,6 @@ function SourceFormDialog({
       setHideCanvas(cfg.hideCanvas ?? false);
       setRealChrome(cfg.realChrome ?? false);
       setBlockAds(cfg.blockAds ?? false);
-      setProxy(cfg.proxy ?? "");
       setWaitSelector(cfg.waitSelector ?? "");
       setWaitMs(cfg.waitMs ?? "");
       setFieldRows(fieldsToRows(cfg.fields));
@@ -302,7 +333,7 @@ function SourceFormDialog({
       setHideCanvas(false);
       setRealChrome(false);
       setBlockAds(false);
-      setProxy("");
+      setProxyPoolId(detail.data.proxyPoolId ?? "");
       setWaitSelector("");
       setWaitMs("");
       setFieldRows(EMPTY_FIELD_ROWS);
@@ -347,7 +378,6 @@ function SourceFormDialog({
       hideCanvas,
       realChrome,
       blockAds,
-      proxy: proxy.trim() || null,
       waitSelector: waitSelector.trim() || null,
       waitMs: waitMs === "" ? null : Number(waitMs),
       fields: rowsToFields(fieldRows),
@@ -368,10 +398,10 @@ function SourceFormDialog({
       if (isEdit && editingSource) {
         await updateSource.mutateAsync({
           id: editingSource.id,
-          input: { name, priority, scrapeConfig, watermarkRemoval, ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}) },
+          input: { name, priority, scrapeConfig, watermarkRemoval, proxyPoolId: proxyPoolId || null, ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}) },
         });
       } else {
-        await createSource.mutateAsync({ name, slug, baseUrl, priority, scrapeConfig, watermarkRemoval });
+        await createSource.mutateAsync({ name, slug, baseUrl, priority, scrapeConfig, watermarkRemoval, proxyPoolId: proxyPoolId || null });
       }
       onClose();
     } catch (err) {
@@ -382,8 +412,24 @@ function SourceFormDialog({
   async function handleTestConfig() {
     if (!editingSource) return;
     setTestResult(null);
+    const scrapeConfig = buildScrapeConfig();
+    if (!scrapeConfig) {
+      setTestResult({
+        adUrlsFound: 0,
+        sampleUrl: null,
+        extractedFields: null,
+        warnings: [],
+        error: "Completa la configurazione di acquisizione prima di provarla.",
+        pagesVisited: 0,
+        configuredMaxPages: 1,
+        paginationMode: "none",
+        paginationStopReason: "not_started",
+        uniqueAdsFound: 0,
+      });
+      return;
+    }
     try {
-      const result = await testConfig.mutateAsync(editingSource.id);
+      const result = await testConfig.mutateAsync({ id: editingSource.id, scrapeConfig, proxyPoolId: proxyPoolId || null });
       setTestResult(result);
     } catch (err) {
       setTestResult({
@@ -392,6 +438,11 @@ function SourceFormDialog({
         extractedFields: null,
         warnings: [],
         error: describeError(err).description,
+        pagesVisited: 0,
+        configuredMaxPages: scrapeConfig.maxPages,
+        paginationMode: "none",
+        paginationStopReason: "failed",
+        uniqueAdsFound: 0,
       });
     }
   }
@@ -399,18 +450,18 @@ function SourceFormDialog({
   const isSaving = createSource.isPending || updateSource.isPending;
 
   return (
-    <Dialog open={open} onClose={onClose} title={isEdit ? "Edit source" : "Add source"}>
+    <Dialog open={open} onClose={onClose} title={isEdit ? "Modifica fonte" : "Aggiungi fonte"}>
       <form onSubmit={handleSubmit} className="flex flex-col gap-4 max-h-[65vh] overflow-y-auto pr-1">
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label htmlFor="source-name" className="text-label-sm text-on-surface-variant block mb-1">
-              Name
+              Nome
             </label>
             <Input id="source-name" required value={name} onChange={(e) => setName(e.target.value)} />
           </div>
           <div>
             <label htmlFor="source-priority" className="text-label-sm text-on-surface-variant block mb-1">
-              Priority
+              Priorità
             </label>
             <Select
               id="source-priority"
@@ -418,9 +469,9 @@ function SourceFormDialog({
               value={priority}
               onChange={(e) => setPriority(e.target.value as SourcePriority)}
             >
-              <option value="high">High</option>
-              <option value="medium">Medium</option>
-              <option value="low">Low</option>
+              <option value="high">Alta</option>
+              <option value="medium">Media</option>
+              <option value="low">Bassa</option>
             </Select>
           </div>
         </div>
@@ -428,7 +479,7 @@ function SourceFormDialog({
         {!isEdit && (
           <div>
             <label htmlFor="source-slug" className="text-label-sm text-on-surface-variant block mb-1">
-              Slug (unique identifier, lowercase/underscore only)
+              Slug (identificatore univoco, solo minuscole e trattini bassi)
             </label>
             <Input
               id="source-slug"
@@ -437,14 +488,14 @@ function SourceFormDialog({
               pattern="[a-z0-9_]+"
               value={slug}
               onChange={(e) => setSlug(e.target.value)}
-              placeholder="my_new_source"
+              placeholder="mia_nuova_fonte"
             />
           </div>
         )}
 
         <div>
           <label htmlFor="source-base-url" className="text-label-sm text-on-surface-variant block mb-1">
-            Base URL {isEdit && <span className="text-outline">(leave blank to keep current)</span>}
+            URL di base {isEdit && <span className="text-outline">(lascia vuoto per mantenere quello attuale)</span>}
           </label>
           <Input
             id="source-base-url"
@@ -457,16 +508,15 @@ function SourceFormDialog({
         </div>
 
         <div className="border-t border-border pt-3">
-          <h4 className="text-body-md font-semibold text-on-surface mb-1">Scrape configuration</h4>
+          <h4 className="text-body-md font-semibold text-on-surface mb-1">Configurazione acquisizione</h4>
           <p className="text-label-sm text-on-surface-variant mb-3">
-            Optional at creation. The engine only knows what you configure here — CSS selectors for this
-            specific site, supplied by you.
+            Opzionale alla creazione. Il motore usa esclusivamente i selettori CSS configurati qui per il sito specifico.
           </p>
 
           <div className="space-y-3">
             <div>
               <label htmlFor="source-start-urls" className="text-label-sm text-on-surface-variant block mb-1">
-                Start URLs (one per line)
+                URL iniziali (uno per riga)
               </label>
               <textarea
                 id="source-start-urls"
@@ -481,7 +531,7 @@ function SourceFormDialog({
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label htmlFor="source-ad-link-selector" className="text-label-sm text-on-surface-variant block mb-1">
-                  Ad link selector (CSS)
+                  Selettore collegamento annuncio (CSS)
                 </label>
                 <Input
                   id="source-ad-link-selector"
@@ -493,7 +543,7 @@ function SourceFormDialog({
               </div>
               <div>
                 <label htmlFor="source-next-page-selector" className="text-label-sm text-on-surface-variant block mb-1">
-                  Next page selector (optional)
+                  Selettore pagina successiva (opzionale)
                 </label>
                 <Input
                   id="source-next-page-selector"
@@ -502,13 +552,16 @@ function SourceFormDialog({
                   onChange={(e) => setNextPageSelector(e.target.value)}
                   placeholder="a.pagination-next"
                 />
+                <p className="mt-1 text-xs text-on-surface-variant">
+                  Deve identificare un solo controllo “Successiva”. I collegamenti usano automaticamente href; le modalità browser possono usare un controllo JavaScript.
+                </p>
               </div>
             </div>
 
             <div className="grid grid-cols-3 gap-3">
               <div>
                 <label htmlFor="source-max-pages" className="text-label-sm text-on-surface-variant block mb-1">
-                  Max pages
+                  Pagine massime
                 </label>
                 <Input
                   id="source-max-pages"
@@ -521,7 +574,7 @@ function SourceFormDialog({
               </div>
               <div>
                 <label htmlFor="source-max-ads" className="text-label-sm text-on-surface-variant block mb-1">
-                  Max ads/run
+                  Annunci massimi per esecuzione
                 </label>
                 <Input
                   id="source-max-ads"
@@ -534,7 +587,7 @@ function SourceFormDialog({
               </div>
               <div>
                 <label htmlFor="source-rate-limit" className="text-label-sm text-on-surface-variant block mb-1">
-                  Rate limit (s)
+                  Intervallo richieste (s)
                 </label>
                 <Input
                   id="source-rate-limit"
@@ -550,7 +603,7 @@ function SourceFormDialog({
 
             <div>
               <label htmlFor="source-user-agent" className="text-label-sm text-on-surface-variant block mb-1">
-                User-Agent (optional)
+                User-Agent (opzionale)
               </label>
               <Input
                 id="source-user-agent"
@@ -563,7 +616,7 @@ function SourceFormDialog({
 
             <div>
               <label htmlFor="source-fetch-mode" className="text-label-sm text-on-surface-variant block mb-1">
-                Fetch mode
+                Modalità di acquisizione
               </label>
               <Select
                 id="source-fetch-mode"
@@ -572,8 +625,8 @@ function SourceFormDialog({
                 onChange={(e) => setFetchMode(e.target.value as ScrapeFetchMode)}
               >
                 <option value="http">HTTP (Scrapling)</option>
-                <option value="dynamic">Dynamic JS (Scrapling browser)</option>
-                <option value="stealth">Stealth (Scrapling anti-bot)</option>
+                <option value="dynamic">JavaScript dinamico (browser Scrapling)</option>
+                <option value="stealth">Modalità discreta (anti-bot Scrapling)</option>
               </Select>
             </div>
 
@@ -581,7 +634,7 @@ function SourceFormDialog({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label htmlFor="source-wait-selector" className="text-label-sm text-on-surface-variant block mb-1">
-                    Wait selector (optional)
+                    Selettore di attesa (opzionale)
                   </label>
                   <Input
                     id="source-wait-selector"
@@ -593,7 +646,7 @@ function SourceFormDialog({
                 </div>
                 <div>
                   <label htmlFor="source-wait-ms" className="text-label-sm text-on-surface-variant block mb-1">
-                    Extra wait (ms)
+                    Attesa aggiuntiva (ms)
                   </label>
                   <Input
                     id="source-wait-ms"
@@ -608,27 +661,34 @@ function SourceFormDialog({
               </div>
             )}
 
+            <div className="space-y-2 border border-border rounded p-3">
+              <label htmlFor="source-proxy-pool" className="text-label-sm text-on-surface-variant block">
+                Pool proxy
+              </label>
+              <Select id="source-proxy-pool" value={proxyPoolId} onChange={(e) => setProxyPoolId(e.target.value)}>
+                <option value="">Connessione diretta</option>
+                {proxyPools.data?.map((pool) => (
+                  <option key={pool.id} value={pool.id} disabled={!pool.enabled}>
+                    {pool.name} ({pool.healthyCount}/{pool.totalCount} disponibili)
+                  </option>
+                ))}
+              </Select>
+              {proxyPoolId && (
+                <p className="text-label-sm text-warning">
+                  Fail-closed: lo scan verrà bloccato se nessun proxy del pool è disponibile.
+                </p>
+              )}
+            </div>
+
             {fetchMode === "stealth" && (
               <div className="space-y-3 border border-border rounded p-3">
-                <div>
-                  <label htmlFor="source-proxy" className="text-label-sm text-on-surface-variant block mb-1">
-                    Proxy (optional)
-                  </label>
-                  <Input
-                    id="source-proxy"
-                    mono
-                    value={proxy}
-                    onChange={(e) => setProxy(e.target.value)}
-                    placeholder="http://user:password@host:8080"
-                  />
-                </div>
                 <div className="grid grid-cols-2 gap-2">
                   {[
-                    ["solveCloudflare", "Solve Cloudflare", solveCloudflare, setSolveCloudflare],
-                    ["blockWebrtc", "Block WebRTC", blockWebrtc, setBlockWebrtc],
-                    ["hideCanvas", "Hide canvas", hideCanvas, setHideCanvas],
-                    ["realChrome", "Real Chrome", realChrome, setRealChrome],
-                    ["blockAds", "Block ads", blockAds, setBlockAds],
+                    ["solveCloudflare", "Gestisci Cloudflare", solveCloudflare, setSolveCloudflare],
+                    ["blockWebrtc", "Blocca WebRTC", blockWebrtc, setBlockWebrtc],
+                    ["hideCanvas", "Nascondi canvas", hideCanvas, setHideCanvas],
+                    ["realChrome", "Chrome reale", realChrome, setRealChrome],
+                    ["blockAds", "Blocca pubblicità", blockAds, setBlockAds],
                   ].map(([id, label, checked, setter]) => (
                     <label key={id as string} className="flex items-center gap-2 text-label-sm text-on-surface-variant">
                       <input
@@ -646,10 +706,10 @@ function SourceFormDialog({
             <div>
               <div className="flex items-center justify-between mb-1">
                 <span className="text-label-sm text-on-surface-variant">
-                  Fields to extract (a <code>phone</code> field is required)
+                  Campi da estrarre (è obbligatorio un campo <code>phone</code>)
                 </span>
                 <button type="button" onClick={addFieldRow} className="text-label-sm text-primary hover:underline">
-                  + Add field
+                  + Aggiungi campo
                 </button>
               </div>
               <div className="space-y-2">
@@ -657,13 +717,13 @@ function SourceFormDialog({
                   <div key={index} className="grid grid-cols-[1fr_2fr_1fr_auto_auto] gap-2 items-center">
                     <Input
                       mono
-                      placeholder="field name"
+                      placeholder="nome campo"
                       value={row.name}
                       onChange={(e) => updateFieldRow(index, { name: e.target.value })}
                     />
                     <Input
                       mono
-                      placeholder="CSS selector"
+                      placeholder="selettore CSS"
                       value={row.selector}
                       onChange={(e) => updateFieldRow(index, { selector: e.target.value })}
                     />
@@ -687,7 +747,7 @@ function SourceFormDialog({
                       type="button"
                       onClick={() => removeFieldRow(index)}
                       className="text-on-surface-variant hover:text-error"
-                      aria-label={`Remove field ${row.name || index + 1}`}
+                      aria-label={`Rimuovi campo ${row.name || index + 1}`}
                     >
                       <Icon name="close" size={16} />
                     </button>
@@ -696,17 +756,17 @@ function SourceFormDialog({
               </div>
               <div className="rounded border border-border bg-surface-container-low p-2 text-label-sm text-on-surface-variant">
                 <p>
-                  Media fields must be named <code>images</code> or <code>videos</code> and have <code>multi</code> enabled.
+                  I campi media devono chiamarsi <code>images</code> o <code>videos</code> e avere <code>multi</code> abilitato.
                 </p>
-                <p className="mt-1 font-mono">Thumbnail: img.full-image + src</p>
-                <p className="font-mono">Original: a:has(img.full-image) + href</p>
+                <p className="mt-1 font-mono">Anteprima: img.full-image + src</p>
+                <p className="font-mono">Originale: a:has(img.full-image) + href</p>
               </div>
             </div>
 
             {isEdit && (
               <div className="border-t border-border pt-3">
                 <Button type="button" variant="secondary" onClick={handleTestConfig} disabled={testConfig.isPending}>
-                  {testConfig.isPending ? "Testing…" : "Test configuration"}
+                  {testConfig.isPending ? "Verifica…" : "Prova configurazione"}
                 </Button>
                 {testResult && (
                   <div className="mt-2 text-label-sm bg-surface-container-low border border-border rounded p-2">
@@ -714,9 +774,17 @@ function SourceFormDialog({
                       <p className="text-error">{testResult.error}</p>
                     ) : (
                       <>
-                        <p className="text-on-surface">Found {testResult.adUrlsFound} ad link(s).</p>
+                        <p className="text-on-surface">Trovati {testResult.adUrlsFound} collegamenti ad annunci.</p>
+                        <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 font-mono text-on-surface-variant">
+                          <span>
+                            Pagine: {testResult.pagesVisited}/{testResult.configuredMaxPages}
+                          </span>
+                          <span>Annunci unici: {testResult.uniqueAdsFound}</span>
+                          <span>Modalità: {testResult.paginationMode}</span>
+                          <span>Arresto: {testResult.paginationStopReason}</span>
+                        </div>
                         {testResult.sampleUrl && (
-                          <p className="font-mono text-on-surface-variant truncate">Sample: {testResult.sampleUrl}</p>
+                          <p className="font-mono text-on-surface-variant truncate">Esempio: {testResult.sampleUrl}</p>
                         )}
                         {testResult.warnings.length > 0 && (
                           <div className="mt-2 rounded border border-warning/40 bg-warning/10 p-2 text-warning">
@@ -737,16 +805,16 @@ function SourceFormDialog({
               </div>
             )}
             {!isEdit && (
-              <p className="text-label-sm text-outline">Save the source first to test its configuration.</p>
+              <p className="text-label-sm text-outline">Salva prima la fonte per provarne la configurazione.</p>
             )}
           </div>
         </div>
 
         <fieldset className="border border-border rounded-lg p-3 space-y-3">
-          <legend className="px-1 text-label-sm text-on-surface">Authorized watermark removal</legend>
+          <legend className="px-1 text-label-sm text-on-surface">Rimozione filigrana autorizzata</legend>
           <label className="flex items-center gap-2 text-body-md text-on-surface-variant">
             <input type="checkbox" checked={watermarkEnabled} onChange={(event) => setWatermarkEnabled(event.target.checked)} />
-            Enable for this source (originals are always preserved)
+            Abilita per questa fonte (gli originali vengono sempre conservati)
           </label>
           {watermarkEnabled && (
             <>
@@ -754,7 +822,7 @@ function SourceFormDialog({
                 required
                 value={watermarkAuthorization}
                 onChange={(event) => setWatermarkAuthorization(event.target.value)}
-                placeholder="Contract/ticket/legal authorization reference"
+                placeholder="Riferimento del contratto, ticket o autorizzazione legale"
               />
               <div className="grid grid-cols-4 gap-2">
                 {(["x", "y", "width", "height"] as const).map((key) => (
@@ -779,10 +847,10 @@ function SourceFormDialog({
 
         <div className="flex justify-end gap-2 pt-2 border-t border-border">
           <Button type="button" variant="secondary" onClick={onClose}>
-            Cancel
+            Annulla
           </Button>
           <Button type="submit" disabled={isSaving}>
-            {isSaving ? "Saving…" : isEdit ? "Save changes" : "Add source"}
+            {isSaving ? "Salvataggio…" : isEdit ? "Salva modifiche" : "Aggiungi fonte"}
           </Button>
         </div>
       </form>
@@ -804,21 +872,20 @@ function DeleteSourceDialog({ source, onClose }: { source: Source | null; onClos
   }
 
   return (
-    <Dialog open={source !== null} onClose={handleClose} title="Delete source">
+    <Dialog open={source !== null} onClose={handleClose} title="Elimina fonte">
       <div className="flex flex-col gap-4">
         <p className="text-body-md text-on-surface">
-          Are you sure you want to delete <span className="font-semibold">{source?.name}</span>? This is
-          blocked if any advertisement is already linked to it.
+          Eliminare la fonte <span className="font-semibold">{source?.name}</span>? L’operazione è bloccata se esistono annunci collegati.
         </p>
         {deleteSource.isError && (
           <p className="text-body-md text-error">{describeError(deleteSource.error).description}</p>
         )}
         <div className="flex justify-end gap-2">
           <Button type="button" variant="secondary" onClick={handleClose}>
-            Cancel
+            Annulla
           </Button>
           <Button type="button" variant="danger" onClick={handleConfirm} disabled={deleteSource.isPending}>
-            {deleteSource.isPending ? "Deleting…" : "Delete"}
+            {deleteSource.isPending ? "Eliminazione…" : "Elimina"}
           </Button>
         </div>
       </div>
@@ -850,7 +917,7 @@ function DuplicateSourceDialog({
 
   useEffect(() => {
     if (!source) return;
-    setName(`${source.name} (copy)`);
+    setName(`${source.name} (copia)`);
     setSlug(duplicateSlugSuggestion(source, sources));
   }, [source, sources]);
 
@@ -871,15 +938,14 @@ function DuplicateSourceDialog({
   }
 
   return (
-    <Dialog open={source !== null} onClose={handleClose} title="Duplicate source">
+    <Dialog open={source !== null} onClose={handleClose} title="Duplica fonte">
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <p className="text-body-md text-on-surface-variant">
-          All scraping and watermark settings will be copied. The duplicate starts disabled and
-          contains no advertisements or run history.
+          Verranno copiate tutte le impostazioni di acquisizione e filigrana. La copia nasce disabilitata e senza annunci o cronologia.
         </p>
         <div>
           <label htmlFor="duplicate-source-name" className="text-label-sm text-on-surface-variant block mb-1">
-            Name
+            Nome
           </label>
           <Input
             id="duplicate-source-name"
@@ -892,7 +958,7 @@ function DuplicateSourceDialog({
         </div>
         <div>
           <label htmlFor="duplicate-source-slug" className="text-label-sm text-on-surface-variant block mb-1">
-            Slug (unique identifier)
+            Slug (identificatore univoco)
           </label>
           <Input
             id="duplicate-source-slug"
@@ -907,9 +973,128 @@ function DuplicateSourceDialog({
           <p className="text-body-md text-error">{describeError(duplicateSource.error).description}</p>
         )}
         <div className="flex justify-end gap-2">
-          <Button type="button" variant="secondary" onClick={handleClose}>Cancel</Button>
+          <Button type="button" variant="secondary" onClick={handleClose}>Annulla</Button>
           <Button type="submit" disabled={duplicateSource.isPending}>
-            {duplicateSource.isPending ? "Duplicating…" : "Duplicate"}
+            {duplicateSource.isPending ? "Duplicazione…" : "Duplica"}
+          </Button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
+function intervalParts(minutes: number | null): { value: number; unit: ScrapeIntervalUnit } {
+  if (!minutes) return { value: 1, unit: "hours" };
+  if (minutes % 1440 === 0) return { value: minutes / 1440, unit: "days" };
+  if (minutes % 60 === 0) return { value: minutes / 60, unit: "hours" };
+  return { value: minutes, unit: "minutes" };
+}
+
+function SourceScheduleDialog({ source, onClose }: { source: Source | null; onClose: () => void }) {
+  const updateSchedule = useUpdateSourceSchedule();
+  const [enabled, setEnabled] = useState(false);
+  const [intervalValue, setIntervalValue] = useState(1);
+  const [intervalUnit, setIntervalUnit] = useState<ScrapeIntervalUnit>("hours");
+
+  useEffect(() => {
+    if (!source) return;
+    const parts = intervalParts(source.scrapeIntervalMinutes);
+    setEnabled(source.automaticScrapingEnabled);
+    setIntervalValue(parts.value);
+    setIntervalUnit(parts.unit);
+    updateSchedule.reset();
+  }, [source]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const normalizedMinutes = intervalValue * ({ minutes: 1, hours: 60, days: 1440 }[intervalUnit]);
+  const intervalValid = normalizedMinutes >= 15 && normalizedMinutes <= 43200;
+  const canEnable = Boolean(source?.enabled && source.hasScrapeConfig);
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (!source || !intervalValid) return;
+    try {
+      await updateSchedule.mutateAsync({
+        id: source.id,
+        input: {
+          enabled,
+          intervalValue,
+          intervalUnit,
+          revision: source.scheduleRevision,
+        },
+      });
+      onClose();
+    } catch {
+      // The safe API error remains visible in the dialog.
+    }
+  }
+
+  return (
+    <Dialog open={source !== null} onClose={onClose} title="Pianificazione acquisizione automatica">
+      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+        <p className="text-body-md text-on-surface-variant">
+          L’intervallo parte soltanto al termine di una scansione. Anche una scansione manuale riavvia il timer, impedendo due esecuzioni contemporanee.
+        </p>
+        <label className="flex items-center gap-3 text-body-md text-on-surface">
+          <input
+            type="checkbox"
+            checked={enabled}
+            disabled={!canEnable}
+            onChange={(event) => setEnabled(event.target.checked)}
+            className="h-4 w-4 accent-primary"
+          />
+          Abilita acquisizione automatica
+        </label>
+        {!canEnable && (
+          <p className="text-label-sm text-warning">
+            Abilita la fonte e salva una configurazione di acquisizione prima di attivare la pianificazione.
+          </p>
+        )}
+        {source?.proxyPoolStatus === "unavailable" && (
+          <p className="text-label-sm text-warning">
+            Il pool proxy selezionato non ha endpoint disponibili; le scansioni pianificate verranno bloccate senza connessione diretta.
+          </p>
+        )}
+        <div className="grid grid-cols-[1fr_1fr] gap-3">
+          <div>
+            <label htmlFor="schedule-interval-value" className="text-label-sm text-on-surface-variant block mb-1">
+              Intervallo
+            </label>
+            <Input
+              id="schedule-interval-value"
+              type="number"
+              min={1}
+              value={intervalValue}
+              onChange={(event) => setIntervalValue(Number(event.target.value))}
+              required
+            />
+          </div>
+          <div>
+            <label htmlFor="schedule-interval-unit" className="text-label-sm text-on-surface-variant block mb-1">
+              Unità
+            </label>
+            <Select
+              id="schedule-interval-unit"
+              value={intervalUnit}
+              onChange={(event) => setIntervalUnit(event.target.value as ScrapeIntervalUnit)}
+            >
+              <option value="minutes">Minuti</option>
+              <option value="hours">Ore</option>
+              <option value="days">Giorni</option>
+            </Select>
+          </div>
+        </div>
+        {!intervalValid && (
+          <p className="text-label-sm text-error">L’intervallo deve essere compreso tra 15 minuti e 30 giorni.</p>
+        )}
+        {updateSchedule.isError && (
+          <p role="alert" className="text-body-md text-error">
+            {describeError(updateSchedule.error).description}
+          </p>
+        )}
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="secondary" onClick={onClose}>Annulla</Button>
+          <Button type="submit" disabled={!intervalValid || updateSchedule.isPending}>
+            {updateSchedule.isPending ? "Salvataggio…" : "Salva pianificazione"}
           </Button>
         </div>
       </form>
@@ -932,6 +1117,7 @@ export default function SourcesPage() {
   const [formSource, setFormSource] = useState<Source | null | "new">(null);
   const [deleteTarget, setDeleteTarget] = useState<Source | null>(null);
   const [duplicateTarget, setDuplicateTarget] = useState<Source | null>(null);
+  const [scheduleTarget, setScheduleTarget] = useState<Source | null>(null);
   const [robotsResultBySource, setRobotsResultBySource] = useState<Record<string, string>>({});
 
   function toggleExpanded(id: string) {
@@ -964,17 +1150,17 @@ export default function SourcesPage() {
   }
 
   const cards: SummaryCardConfig[] = [
-    { key: "total", label: "Total Sources", value: summary.data?.total, accent: "border-t-primary" },
-    { key: "active", label: "Active", value: summary.data?.active, accent: "border-t-success" },
-    { key: "degraded", label: "Degraded", value: summary.data?.degraded, accent: "border-t-warning" },
-    { key: "offline", label: "Offline", value: summary.data?.offline, accent: "border-t-error" },
+    { key: "total", label: "Fonti totali", value: summary.data?.total, accent: "border-t-primary" },
+    { key: "active", label: "Attive", value: summary.data?.active, accent: "border-t-success" },
+    { key: "degraded", label: "Degradate", value: summary.data?.degraded, accent: "border-t-warning" },
+    { key: "offline", label: "Fuori linea", value: summary.data?.offline, accent: "border-t-error" },
   ];
 
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-end">
         <div>
-          <h2 className="text-headline-md text-on-surface">Data Sources</h2>
+          <h2 className="text-headline-md text-on-surface">Fonti dati</h2>
           <p className="text-body-md text-on-surface-variant mt-1">
             Manage, monitor, and configure active external data pipelines.
           </p>
@@ -982,7 +1168,7 @@ export default function SourcesPage() {
         {isAdmin && (
           <Button onClick={() => setFormSource("new")}>
             <Icon name="add" size={18} />
-            Add Source
+            Aggiungi fonte
           </Button>
         )}
       </div>
@@ -995,7 +1181,7 @@ export default function SourcesPage() {
           ))}
         {summary.isError && (
           <div className="col-span-4 bg-error-container/20 border border-error/20 rounded-lg p-4 text-error text-body-md">
-            Failed to load sources summary.
+            Impossibile caricare il riepilogo delle fonti.
           </div>
         )}
         {summary.data &&
@@ -1011,34 +1197,35 @@ export default function SourcesPage() {
       </div>
 
       {/* Sources Table */}
-      {enable.isError && (
+      {(enable.isError || runScan.isError) && (
         <div role="alert" className="bg-error-container/20 border border-error/20 rounded-lg p-4 text-error text-body-md">
-          {describeError(enable.error).description}
+          {describeError(enable.error ?? runScan.error).description}
         </div>
       )}
       <div className="bg-surface-container-lowest border border-border rounded-lg shadow-[0_1px_2px_rgba(0,0,0,0.02)] flex flex-col min-h-[400px]">
         <div className="px-5 py-4 border-b border-border bg-surface-container-lowest">
           <h3 className="text-headline-sm text-on-surface flex items-center gap-2">
             <Icon name="source" className="text-primary" />
-            Sources
+            Fonti
           </h3>
         </div>
         <Table>
           <THead>
             <Tr className="hover:bg-transparent">
-              <Th>Source Name</Th>
-              <Th>Status</Th>
-              <Th className="text-right">Priority</Th>
-              <Th>Last Scan</Th>
-              <Th className="text-right">Acquired Items</Th>
-              <Th className="text-right">Error Rate</Th>
-              <Th className="text-right">Actions</Th>
+              <Th>Nome fonte</Th>
+              <Th>Stato</Th>
+              <Th className="text-right">Priorità</Th>
+              <Th>Ultima scansione</Th>
+              <Th>Acquisizione automatica</Th>
+              <Th className="text-right">Elementi acquisiti</Th>
+              <Th className="text-right">Tasso di errore</Th>
+              <Th className="text-right">Azioni</Th>
             </Tr>
           </THead>
           <TBody>
-            {sources.isLoading && <LoadingRow colSpan={7} />}
-            {sources.isError && <ErrorRow colSpan={7} error={sources.error} onRetry={() => sources.refetch()} />}
-            {sources.data && sources.data.length === 0 && <EmptyRow colSpan={7} message="No sources configured." />}
+            {sources.isLoading && <LoadingRow colSpan={8} />}
+            {sources.isError && <ErrorRow colSpan={8} error={sources.error} onRetry={() => sources.refetch()} />}
+            {sources.data && sources.data.length === 0 && <EmptyRow colSpan={8} message="Nessuna fonte configurata." />}
             {sources.data?.map((source) => {
               const isExpanded = expandedIds.has(source.id);
               const isBroken = source.consecutiveFailures >= CONSECUTIVE_FAILURES_ALERT_THRESHOLD;
@@ -1049,7 +1236,7 @@ export default function SourcesPage() {
                   <div className="flex items-center gap-1.5">
                     <button
                       onClick={() => toggleExpanded(source.id)}
-                      title={isExpanded ? "Hide run history" : "Show run history"}
+                      title={isExpanded ? "Nascondi cronologia esecuzioni" : "Mostra cronologia esecuzioni"}
                       className="p-0.5 text-on-surface-variant hover:text-primary rounded transition-colors"
                     >
                       <Icon name={isExpanded ? "expand_more" : "chevron_right"} size={18} />
@@ -1058,8 +1245,8 @@ export default function SourcesPage() {
                       <div className="font-medium text-on-surface flex items-center gap-1.5">
                         {source.name}
                         {isBroken && (
-                          <span title={`${source.consecutiveFailures} consecutive failed runs`}>
-                            <Badge tone="error">Connector broken?</Badge>
+                          <span title={`${source.consecutiveFailures} esecuzioni consecutive non riuscite`}>
+                            <Badge tone="error">Connettore non funzionante?</Badge>
                           </span>
                         )}
                       </div>
@@ -1076,6 +1263,31 @@ export default function SourcesPage() {
                   </span>
                 </Td>
                 <Td className="text-on-surface-variant">{formatRelativeTime(source.lastRunAt)}</Td>
+                <Td>
+                  <div className="space-y-1 min-w-[170px]">
+                    <Badge
+                      tone={
+                        source.automaticScrapingState === "waiting" ? "success" :
+                        source.automaticScrapingState === "running" ? "warning" :
+                        source.automaticScrapingState === "pending" ? "neutral" : "neutral"
+                      }
+                    >
+                      {source.automaticScrapingState === "waiting" ? "In attesa" : source.automaticScrapingState === "pending" ? "Pianificata" : source.automaticScrapingState === "running" ? "In esecuzione" : source.automaticScrapingState === "paused" ? "In pausa" : "Disabilitata"}
+                    </Badge>
+                    <div className="text-label-sm text-on-surface-variant">
+                      {source.automaticScrapingEnabled
+                        ? `Ogni ${formatInterval(source.scrapeIntervalMinutes)}`
+                        : "Disabilitata"}
+                    </div>
+                    {(source.automaticScrapingState === "pending" || source.automaticScrapingState === "running") ? (
+                      <div className="text-label-sm text-warning">Il timer parte al termine di questa scansione</div>
+                    ) : source.nextScrapeAt ? (
+                      <div className="text-label-sm text-on-surface-variant">
+                        Prossima: {formatDateTime(source.nextScrapeAt)}
+                      </div>
+                    ) : null}
+                  </div>
+                </Td>
                 <Td className="text-right font-mono text-on-surface">{source.itemsLast24h.toLocaleString()}</Td>
                 <Td
                   className={`text-right font-mono ${
@@ -1092,7 +1304,7 @@ export default function SourcesPage() {
                     <button
                       onClick={() => handleCheckRobots(source)}
                       disabled={checkRobots.isPending}
-                      title="Check robots.txt"
+                      title="Controlla robots.txt"
                       className="p-1.5 text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded transition-colors disabled:opacity-50"
                     >
                       <Icon name="policy" size={16} />
@@ -1100,8 +1312,8 @@ export default function SourcesPage() {
                     {canManageSources && source.enabled && source.hasScrapeConfig && (
                       <button
                         onClick={() => handleRunScan(source.id)}
-                        disabled={runScan.isPending}
-                        title="Run Scan"
+                        disabled={runScan.isPending || source.automaticScrapingState === "pending" || source.automaticScrapingState === "running"}
+                        title="Avvia scansione"
                         className="p-1.5 text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded transition-colors disabled:opacity-50"
                       >
                         <Icon name="play_arrow" size={16} />
@@ -1111,7 +1323,7 @@ export default function SourcesPage() {
                       <button
                         onClick={() => pause.mutate(source.id)}
                         disabled={pause.isPending}
-                        title="Pause"
+                        title="Metti in pausa"
                         className="p-1.5 text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded transition-colors disabled:opacity-50"
                       >
                         <Icon name="pause" size={16} />
@@ -1119,9 +1331,19 @@ export default function SourcesPage() {
                     )}
                     {isAdmin && (
                       <button
+                        onClick={() => setScheduleTarget(source)}
+                        title="Pianificazione automatica"
+                        aria-label={`Pianifica ${source.name}`}
+                        className="p-1.5 text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded transition-colors"
+                      >
+                        <Icon name="schedule" size={16} />
+                      </button>
+                    )}
+                    {isAdmin && (
+                      <button
                         onClick={() => setDuplicateTarget(source)}
-                        title="Duplicate"
-                        aria-label={`Duplicate ${source.name}`}
+                        title="Duplica"
+                        aria-label={`Duplica ${source.name}`}
                         className="p-1.5 text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded transition-colors"
                       >
                         <Icon name="content_copy" size={16} />
@@ -1130,7 +1352,7 @@ export default function SourcesPage() {
                     {isAdmin && (
                       <button
                         onClick={() => setFormSource(source)}
-                        title={source.hasScrapeConfig ? "Edit configuration" : "Configure"}
+                        title={source.hasScrapeConfig ? "Modifica configurazione" : "Configura"}
                         className="p-1.5 text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded transition-colors"
                       >
                         <Icon name="tune" size={16} />
@@ -1140,7 +1362,7 @@ export default function SourcesPage() {
                       <button
                         onClick={() => disable.mutate(source.id)}
                         disabled={disable.isPending}
-                        title="Disable"
+                        title="Disabilita"
                         className="p-1.5 text-on-surface-variant hover:text-error hover:bg-error-container/30 rounded transition-colors disabled:opacity-50"
                       >
                         <Icon name="block" size={16} />
@@ -1150,8 +1372,8 @@ export default function SourcesPage() {
                       <button
                         onClick={() => enable.mutate(source.id)}
                         disabled={enable.isPending}
-                        title="Enable"
-                        aria-label={`Enable ${source.name}`}
+                        title="Abilita"
+                        aria-label={`Abilita ${source.name}`}
                         className="p-1.5 text-on-surface-variant hover:text-success hover:bg-success/10 rounded transition-colors disabled:opacity-50"
                       >
                         <Icon name="power_settings_new" size={16} />
@@ -1160,7 +1382,7 @@ export default function SourcesPage() {
                     {isAdmin && (
                       <button
                         onClick={() => setDeleteTarget(source)}
-                        title="Delete"
+                        title="Elimina"
                         className="p-1.5 text-on-surface-variant hover:text-error hover:bg-error-container/30 rounded transition-colors"
                       >
                         <Icon name="delete" size={16} />
@@ -1169,7 +1391,7 @@ export default function SourcesPage() {
                   </div>
                 </Td>
               </Tr>
-              {isExpanded && <SourceRunsPanel sourceId={source.id} colSpan={7} />}
+              {isExpanded && <SourceRunsPanel sourceId={source.id} colSpan={8} />}
               </Fragment>
               );
             })}
@@ -1188,6 +1410,7 @@ export default function SourcesPage() {
         sources={sources.data ?? []}
         onClose={() => setDuplicateTarget(null)}
       />
+      <SourceScheduleDialog source={scheduleTarget} onClose={() => setScheduleTarget(null)} />
     </div>
   );
 }

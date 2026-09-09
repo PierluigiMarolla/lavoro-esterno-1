@@ -8,7 +8,7 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ForeignKey, Index, LargeBinary, String
+from sqlalchemy import ForeignKey, Index, Integer, LargeBinary, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, UUIDPKMixin
@@ -37,6 +37,9 @@ class Record(UUIDPKMixin, TimestampMixin, Base):
     phone_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     phone_lookup_hash: Mapped[str] = mapped_column(
         String(64), unique=True, index=True, nullable=False
+    )
+    content_revision: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
     )
 
     # FK verso l'annuncio scelto come "canonico" per questo record (vedi

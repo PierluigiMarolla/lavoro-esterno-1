@@ -7,7 +7,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
-from sqlalchemy import DateTime, Float, ForeignKey, Index, String, Text
+from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, UUIDPKMixin, utcnow
@@ -32,6 +33,9 @@ class Advertisement(UUIDPKMixin, Base):
         # "portabile": vive solo nella migrazione dedicata (vedi
         # migrations/versions/20260829091500_additional_indexes.py).
         Index("ix_advertisements_source_id_status", "source_id", "status"),
+        UniqueConstraint(
+            "record_id", "source_id", "source_url", name="uq_advertisements_occurrence"
+        ),
     )
 
     record_id: Mapped[uuid.UUID] = mapped_column(
@@ -44,17 +48,25 @@ class Advertisement(UUIDPKMixin, Base):
     source_url: Mapped[str] = mapped_column(Text, nullable=False)
     title: Mapped[str | None] = mapped_column(Text, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    custom_fields: Mapped[dict] = mapped_column(
+        JSONB, default=dict, server_default=sa.text("'{}'::jsonb"), nullable=False
+    )
 
     # SHA-256 del contenuto normalizzato (title+description+...), usato dal
     # servizio di dedup per rilevare ri-pubblicazioni identiche senza dover
     # ricalcolare/confrontare il testo intero.
     content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    media_set_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    revision: Mapped[int] = mapped_column(Integer, default=1, server_default="1", nullable=False)
 
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
     scraped_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_changed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
 
     # Confidenza (0..1) che questo annuncio appartenga davvero al Record a cui è
     # associato (utile quando l'associazione deriva da euristiche di matching

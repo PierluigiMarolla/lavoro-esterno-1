@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 
 import sqlalchemy as sa
-from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -72,5 +72,11 @@ class Media(UUIDPKMixin, Base):
     width: Mapped[int | None] = mapped_column(Integer, nullable=True)
     height: Mapped[int | None] = mapped_column(Integer, nullable=True)
     duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    is_current: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=sa.true(), nullable=False, index=True
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

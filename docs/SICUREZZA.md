@@ -217,6 +217,24 @@ chiusura di ogni rilievo High/Critical.
 > scraping di dati personali da fonti terze) resta un'attività separata,
 > tracciata come attività aperta in `PROGETTO.md`.
 
+### Proxy rotator
+
+- Le fonti senza pool usano la connessione diretta; una fonte assegnata a un
+  pool opera invece in modalita fail-closed e non ripiega mai sull'IP reale.
+- Username e password dei proxy sono write-only e cifrati con AES-256-GCM
+  tramite `PROXY_CREDENTIAL_ENCRYPTION_KEY`, distinta da JWT, telefono e
+  credenziali AI. La chiave deve essere conservata nel secret manager e nei
+  backup protetti: perderla rende inutilizzabili le credenziali gia salvate.
+- Host e DNS vengono validati sia al salvataggio sia immediatamente prima
+  dell'uso. Destinazioni private, loopback, link-local o reserved sono
+  bloccate salvo inserimento esplicito in `PROXY_PRIVATE_HOST_ALLOWLIST`.
+- CRUD, test, assegnazione e rimozione richiedono Admin con 2FA. API, audit,
+  notifiche e diagnostica espongono soltanto ID e categorie di errore, mai
+  credenziali o URL completi.
+- Un gestore proxy puo osservare il traffico che lo attraversa: in produzione
+  vanno usati esclusivamente fornitori autorizzati, HTTPS end-to-end e un
+  contratto coerente con base giuridica e retention del trattamento.
+
 ## 8. Console account e operative
 
 - Sospensione e riattivazione utenti richiedono Admin con 2FA e aggiornano il
@@ -229,3 +247,12 @@ chiusura di ogni rilievo High/Critical.
   sanitizzati e non includono telefoni, URL media o contenuti remoti.
 - Lo stato sistema espone solo nome logico, stato e latenza; indirizzi interni,
   credenziali ed eccezioni restano nei log server-side.
+## Sicurezza dello storico delle occorrenze
+
+`advertisement_versions` conserva contenuto e campi custom necessari alla
+tracciabilità, ma non contiene telefono in chiaro né credenziali. Audit e log
+tecnici registrano esclusivamente ID, revisione e nomi dei campi modificati.
+L'endpoint delle versioni richiede autenticazione; retention e diritto
+all'oblio eliminano gli snapshot in cascata con l'annuncio. I media storici
+mantengono originali immutabili e non sono inclusi nelle viste o negli export
+correnti quando `is_current=false`.

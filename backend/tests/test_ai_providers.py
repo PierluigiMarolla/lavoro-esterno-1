@@ -9,6 +9,7 @@ from app.models.ai_settings import AIProviderConfig, AISettings
 from app.services.ai_config import ProviderRuntimeConfig, validate_custom_ai_endpoint
 from app.services.ai_credentials import decrypt_ai_credential, encrypt_ai_credential
 from app.services.summary_generator import (
+    SUMMARY_PROMPTS,
     AnthropicSummaryProvider,
     GoogleSummaryProvider,
     OllamaSummaryProvider,
@@ -17,6 +18,7 @@ from app.services.summary_generator import (
     ProviderError,
     _StructuredSummary,
     create_summary_provider,
+    prompt_for,
 )
 from app.workers.tasks_ai import AIDisabledError, _reserve_budget, summary_input_hash
 
@@ -217,6 +219,26 @@ def test_google_native_adapter_keeps_key_out_of_url_and_uses_schema() -> None:
 def test_factory_never_falls_back_for_unknown_provider() -> None:
     with pytest.raises(ProviderError, match="non supportato"):
         create_summary_provider(ProviderRuntimeConfig("unknown", "model", None, None))
+
+
+def test_prompt_versions_preserve_history_and_default_to_italian() -> None:
+    historical = ProviderRuntimeConfig(
+        "ollama", "model", "http://ollama:11434", None, {"prompt_version": "summary-v1"}
+    )
+    italian = ProviderRuntimeConfig(
+        "ollama", "model", "http://ollama:11434", None, {"prompt_version": "summary-v2-it"}
+    )
+    assert prompt_for(historical) == SUMMARY_PROMPTS["summary-v1"]
+    assert "interamente in italiano" in prompt_for(italian)
+    assert prompt_for(ProviderRuntimeConfig("ollama", "model", None, None)) == prompt_for(
+        italian
+    )
+    with pytest.raises(ProviderError, match="Versione prompt"):
+        prompt_for(
+            ProviderRuntimeConfig(
+                "ollama", "model", None, None, {"prompt_version": "inesistente"}
+            )
+        )
 
 
 def test_cache_hash_separates_provider_model_and_prompt() -> None:
