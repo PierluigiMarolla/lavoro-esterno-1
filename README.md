@@ -64,6 +64,11 @@ docker compose exec api python -m app.scripts.create_admin --email admin@lavoro.
 # pagina Fonti, o POST /sources) — vedi docs/SVILUPPO.md § 5
 ```
 
+Le modalità browser vengono incluse nell'immagine backend: Chromium è usato
+normalmente, mentre l'opzione Sources “Chrome reale” usa Google Chrome tramite
+Patchright. Se un'immagine precedente segnala che `/opt/google/chrome/chrome`
+non esiste, ricostruire `api` e `worker-scraper` con `--build`.
+
 Applicazione raggiungibile su `http://localhost/` (reverse proxy nginx),
 documentazione API interattiva su `http://localhost/docs`. Sequenza
 verificata su un ambiente Docker reale in questa sessione di sviluppo.

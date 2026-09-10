@@ -1852,3 +1852,32 @@ skipped`; lint frontend senza errori (restano due warning Fast Refresh
 preesistenti); build Vite completata; `docker compose config --quiet` valido.
 `npm ci` ha ripristinato le dipendenze dichiarate e `npm audit` non segnala
 vulnerabilità. Non sono stati modificati dati, credenziali o volumi Docker.
+
+# Sessione 21 — 10 settembre 2026: supporto a “Chrome reale”
+
+L'errore mostrato dal test di configurazione con `realChrome` dipendeva
+dall'assenza della distribuzione Google Chrome nell'immagine backend:
+Patchright cercava correttamente `/opt/google/chrome/chrome`, mentre il
+Dockerfile installava soltanto Chromium. L'immagine installa ora entrambi i
+browser e verifica durante la build che l'eseguibile di Chrome sia presente;
+in questo modo la build fallisce subito qualora il canale `chrome` non sia
+realmente utilizzabile.
+
+La distinzione tra Chromium predefinito e Google Chrome usato dall'opzione
+“Chrome reale”, insieme al comando di ricostruzione di API e worker scraper,
+è documentata in `README.md` e `docs/SVILUPPO.md`. È stato inoltre corretto un
+commento non più attuale nel workflow CI relativo a `uv.lock`.
+
+Collaudo live completato su Docker x86_64: build delle immagini `api` e
+`worker-scraper` riuscita; Google Chrome `153.0.8010.36` presente; apertura di
+un persistent context Patchright con `channel="chrome"` riuscita; chiamata
+reale `StealthyFetcher.async_fetch(..., real_chrome=True)` verso
+`https://example.com` conclusa con HTTP 200. Dopo l'avvio delle dipendenze il
+worker si è collegato a Redis ed è entrato nello stato `ready`; health check
+API `/api/v1/healthz` HTTP 200. Frontend e nginx sono stati ricostruiti e la
+pagina pubblicata `/sources` risponde HTTP 200, pronta per la verifica manuale.
+
+Verifiche statiche: Ruff superato, test mirati degli schema Sources `17
+passed`, `docker compose config --quiet` valido e `git diff --check` senza
+errori. Nessun volume Docker esistente è stato eliminato o ricreato durante
+il collaudo.

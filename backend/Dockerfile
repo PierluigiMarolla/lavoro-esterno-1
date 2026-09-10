@@ -27,10 +27,13 @@ RUN pip install --no-cache-dir uv \
     && uv pip install --system --no-cache --requirement /tmp/requirements.txt \
     && rm /tmp/requirements.txt
 
-# Chromium headless per Scrapling DynamicFetcher/StealthyFetcher.
-# DynamicFetcher usa Playwright; StealthyFetcher usa Patchright.
+# I due binari coprono percorsi distinti: Chromium serve DynamicFetcher e la
+# modalità stealth standard; `real_chrome=true` seleziona invece il canale
+# Google Chrome di Patchright, installato nel percorso di sistema sottostante.
 RUN playwright install --with-deps chromium \
-    && patchright install chromium
+    && patchright install chromium \
+    && patchright install chrome \
+    && test -x /opt/google/chrome/chrome
 
 COPY app ./app
 COPY migrations ./migrations

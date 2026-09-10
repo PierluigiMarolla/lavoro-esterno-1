@@ -36,8 +36,7 @@ jobs:
         run: uv python install 3.13
 
       - name: Install dependencies
-        # Nessun uv.lock committato ancora: risolve le dipendenze da
-        # pyproject.toml (gruppo "dev" incluso per ruff/pytest).
+        # Installa dal lock versionato includendo il gruppo dev per ruff/pytest.
         run: uv sync --group dev
 
       - name: Ruff lint

@@ -195,6 +195,10 @@ progetto non lo fa per te).
    preservate esattamente. L'Overview aggrega i valori valorizzati di tutte le
    fonti indicandone la provenienza; la tab Occurrences consente di ispezionare
    lo snapshot originale di ciascuna fonte.
+   `realChrome: true` è valido solo con `fetchMode: "stealth"` e usa la
+   distribuzione Google Chrome installata nell'immagine backend, distinta dal
+   Chromium predefinito. Dopo modifiche al Dockerfile ricostruire almeno API e
+   worker scraper con `docker compose up -d --build api worker-scraper`.
 2. Usare "Check robots.txt" per verificare che il sito non vieti
    esplicitamente l'accesso (il motore lo verifica comunque ad ogni
    richiesta reale, ma è utile saperlo prima).
