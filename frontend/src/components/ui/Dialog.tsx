@@ -18,11 +18,13 @@ export default function Dialog({
   onClose,
   title,
   children,
+  size = "md",
 }: {
   open: boolean;
   onClose: () => void;
   title: string;
   children: ReactNode;
+  size?: "md" | "xl";
 }) {
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -82,7 +84,7 @@ export default function Dialog({
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className="relative w-full max-w-md bg-surface-container-lowest border border-border rounded-lg shadow-[0_4px_24px_rgba(0,0,0,0.15)] overflow-hidden"
+        className={`relative w-full ${size === "xl" ? "max-w-6xl" : "max-w-md"} bg-surface-container-lowest border border-border rounded-lg shadow-[0_4px_24px_rgba(0,0,0,0.15)] overflow-hidden`}
       >
         <div className="px-5 py-4 border-b border-border flex items-center justify-between bg-surface-container-lowest">
           <h3 id={titleId} className="text-headline-sm font-semibold text-on-surface">

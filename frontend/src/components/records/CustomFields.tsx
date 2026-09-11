@@ -1,5 +1,6 @@
 /** Visualizza i campi dinamici di una singola occorrenza senza assumerne lo schema. */
 import type { CustomFields as CustomFieldsMap } from "@/types";
+import CustomFieldValueDisplay from "./CustomFieldValueDisplay";
 
 interface CustomFieldsProps {
   fields: CustomFieldsMap;
@@ -33,21 +34,7 @@ export default function CustomFields({ fields, exclude = [], compact = false }: 
         >
           <dt className="text-label-sm text-on-surface-variant mb-1">{labelFor(name)}</dt>
           <dd className="text-body-md text-on-surface whitespace-pre-line break-words">
-            {Array.isArray(value) ? (
-              value.length > 0 ? (
-                <ul className="space-y-1">
-                  {value.map((item, index) => (
-                    <li key={`${item}-${index}`}>{item}</li>
-                  ))}
-                </ul>
-              ) : (
-                <span className="italic text-outline">Nessun valore trovato</span>
-              )
-            ) : value ? (
-              value
-            ) : (
-              <span className="italic text-outline">Nessun valore trovato</span>
-            )}
+            <CustomFieldValueDisplay value={value} />
           </dd>
         </div>
       ))}

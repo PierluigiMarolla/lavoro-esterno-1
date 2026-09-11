@@ -71,6 +71,44 @@ async def test_rotates_on_transport_error_and_keeps_successful_proxy() -> None:
 
 
 @pytest.mark.asyncio
+async def test_proxy_rotation_closes_browser_session_before_recreation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first, second = _runtime(8001), _runtime(8002)
+    sessions: list[object] = []
+
+    class FakeSession:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+            self.closed = False
+            sessions.append(self)
+
+        async def start(self) -> None:
+            return None
+
+        async def close(self) -> None:
+            self.closed = True
+
+    monkeypatch.setattr("scrapling.fetchers.AsyncStealthySession", FakeSession)
+    scraper = GenericScraper(
+        "test",
+        "https://example.test",
+        {**_config(), "fetch_mode": "stealth"},
+        [first, second],
+    )
+
+    original = await scraper._ensure_browser_session()
+    assert await scraper._rotate_proxy() is True
+    replacement = await scraper._ensure_browser_session()
+
+    assert original.closed is True
+    assert replacement is not original
+    assert len(sessions) == 2
+    assert sessions[0].kwargs["proxy"] == first.scrapling_value()
+    assert sessions[1].kwargs["proxy"] == second.scrapling_value()
+
+
+@pytest.mark.asyncio
 async def test_proxy_pool_is_fail_closed_after_last_candidate() -> None:
     scraper = GenericScraper("test", "https://example.test", _config(), [_runtime(8001)])
 

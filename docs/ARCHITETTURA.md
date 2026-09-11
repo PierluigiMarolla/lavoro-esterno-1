@@ -115,8 +115,10 @@ verificato dal vivo, è più preciso su questi punti (vedi PROGETTO.md § 4):
   campi) sono forniti dall'operatore via `PATCH /sources/{id}` o il form
   "Aggiungi/Modifica fonte" nell'interfaccia. Rispetta sempre `robots.txt` (verificato PRIMA
   di ogni richiesta, non solo come check manuale), un rate limit minimo e
-  lo User-Agent configurato per la fonte (con fallback al default del
-  progetto).
+  lo User-Agent configurato per la fonte. Se non configurato, HTTP/robots/media
+  usano il default del progetto e il browser usa quello generato da Scrapling.
+  Dynamic e Stealth mantengono una sessione per run, riusando cookie e storage;
+  la rotazione proxy ricrea la sessione per non mescolare identità di rete.
   È l'unico motore di scraping del progetto: non esistono più connettori
   Python per-sito precompilati (i 9 stub iniziali descritti nelle versioni
   precedenti di questo documento sono stati rimossi, insieme al

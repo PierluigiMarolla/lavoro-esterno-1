@@ -15,6 +15,19 @@ export function useSourcesSummary() {
   return useQuery({ queryKey: summaryKey, queryFn: sourcesApi.fetchSourcesSummary });
 }
 
+export function useExportSources() {
+  return useMutation({ mutationFn: sourcesApi.exportSources });
+}
+
+export function usePreviewSourcesImport() {
+  return useMutation({ mutationFn: sourcesApi.previewSourcesImport });
+}
+
+export function useImportSources() {
+  const invalidate = useInvalidateSources();
+  return useMutation({ mutationFn: sourcesApi.importSources, onSuccess: invalidate });
+}
+
 // Shared invalidation for the three source action mutations below — any of
 // them can change status/health, so refresh both the list and the summary cards.
 function useInvalidateSources() {

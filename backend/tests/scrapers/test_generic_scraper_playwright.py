@@ -59,6 +59,45 @@ def _scraper(base_url: str, **overrides) -> GenericScraper:
 
 
 @pytest.fixture
+def browser_cookie_site_url() -> Iterator[str]:
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if self.path == "/robots.txt":
+                body = b"User-agent: *\nAllow: /\n"
+                cookie = None
+            elif self.path == "/seed":
+                body = b"<html><body>seeded</body></html>"
+                cookie = "cf_clearance=synthetic; Path=/; HttpOnly"
+            else:
+                has_cookie = "cf_clearance=synthetic" in (self.headers.get("Cookie") or "")
+                body = (
+                    b'<html><body><span class="cookie-ok">yes</span></body></html>'
+                    if has_cookie
+                    else b'<html><body><span class="cookie-missing">no</span></body></html>'
+                )
+                cookie = None
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            if cookie:
+                self.send_header("Set-Cookie", cookie)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, message_format: str, *args: object) -> None:
+            return None
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address[:2]
+    try:
+        yield f"http://{host}:{port}"
+    finally:
+        server.shutdown()
+
+
+@pytest.fixture
 def javascript_pagination_site_url() -> Iterator[str]:
     listing = b"""<!doctype html><html><body>
     <div id="overlay" style="position:fixed;inset:0;z-index:20"></div>
@@ -208,6 +247,19 @@ async def test_scrape_ad_extracts_configured_fields(
     assert raw["description"] == "This is a synthetic test fixture, not real content."
     assert raw["phone"] == "+39 333 111 1111"
     assert raw["images"] == ["/img1.jpg", "/img2.jpg"]
+
+
+async def test_browser_session_preserves_cookies_between_pages(
+    _chromium_ready: None, browser_cookie_site_url: str
+) -> None:
+    scraper = _scraper(browser_cookie_site_url)
+    try:
+        await scraper._fetch_page(f"{browser_cookie_site_url}/seed")
+        response = await scraper._fetch_page(f"{browser_cookie_site_url}/check")
+    finally:
+        await scraper.aclose()
+
+    assert response.css(".cookie-ok::text").get() == "yes"
 
 
 async def test_download_media_uses_scrapling_http_regardless_of_render_js(

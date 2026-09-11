@@ -315,12 +315,14 @@ def run_scrape_source(self, source_id: str, run_id: str | None = None) -> dict:
                     )
                     else "completed"
                 )
+                from app.services.scrape_ingest import encode_scrape_error_message
+
                 for error in outcome["errors"]:
                     session.add(
                         ScrapeError(
                             scrape_run_id=run.id,
                             url=error.url,
-                            error_message=error.message,
+                            error_message=encode_scrape_error_message(error.code, error.message),
                         )
                     )
         except Exception as exc:  # keep every claimed run terminal and schedulable

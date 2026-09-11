@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -26,9 +26,48 @@ class ScrapeFieldConfig(CamelModel):
     dove prendere il valore (testo del nodo, o un suo attributo HTML come
     `src`/`href`)."""
 
-    selector: str = Field(min_length=1)
+    selector: str | None = Field(default=None, min_length=1)
     attribute: str = "text"
     multiple: bool = False
+    extraction_mode: Literal["value", "keyValue", "posterVideo"] = "value"
+    container_selector: str | None = Field(default=None, min_length=1)
+    key_selector: str | None = Field(default=None, min_length=1)
+    key_attribute: str = "text"
+    value_selector: str | None = Field(default=None, min_length=1)
+    value_attribute: str = "text"
+    poster_selector: str | None = Field(default=None, min_length=1)
+    poster_attribute: str = "src"
+    video_selector: str | None = Field(default=None, min_length=1)
+    video_attribute: str = "src"
+
+    @model_validator(mode="after")
+    def validate_extraction_mode(self):
+        if self.extraction_mode == "value":
+            if not self.selector:
+                raise ValueError("selector e obbligatorio per extractionMode='value'.")
+            return self
+
+        if not self.container_selector:
+            raise ValueError(
+                f"containerSelector e obbligatorio per extractionMode='{self.extraction_mode}'."
+            )
+        if self.extraction_mode == "keyValue":
+            if not self.key_selector or not self.value_selector:
+                raise ValueError(
+                    "keySelector e valueSelector sono obbligatori per extractionMode='keyValue'."
+                )
+            return self
+
+        if not self.poster_selector or not self.video_selector:
+            raise ValueError(
+                "posterSelector e videoSelector sono obbligatori per "
+                "extractionMode='posterVideo'."
+            )
+        if self.poster_attribute not in {"src", "href"}:
+            raise ValueError("posterAttribute deve essere 'src' o 'href'.")
+        if self.video_attribute not in {"src", "href"}:
+            raise ValueError("videoAttribute deve essere 'src' o 'href'.")
+        return self
 
 
 class WatermarkRegion(CamelModel):
@@ -154,6 +193,11 @@ class ScrapeConfigInput(CamelModel):
             media_field = value.get(field_name)
             if media_field is None:
                 continue
+            if media_field.extraction_mode != "value":
+                raise ValueError(
+                    f"Il campo media '{field_name}' deve usare extractionMode='value'; "
+                    "le coppie poster/video vanno salvate in un campo personalizzato."
+                )
             if not media_field.multiple:
                 raise ValueError(f"Il campo media '{field_name}' deve avere multiple=true.")
             if media_field.attribute not in {"src", "href"}:
@@ -228,6 +272,87 @@ class SourceDuplicate(CamelModel):
 
     name: str = Field(min_length=1, max_length=200)
     slug: str = Field(min_length=1, max_length=100, pattern=r"^[a-z0-9_]+$")
+
+
+class SourceTransferItem(CamelModel):
+    """Portable source configuration. Runtime state and database IDs are excluded."""
+
+    name: str = Field(min_length=1, max_length=200)
+    slug: str = Field(min_length=1, max_length=100, pattern=r"^[a-z0-9_]+$")
+    base_url: str
+    priority: Literal["high", "medium", "low"] = "medium"
+    scrape_config: ScrapeConfigInput | None = None
+    proxy_pool_name: str | None = Field(default=None, min_length=1, max_length=120)
+    watermark_removal: WatermarkRemovalConfig = Field(default_factory=WatermarkRemovalConfig)
+
+    @field_validator("base_url")
+    @classmethod
+    def _validate_base_url(cls, value: str) -> str:
+        return _validate_http_url(value)
+
+
+class SourceTransferDocument(CamelModel):
+    format: Literal["lavoro-esterno-sources"]
+    version: Literal[1]
+    exported_at: datetime
+    sources: list[SourceTransferItem] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def unique_slugs(self):
+        slugs = [source.slug for source in self.sources]
+        if len(slugs) != len(set(slugs)):
+            raise ValueError("Il documento contiene slug duplicati.")
+        return self
+
+
+class SourceExportRequest(CamelModel):
+    scope: Literal["all", "selected"]
+    source_ids: list[uuid.UUID] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_scope(self):
+        if self.scope == "selected" and not self.source_ids:
+            raise ValueError("Selezionare almeno una fonte.")
+        if self.scope == "all" and self.source_ids:
+            raise ValueError("sourceIds deve essere vuoto quando scope='all'.")
+        if len(self.source_ids) != len(set(self.source_ids)):
+            raise ValueError("sourceIds contiene valori duplicati.")
+        return self
+
+
+class SourceImportPreviewRequest(CamelModel):
+    document: dict[str, Any]
+
+
+class SourceImportPreviewEntry(CamelModel):
+    index: int
+    slug: str | None = None
+    name: str | None = None
+    status: Literal["new", "conflict", "invalid"]
+    proxy_pool_status: Literal["none", "resolved", "missing"] = "none"
+    proxy_pool_name: str | None = None
+    errors: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class SourceImportPreviewResult(CamelModel):
+    valid: bool
+    format: str | None = None
+    version: int | None = None
+    entries: list[SourceImportPreviewEntry] = Field(default_factory=list)
+    global_errors: list[str] = Field(default_factory=list)
+
+
+class SourceImportApplyRequest(CamelModel):
+    document: SourceTransferDocument
+    conflict_actions: dict[str, Literal["update", "skip"]] = Field(default_factory=dict)
+
+
+class SourceImportResult(CamelModel):
+    created: int
+    updated: int
+    skipped: int
+    warnings: list[str] = Field(default_factory=list)
 
 
 class SourceRead(CamelModel):
@@ -322,6 +447,12 @@ class ScrapeErrorRead(CamelModel):
     id: uuid.UUID
     url: str
     error_message: str
+    error_code: Literal[
+        "anti_bot_blocked",
+        "proxy_pool_exhausted",
+        "robots_disallowed",
+        "fetch_failed",
+    ] | None = None
     created_at: datetime
 
 
@@ -375,6 +506,14 @@ class TestConfigResult(CamelModel):
     extracted_fields: dict | None = None
     warnings: list[str] = Field(default_factory=list)
     error: str | None = None
+    error_code: Literal[
+        "anti_bot_blocked",
+        "proxy_pool_exhausted",
+        "robots_disallowed",
+        "fetch_failed",
+    ] | None = None
+    http_status: int | None = None
+    recommended_actions: list[str] = Field(default_factory=list)
     pages_visited: int = 0
     configured_max_pages: int = 1
     pagination_mode: str = "none"

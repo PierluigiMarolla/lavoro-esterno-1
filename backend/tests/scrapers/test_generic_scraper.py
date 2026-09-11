@@ -8,12 +8,13 @@ from __future__ import annotations
 import threading
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from types import SimpleNamespace
 
 import pytest
 from scrapling.parser import Selector
 
 from app.scrapers.base import Scraper
-from app.scrapers.generic import GenericScraper, RobotsDisallowedError
+from app.scrapers.generic import AntiBotBlockedError, GenericScraper, RobotsDisallowedError
 
 _BASE_CONFIG = {
     "ad_link_selector": "a.ad-link",
@@ -72,6 +73,101 @@ def test_user_agent_falls_back_to_scraper_default(open_site_url: str) -> None:
     scraper = _scraper(open_site_url)
 
     assert scraper.user_agent == Scraper.user_agent
+
+
+@pytest.mark.parametrize(
+    ("configured_user_agent", "expected_user_agent"),
+    [(None, None), ("CustomBrowser/1.0", "CustomBrowser/1.0")],
+)
+async def test_browser_session_is_reused_and_only_receives_explicit_user_agent(
+    monkeypatch: pytest.MonkeyPatch,
+    open_site_url: str,
+    configured_user_agent: str | None,
+    expected_user_agent: str | None,
+) -> None:
+    sessions: list[object] = []
+
+    class FakeSession:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+            self.started = False
+            self.closed = False
+            self.fetches: list[str] = []
+            sessions.append(self)
+
+        async def start(self) -> None:
+            self.started = True
+
+        async def fetch(self, url: str, **_kwargs):
+            self.fetches.append(url)
+            return SimpleNamespace(status=200, headers={}, html_content="<html></html>")
+
+        async def close(self) -> None:
+            self.closed = True
+
+    monkeypatch.setattr("scrapling.fetchers.AsyncStealthySession", FakeSession)
+    options = {"fetch_mode": "stealth"}
+    if configured_user_agent is not None:
+        options["user_agent"] = configured_user_agent
+    scraper = _scraper(open_site_url, **options)
+
+    await scraper._fetch_page_stealth(f"{open_site_url}/one")
+    await scraper._fetch_page_stealth(f"{open_site_url}/two")
+    await scraper.aclose()
+
+    assert len(sessions) == 1
+    session = sessions[0]
+    assert session.started is True
+    assert session.fetches == [f"{open_site_url}/one", f"{open_site_url}/two"]
+    assert session.kwargs.get("useragent") == expected_user_agent
+    assert session.closed is True
+
+
+def test_cloudflare_interstitial_with_success_status_is_blocked(open_site_url: str) -> None:
+    scraper = _scraper(open_site_url)
+    response = SimpleNamespace(
+        status=200,
+        headers={"server": "cloudflare"},
+        html_content=(
+            "<html><head><title>Just a moment...</title></head>"
+            '<body><form id="challenge-form"><script src="/cdn-cgi/challenge-platform/x">'
+            "</script></form></body></html>"
+        ),
+    )
+
+    with pytest.raises(AntiBotBlockedError) as error:
+        scraper._raise_for_status(response, f"{open_site_url}/listing")
+
+    assert error.value.http_status == 200
+
+
+def test_cloudflare_403_is_classified_as_anti_bot_block(open_site_url: str) -> None:
+    scraper = _scraper(open_site_url)
+    response = SimpleNamespace(
+        status=403,
+        headers={"cf-ray": "test"},
+        html_content="<html><body>Forbidden</body></html>",
+    )
+
+    with pytest.raises(AntiBotBlockedError) as error:
+        scraper._raise_for_status(response, f"{open_site_url}/listing")
+
+    assert error.value.http_status == 403
+
+
+def test_regular_page_with_turnstile_widget_is_not_false_positive(open_site_url: str) -> None:
+    scraper = _scraper(open_site_url)
+    response = SimpleNamespace(
+        status=200,
+        headers={"server": "cloudflare"},
+        html_content=(
+            '<html><head><title>Contact</title></head><body><div class="cf-turnstile"></div>'
+            '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script>'
+            "</body></html>"
+        ),
+    )
+
+    scraper._raise_for_status(response, f"{open_site_url}/contact")
 
 
 async def test_custom_user_agent_is_sent_in_http_requests(
@@ -260,6 +356,61 @@ async def test_scrape_ad_extracts_configured_fields(open_site_url: str) -> None:
     assert raw["description"] == "This is a synthetic test fixture, not real content."
     assert raw["phone"] == "+39 333 111 1111"
     assert raw["images"] == ["/img1.jpg", "/img2.jpg"]
+
+
+@pytest.mark.parametrize(
+    ("raw_key", "expected"),
+    [
+        ("Età", "eta"),
+        ("ETA", "eta"),
+        ("age", "eta"),
+        ("Tipo annuncio", "tipo_annuncio"),
+    ],
+)
+def test_key_value_keys_are_normalized(raw_key: str, expected: str) -> None:
+    assert GenericScraper.normalize_pair_key(raw_key) == expected
+
+
+async def test_scrape_ad_extracts_key_value_pairs(open_site_url: str) -> None:
+    fields = {
+        **_BASE_CONFIG["fields"],
+        "details": {
+            "extractionMode": "keyValue",
+            "containerSelector": ".ad-details .detail",
+            "keySelector": "dt",
+            "keyAttribute": "text",
+            "valueSelector": "dd",
+            "valueAttribute": "text",
+        },
+    }
+    scraper = _scraper(open_site_url, fields=fields)
+
+    raw = await scraper.scrape_ad(f"{open_site_url}/ad1.html")
+
+    assert raw["details"] == {"eta": "26", "tipo_annuncio": "Privato"}
+    assert scraper.normalize(raw)["custom_fields"]["details"] == raw["details"]
+
+
+async def test_scrape_ad_extracts_poster_video_pairs(open_site_url: str) -> None:
+    fields = {
+        **_BASE_CONFIG["fields"],
+        "clips": {
+            "extractionMode": "posterVideo",
+            "containerSelector": ".media-pair",
+            "posterSelector": "img",
+            "posterAttribute": "src",
+            "videoSelector": ".video, video",
+            "videoAttribute": "src",
+        },
+    }
+    scraper = _scraper(open_site_url, fields=fields)
+
+    raw = await scraper.scrape_ad(f"{open_site_url}/ad1.html")
+
+    assert raw["clips"] == [
+        {"poster": "/poster1.jpg", "video": "/video1.mp4"},
+        {"poster": "/poster2.jpg", "video": "/video2.mp4"},
+    ]
 
 
 def test_text_extraction_preserves_br_and_inline_content() -> None:

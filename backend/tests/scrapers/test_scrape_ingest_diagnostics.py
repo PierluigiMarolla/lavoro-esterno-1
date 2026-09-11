@@ -3,7 +3,21 @@
 from __future__ import annotations
 
 from app.models.sources import Source
-from app.services.scrape_ingest import collect_ads
+from app.services.scrape_ingest import (
+    collect_ads,
+    decode_scrape_error_message,
+    encode_scrape_error_message,
+)
+
+
+def test_scrape_error_code_round_trip_and_legacy_compatibility() -> None:
+    encoded = encode_scrape_error_message("anti_bot_blocked", "Blocco Cloudflare.")
+
+    assert decode_scrape_error_message(encoded) == (
+        "anti_bot_blocked",
+        "Blocco Cloudflare.",
+    )
+    assert decode_scrape_error_message("Errore precedente.") == (None, "Errore precedente.")
 
 
 async def test_collect_ads_surfaces_empty_media_selector_and_keeps_ad(

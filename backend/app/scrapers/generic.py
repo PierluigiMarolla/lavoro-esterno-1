@@ -30,8 +30,10 @@ import asyncio
 import ipaddress
 import json
 import logging
+import re
 import socket
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -67,6 +69,16 @@ class PageFetchError(Exception):
     """Sollevata quando Scrapling non riesce a recuperare una pagina."""
 
 
+class AntiBotBlockedError(PageFetchError):
+    """A WAF challenge remained active after Scrapling's bounded solver cycle."""
+
+    def __init__(self, http_status: int | None = None):
+        super().__init__(
+            "La protezione anti-bot ha bloccato la richiesta dopo i tentativi consentiti."
+        )
+        self.http_status = http_status
+
+
 class ProxyRetryableError(PageFetchError):
     """Failure that may be retried through another endpoint in the pool."""
 
@@ -77,6 +89,10 @@ class ProxyRetryableError(PageFetchError):
 
 class ProxyPoolExhaustedError(PageFetchError):
     """All candidates assigned to this run failed; direct access is forbidden."""
+
+    def __init__(self, message: str, category: str | None = None):
+        super().__init__(message)
+        self.category = category
 
 
 @dataclass
@@ -112,8 +128,11 @@ class GenericScraper(Scraper):
             raise ValueError(f"fetch_mode non valido: {self.fetch_mode!r}")
 
         configured_user_agent = self._config_value("user_agent", "userAgent")
-        if configured_user_agent:
-            self.user_agent = str(configured_user_agent).strip()
+        self.configured_user_agent = (
+            str(configured_user_agent).strip() if configured_user_agent else None
+        )
+        if self.configured_user_agent:
+            self.user_agent = self.configured_user_agent
 
         configured_rate_limit = self._config_value("rate_limit_seconds", "rateLimitSeconds")
         self.rate_limit_seconds = (
@@ -125,6 +144,7 @@ class GenericScraper(Scraper):
         self._robots_txt: str | None = None
         self._robots_fetched = False
         self._client: httpx.AsyncClient | None = None
+        self._browser_session: Any | None = None
         self._proxy_candidates = list(proxy_candidates or [])
         self._proxy_index = 0
         self.proxy_events: list[ProxyRuntimeEvent] = []
@@ -175,6 +195,7 @@ class GenericScraper(Scraper):
     async def _rotate_proxy(self) -> bool:
         if self._proxy_index + 1 >= len(self._proxy_candidates):
             return False
+        await self._close_browser_session()
         self._proxy_index += 1
         if self._client is not None:
             await self._client.aclose()
@@ -205,7 +226,8 @@ class GenericScraper(Scraper):
                 )
                 if not await self._rotate_proxy():
                     raise ProxyPoolExhaustedError(
-                        "Tutti i proxy disponibili hanno fallito; accesso diretto bloccato."
+                        "Tutti i proxy disponibili hanno fallito; accesso diretto bloccato.",
+                        category=category,
                     ) from exc
                 continue
             self.proxy_events.append(
@@ -267,49 +289,134 @@ class GenericScraper(Scraper):
         return response
 
     async def _fetch_page_dynamic(self, url: str) -> Any:
-        from scrapling.fetchers import DynamicFetcher
-
-        response = await DynamicFetcher.async_fetch(url, **self._browser_fetch_kwargs())
+        session = await self._ensure_browser_session()
+        response = await session.fetch(url, **self._browser_request_kwargs())
         self._raise_for_status(response, url)
         return response
 
     async def _fetch_page_stealth(self, url: str) -> Any:
-        from scrapling.fetchers import StealthyFetcher
-
-        response = await StealthyFetcher.async_fetch(
-            url,
-            solve_cloudflare=bool(self._config_value("solve_cloudflare", "solveCloudflare", False)),
-            block_webrtc=bool(self._config_value("block_webrtc", "blockWebrtc", False)),
-            hide_canvas=bool(self._config_value("hide_canvas", "hideCanvas", False)),
-            real_chrome=bool(self._config_value("real_chrome", "realChrome", False)),
-            block_ads=bool(self._config_value("block_ads", "blockAds", False)),
-            **self._browser_fetch_kwargs(),
-        )
+        session = await self._ensure_browser_session()
+        response = await session.fetch(url, **self._browser_request_kwargs())
         self._raise_for_status(response, url)
         return response
 
-    def _browser_fetch_kwargs(self) -> dict[str, Any]:
+    def _browser_session_kwargs(self) -> dict[str, Any]:
         kwargs: dict[str, Any] = {
             "headless": True,
-            "network_idle": True,
             "timeout": _BROWSER_NAVIGATION_TIMEOUT_MS,
-            "useragent": self.user_agent,
         }
+        if self.configured_user_agent:
+            kwargs["useragent"] = self.configured_user_agent
         proxy = self._active_proxy()
         if proxy:
             kwargs["proxy"] = proxy.scrapling_value()
+        if self.fetch_mode == "stealth":
+            kwargs.update(
+                solve_cloudflare=bool(
+                    self._config_value("solve_cloudflare", "solveCloudflare", False)
+                ),
+                block_webrtc=bool(
+                    self._config_value("block_webrtc", "blockWebrtc", False)
+                ),
+                hide_canvas=bool(self._config_value("hide_canvas", "hideCanvas", False)),
+                real_chrome=bool(self._config_value("real_chrome", "realChrome", False)),
+                block_ads=bool(self._config_value("block_ads", "blockAds", False)),
+            )
+        return kwargs
+
+    def _browser_request_kwargs(self) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {"network_idle": True}
+        if self.fetch_mode == "stealth":
+            kwargs["solve_cloudflare"] = bool(
+                self._config_value("solve_cloudflare", "solveCloudflare", False)
+            )
         if wait_selector := self._config_value("wait_selector", "waitSelector"):
             kwargs["wait_selector"] = str(wait_selector)
         if wait_ms := self._config_value("wait_ms", "waitMs"):
             kwargs["wait"] = int(wait_ms)
         return kwargs
 
+    async def _ensure_browser_session(self) -> Any:
+        if self._browser_session is not None:
+            return self._browser_session
+        if self.fetch_mode == "dynamic":
+            from scrapling.fetchers import AsyncDynamicSession
+
+            session_class = AsyncDynamicSession
+        else:
+            from scrapling.fetchers import AsyncStealthySession
+
+            session_class = AsyncStealthySession
+        session = session_class(**self._browser_session_kwargs())
+        try:
+            await session.start()
+        except Exception:
+            await session.close()
+            raise
+        self._browser_session = session
+        return session
+
+    async def _close_browser_session(self) -> None:
+        if self._browser_session is None:
+            return
+        session = self._browser_session
+        self._browser_session = None
+        try:
+            await session.close()
+        except Exception:  # noqa: BLE001 - cleanup best-effort, without target data in logs
+            logger.warning("Chiusura della sessione browser Scrapling non riuscita.")
+
+    @staticmethod
+    def _response_html(response: Any) -> str:
+        html_content = getattr(response, "html_content", None)
+        if html_content is not None:
+            return str(html_content)
+        body = getattr(response, "body", b"")
+        if isinstance(body, bytes):
+            return body.decode("utf-8", errors="ignore")
+        return str(body or "")
+
+    @classmethod
+    def _is_cloudflare_challenge(cls, response: Any, status: int | None) -> bool:
+        html = cls._response_html(response).lower()
+        headers = getattr(response, "headers", {}) or {}
+        normalized_headers = {
+            str(key).lower(): str(value).lower() for key, value in headers.items()
+        }
+        cloudflare_header = (
+            "cloudflare" in normalized_headers.get("server", "")
+            or "cf-ray" in normalized_headers
+        )
+        challenge_markers = sum(
+            marker in html
+            for marker in (
+                "/cdn-cgi/challenge-platform/",
+                "cf-chl-",
+                "id=\"challenge-form\"",
+            )
+        )
+        interstitial_title = any(
+            title in html
+            for title in (
+                "<title>just a moment",
+                "<title>attention required",
+            )
+        )
+        if status == 403 and (cloudflare_header or challenge_markers > 0 or interstitial_title):
+            return True
+        return interstitial_title and challenge_markers > 0
+
     def _raise_for_status(self, response: Any, url: str) -> None:
         status = getattr(response, "status", None)
-        if status is not None and not 200 <= int(status) < 300:
-            if self._proxy_candidates and int(status) in {403, 407, 429}:
-                raise ProxyRetryableError(f"http_{int(status)}")
-            raise PageFetchError(f"Risposta HTTP {status} per {url}")
+        status_code = int(status) if status is not None else None
+        if self._is_cloudflare_challenge(response, status_code):
+            if self._proxy_candidates:
+                raise ProxyRetryableError("anti_bot_blocked")
+            raise AntiBotBlockedError(status_code)
+        if status_code is not None and not 200 <= status_code < 300:
+            if self._proxy_candidates and status_code in {403, 407, 429}:
+                raise ProxyRetryableError(f"http_{status_code}")
+            raise PageFetchError(f"Risposta HTTP {status_code} per {url}")
 
     @staticmethod
     def _extract_all(page: Any, selector: str, attribute: str) -> list[str]:
@@ -661,26 +768,10 @@ class GenericScraper(Scraper):
         return urls
 
     async def _fetch_browser_for_discovery(self, url: str, page_action: Any) -> None:
-        kwargs = self._browser_fetch_kwargs()
+        kwargs = self._browser_request_kwargs()
         kwargs["page_action"] = page_action
-        if self.fetch_mode == "dynamic":
-            from scrapling.fetchers import DynamicFetcher
-
-            response = await DynamicFetcher.async_fetch(url, **kwargs)
-        else:
-            from scrapling.fetchers import StealthyFetcher
-
-            response = await StealthyFetcher.async_fetch(
-                url,
-                solve_cloudflare=bool(
-                    self._config_value("solve_cloudflare", "solveCloudflare", False)
-                ),
-                block_webrtc=bool(self._config_value("block_webrtc", "blockWebrtc", False)),
-                hide_canvas=bool(self._config_value("hide_canvas", "hideCanvas", False)),
-                real_chrome=bool(self._config_value("real_chrome", "realChrome", False)),
-                block_ads=bool(self._config_value("block_ads", "blockAds", False)),
-                **kwargs,
-            )
+        session = await self._ensure_browser_session()
+        response = await session.fetch(url, **kwargs)
         self._raise_for_status(response, url)
 
     async def scrape_ad(self, url: str) -> dict[str, Any]:
@@ -692,6 +783,12 @@ class GenericScraper(Scraper):
         return raw
 
     def _extract_field(self, page: Any, spec: dict[str, Any]) -> Any:
+        extraction_mode = spec.get("extraction_mode", spec.get("extractionMode", "value"))
+        if extraction_mode == "keyValue":
+            return self._extract_key_value_field(page, spec)
+        if extraction_mode == "posterVideo":
+            return self._extract_poster_video_field(page, spec)
+
         selector = spec["selector"]
         attribute = spec.get("attribute", "text")
         multiple = bool(spec.get("multiple", False))
@@ -699,6 +796,58 @@ class GenericScraper(Scraper):
         if multiple:
             return values
         return values[0] if values else None
+
+    @staticmethod
+    def _field_option(spec: dict[str, Any], snake: str, camel: str, default: Any = None) -> Any:
+        return spec.get(snake, spec.get(camel, default))
+
+    @staticmethod
+    def normalize_pair_key(value: str) -> str:
+        decomposed = unicodedata.normalize("NFKD", value)
+        without_accents = "".join(char for char in decomposed if not unicodedata.combining(char))
+        normalized = re.sub(r"[^a-z0-9]+", "_", without_accents.lower()).strip("_")
+        return {"age": "eta", "eta": "eta"}.get(normalized, normalized)
+
+    def _extract_key_value_field(self, page: Any, spec: dict[str, Any]) -> dict[str, str]:
+        container_selector = self._field_option(
+            spec, "container_selector", "containerSelector"
+        )
+        key_selector = self._field_option(spec, "key_selector", "keySelector")
+        value_selector = self._field_option(spec, "value_selector", "valueSelector")
+        key_attribute = self._field_option(spec, "key_attribute", "keyAttribute", "text")
+        value_attribute = self._field_option(
+            spec, "value_attribute", "valueAttribute", "text"
+        )
+        pairs: dict[str, str] = {}
+        for container in page.css(container_selector):
+            keys = self._extract_all(container, key_selector, key_attribute)
+            values = self._extract_all(container, value_selector, value_attribute)
+            if not keys or not values:
+                continue
+            key = self.normalize_pair_key(keys[0])
+            if key and key not in pairs:
+                pairs[key] = values[0]
+        return pairs
+
+    def _extract_poster_video_field(
+        self, page: Any, spec: dict[str, Any]
+    ) -> list[dict[str, str]]:
+        container_selector = self._field_option(
+            spec, "container_selector", "containerSelector"
+        )
+        poster_selector = self._field_option(spec, "poster_selector", "posterSelector")
+        video_selector = self._field_option(spec, "video_selector", "videoSelector")
+        poster_attribute = self._field_option(
+            spec, "poster_attribute", "posterAttribute", "src"
+        )
+        video_attribute = self._field_option(spec, "video_attribute", "videoAttribute", "src")
+        pairs: list[dict[str, str]] = []
+        for container in page.css(container_selector):
+            posters = self._extract_all(container, poster_selector, poster_attribute)
+            videos = self._extract_all(container, video_selector, video_attribute)
+            if posters and videos:
+                pairs.append({"poster": posters[0], "video": videos[0]})
+        return pairs
 
     def media_extraction_warnings(self, ad: dict[str, Any]) -> list[str]:
         """Segnala campi media configurati che non hanno estratto URL."""
@@ -912,6 +1061,9 @@ class GenericScraper(Scraper):
         }
 
     async def aclose(self) -> None:
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+        try:
+            await self._close_browser_session()
+        finally:
+            if self._client is not None:
+                await self._client.aclose()
+                self._client = None

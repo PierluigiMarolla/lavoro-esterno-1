@@ -9,7 +9,12 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.sources import ScrapeConfigInput, SourceCreate
+from app.schemas.sources import (
+    ScrapeConfigInput,
+    SourceCreate,
+    SourceExportRequest,
+    SourceTransferDocument,
+)
 
 _VALID_FIELDS = {
     "phone": {"selector": ".phone", "attribute": "text"},
@@ -35,6 +40,79 @@ def test_scrape_config_accepts_valid_input() -> None:
     assert config.max_pages == 3  # default
     assert config.rate_limit_seconds == 2.0  # default
     assert config.fetch_mode == "http"
+    assert config.fields["phone"].extraction_mode == "value"
+
+
+def test_scrape_config_accepts_key_value_field() -> None:
+    config = ScrapeConfigInput(
+        start_urls=["https://example.com/listing"],
+        ad_link_selector=".ad",
+        fields={
+            **_VALID_FIELDS,
+            "details": {
+                "extractionMode": "keyValue",
+                "containerSelector": ".detail",
+                "keySelector": ".key",
+                "valueSelector": ".value",
+            },
+        },
+    )
+
+    assert config.fields["details"].container_selector == ".detail"
+
+
+def test_scrape_config_rejects_incomplete_key_value_field() -> None:
+    with pytest.raises(ValidationError, match="keySelector.*valueSelector"):
+        ScrapeConfigInput(
+            start_urls=["https://example.com/listing"],
+            ad_link_selector=".ad",
+            fields={
+                **_VALID_FIELDS,
+                "details": {
+                    "extractionMode": "keyValue",
+                    "containerSelector": ".detail",
+                },
+            },
+        )
+
+
+def test_scrape_config_accepts_poster_video_field() -> None:
+    config = ScrapeConfigInput(
+        start_urls=["https://example.com/listing"],
+        ad_link_selector=".ad",
+        fields={
+            **_VALID_FIELDS,
+            "clips": {
+                "extractionMode": "posterVideo",
+                "containerSelector": ".clip",
+                "posterSelector": "img",
+                "posterAttribute": "src",
+                "videoSelector": "a",
+                "videoAttribute": "href",
+            },
+        },
+    )
+
+    assert config.fields["clips"].extraction_mode == "posterVideo"
+
+
+def test_scrape_config_rejects_invalid_poster_video_attribute() -> None:
+    with pytest.raises(ValidationError, match="posterAttribute"):
+        ScrapeConfigInput(
+            start_urls=["https://example.com/listing"],
+            ad_link_selector=".ad",
+            fields={
+                **_VALID_FIELDS,
+                "clips": {
+                    "extractionMode": "posterVideo",
+                    "containerSelector": ".clip",
+                    "posterSelector": "img",
+                    "posterAttribute": "alt",
+                    "videoSelector": "video",
+                    "videoAttribute": "src",
+                },
+            },
+        )
 
 
 def test_scrape_config_rejects_singular_image_field() -> None:
@@ -192,3 +270,61 @@ def test_source_create_accepts_valid_slug_without_scrape_config() -> None:
     source = SourceCreate(name="Test Source", slug="test_source", base_url="https://example.com")
     assert source.scrape_config is None
     assert source.priority == "medium"
+
+
+def test_source_transfer_document_round_trip_uses_versioned_camel_case_format() -> None:
+    document = SourceTransferDocument.model_validate(
+        {
+            "format": "lavoro-esterno-sources",
+            "version": 1,
+            "exportedAt": "2026-09-10T12:00:00Z",
+            "sources": [
+                {
+                    "name": "Test Source",
+                    "slug": "test_source",
+                    "baseUrl": "https://example.com",
+                    "priority": "high",
+                    "scrapeConfig": None,
+                    "proxyPoolName": "Mexico",
+                    "watermarkRemoval": {"enabled": False, "regions": []},
+                }
+            ],
+        }
+    )
+
+    serialized = document.model_dump(mode="json", by_alias=True)
+    assert serialized["format"] == "lavoro-esterno-sources"
+    assert serialized["version"] == 1
+    assert serialized["sources"][0]["baseUrl"] == "https://example.com"
+    assert serialized["sources"][0]["proxyPoolName"] == "Mexico"
+    assert "enabled" not in serialized["sources"][0]
+    assert "id" not in serialized["sources"][0]
+
+
+def test_source_transfer_document_rejects_duplicate_slugs_and_unknown_version() -> None:
+    source = {
+        "name": "Test Source",
+        "slug": "test_source",
+        "baseUrl": "https://example.com",
+    }
+    with pytest.raises(ValidationError, match="slug duplicati"):
+        SourceTransferDocument(
+            format="lavoro-esterno-sources",
+            version=1,
+            exported_at="2026-09-10T12:00:00Z",
+            sources=[source, source],
+        )
+    with pytest.raises(ValidationError):
+        SourceTransferDocument(
+            format="lavoro-esterno-sources",
+            version=2,
+            exported_at="2026-09-10T12:00:00Z",
+            sources=[source],
+        )
+
+
+def test_source_export_request_requires_ids_only_for_selected_scope() -> None:
+    with pytest.raises(ValidationError):
+        SourceExportRequest(scope="selected", source_ids=[])
+    with pytest.raises(ValidationError):
+        SourceExportRequest(scope="all", source_ids=["00000000-0000-0000-0000-000000000001"])

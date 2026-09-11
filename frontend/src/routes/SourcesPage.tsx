@@ -14,6 +14,7 @@ import {
   useUpdateSourceSchedule,
   useDeleteSource,
   useCheckSourceRobots,
+  useExportSources,
   useTestSourceConfig,
 } from "@/hooks/useSources";
 import { useProxyPools } from "@/hooks/useProxies";
@@ -26,12 +27,14 @@ import Select from "@/components/ui/Select";
 import Dialog from "@/components/ui/Dialog";
 import { EmptyRow, ErrorRow, LoadingRow, Table, TBody, Td, Th, THead, Tr } from "@/components/ui/Table";
 import ErrorState from "@/components/ui/ErrorState";
+import SourceImportDialog from "@/components/sources/SourceImportDialog";
 import { describeError } from "@/lib/errors";
 import { formatDateTime } from "@/lib/format";
 import type {
   ScrapeConfig,
   ScrapeFetchMode,
   ScrapeFieldConfig,
+  ScrapeFieldExtractionMode,
   Source,
   SourcePriority,
   SourceStatus,
@@ -159,6 +162,11 @@ function SourceRunsPanel({ sourceId, colSpan }: { sourceId: string; colSpan: num
                       <li key={err.id} className="text-label-sm text-on-surface-variant">
                         <span className="font-mono text-error">{truncate(err.url, 60)}</span>
                         {" — "}
+                        {err.errorCode && (
+                          <span className="mr-2 rounded bg-error/10 px-1.5 py-0.5 font-mono text-error">
+                            {err.errorCode}
+                          </span>
+                        )}
                         <span>{truncate(err.errorMessage)}</span>
                       </li>
                     ))}
@@ -190,24 +198,89 @@ interface FieldRow {
   selector: string;
   attribute: string;
   multiple: boolean;
+  extractionMode: ScrapeFieldExtractionMode;
+  containerSelector: string;
+  keySelector: string;
+  keyAttribute: string;
+  valueSelector: string;
+  valueAttribute: string;
+  posterSelector: string;
+  posterAttribute: string;
+  videoSelector: string;
+  videoAttribute: string;
 }
 
+const emptyFieldRow = (name = ""): FieldRow => ({
+  name,
+  selector: "",
+  attribute: "text",
+  multiple: false,
+  extractionMode: "value",
+  containerSelector: "",
+  keySelector: "",
+  keyAttribute: "text",
+  valueSelector: "",
+  valueAttribute: "text",
+  posterSelector: "",
+  posterAttribute: "src",
+  videoSelector: "",
+  videoAttribute: "src",
+});
+
 function fieldsToRows(fields: Record<string, ScrapeFieldConfig>): FieldRow[] {
-  return Object.entries(fields).map(([name, f]) => ({ name, ...f }));
+  return Object.entries(fields).map(([name, field]) => ({
+    ...emptyFieldRow(name),
+    ...field,
+    selector: field.selector ?? "",
+    containerSelector: field.containerSelector ?? "",
+    keySelector: field.keySelector ?? "",
+    valueSelector: field.valueSelector ?? "",
+    posterSelector: field.posterSelector ?? "",
+    videoSelector: field.videoSelector ?? "",
+    extractionMode: field.extractionMode ?? "value",
+  }));
 }
 
 function rowsToFields(rows: FieldRow[]): Record<string, ScrapeFieldConfig> {
   const fields: Record<string, ScrapeFieldConfig> = {};
   for (const row of rows) {
     const name = row.name.trim();
-    if (name && row.selector.trim()) {
-      fields[name] = { selector: row.selector.trim(), attribute: row.attribute, multiple: row.multiple };
+    if (!name) continue;
+    if (row.extractionMode === "value" && row.selector.trim()) {
+      fields[name] = {
+        selector: row.selector.trim(),
+        attribute: row.attribute,
+        multiple: row.multiple,
+        extractionMode: "value",
+      };
+    } else if (row.extractionMode === "keyValue" && row.containerSelector.trim()) {
+      fields[name] = {
+        attribute: "text",
+        multiple: true,
+        extractionMode: "keyValue",
+        containerSelector: row.containerSelector.trim(),
+        keySelector: row.keySelector.trim() || null,
+        keyAttribute: row.keyAttribute,
+        valueSelector: row.valueSelector.trim() || null,
+        valueAttribute: row.valueAttribute,
+      };
+    } else if (row.extractionMode === "posterVideo" && row.containerSelector.trim()) {
+      fields[name] = {
+        attribute: "text",
+        multiple: true,
+        extractionMode: "posterVideo",
+        containerSelector: row.containerSelector.trim(),
+        posterSelector: row.posterSelector.trim() || null,
+        posterAttribute: row.posterAttribute,
+        videoSelector: row.videoSelector.trim() || null,
+        videoAttribute: row.videoAttribute,
+      };
     }
   }
   return fields;
 }
 
-const EMPTY_FIELD_ROWS: FieldRow[] = [{ name: "phone", selector: "", attribute: "text", multiple: false }];
+const EMPTY_FIELD_ROWS: FieldRow[] = [emptyFieldRow("phone")];
 
 // Add/Edit dialog: name/base_url/priority plus the full generic scraping
 // engine configuration (start URLs, ad link/pagination selectors, per-field
@@ -345,7 +418,7 @@ function SourceFormDialog({
   }
 
   function addFieldRow() {
-    setFieldRows((rows) => [...rows, { name: "", selector: "", attribute: "text", multiple: false }]);
+    setFieldRows((rows) => [...rows, emptyFieldRow()]);
   }
 
   function removeFieldRow(index: number) {
@@ -420,6 +493,9 @@ function SourceFormDialog({
         extractedFields: null,
         warnings: [],
         error: "Completa la configurazione di acquisizione prima di provarla.",
+        errorCode: null,
+        httpStatus: null,
+        recommendedActions: [],
         pagesVisited: 0,
         configuredMaxPages: 1,
         paginationMode: "none",
@@ -438,6 +514,9 @@ function SourceFormDialog({
         extractedFields: null,
         warnings: [],
         error: describeError(err).description,
+        errorCode: "fetch_failed",
+        httpStatus: null,
+        recommendedActions: [],
         pagesVisited: 0,
         configuredMaxPages: scrapeConfig.maxPages,
         paginationMode: "none",
@@ -450,7 +529,7 @@ function SourceFormDialog({
   const isSaving = createSource.isPending || updateSource.isPending;
 
   return (
-    <Dialog open={open} onClose={onClose} title={isEdit ? "Modifica fonte" : "Aggiungi fonte"}>
+    <Dialog open={open} onClose={onClose} title={isEdit ? "Modifica fonte" : "Aggiungi fonte"} size="xl">
       <form onSubmit={handleSubmit} className="flex flex-col gap-4 max-h-[65vh] overflow-y-auto pr-1">
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -714,43 +793,83 @@ function SourceFormDialog({
               </div>
               <div className="space-y-2">
                 {fieldRows.map((row, index) => (
-                  <div key={index} className="grid grid-cols-[1fr_2fr_1fr_auto_auto] gap-2 items-center">
-                    <Input
-                      mono
-                      placeholder="nome campo"
-                      value={row.name}
-                      onChange={(e) => updateFieldRow(index, { name: e.target.value })}
-                    />
-                    <Input
-                      mono
-                      placeholder="selettore CSS"
-                      value={row.selector}
-                      onChange={(e) => updateFieldRow(index, { selector: e.target.value })}
-                    />
-                    <Select
-                      value={row.attribute}
-                      onChange={(e) => updateFieldRow(index, { attribute: e.target.value })}
-                    >
-                      <option value="text">text</option>
-                      <option value="href">href</option>
-                      <option value="src">src</option>
-                    </Select>
-                    <label className="flex items-center gap-1 text-label-sm text-on-surface-variant whitespace-nowrap">
-                      <input
-                        type="checkbox"
-                        checked={row.multiple}
-                        onChange={(e) => updateFieldRow(index, { multiple: e.target.checked })}
+                  <div key={index} className="border-b border-border pb-2 last:border-b-0">
+                    <div className="grid grid-cols-1 gap-2 items-center lg:grid-cols-[minmax(8rem,1fr)_minmax(12rem,2fr)_minmax(6rem,0.7fr)_auto_minmax(10rem,1fr)_auto]">
+                      <Input
+                        mono
+                        placeholder="nome campo"
+                        value={row.name}
+                        onChange={(e) => updateFieldRow(index, { name: e.target.value })}
                       />
-                      multi
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => removeFieldRow(index)}
-                      className="text-on-surface-variant hover:text-error"
-                      aria-label={`Rimuovi campo ${row.name || index + 1}`}
-                    >
-                      <Icon name="close" size={16} />
-                    </button>
+                      <Input
+                        mono
+                        disabled={row.extractionMode !== "value"}
+                        placeholder={row.extractionMode === "value" ? "selettore CSS" : "usa il container sotto"}
+                        value={row.selector}
+                        onChange={(e) => updateFieldRow(index, { selector: e.target.value })}
+                      />
+                      <Select
+                        disabled={row.extractionMode !== "value"}
+                        value={row.attribute}
+                        onChange={(e) => updateFieldRow(index, { attribute: e.target.value })}
+                      >
+                        <option value="text">text</option>
+                        <option value="href">href</option>
+                        <option value="src">src</option>
+                      </Select>
+                      <label className="flex items-center gap-1 text-label-sm text-on-surface-variant whitespace-nowrap">
+                        <input
+                          type="checkbox"
+                          disabled={row.extractionMode !== "value"}
+                          checked={row.extractionMode === "value" ? row.multiple : true}
+                          onChange={(e) => updateFieldRow(index, { multiple: e.target.checked })}
+                        />
+                        multi
+                      </label>
+                      <Select
+                        aria-label={`Tipo estrazione ${row.name || index + 1}`}
+                        value={row.extractionMode}
+                        onChange={(e) => updateFieldRow(index, { extractionMode: e.target.value as ScrapeFieldExtractionMode })}
+                      >
+                        <option value="value">Valore</option>
+                        <option value="keyValue">Chiave + valore</option>
+                        <option value="posterVideo">Poster + video</option>
+                      </Select>
+                      <button
+                        type="button"
+                        onClick={() => removeFieldRow(index)}
+                        className="text-on-surface-variant hover:text-error"
+                        aria-label={`Rimuovi campo ${row.name || index + 1}`}
+                      >
+                        <Icon name="close" size={16} />
+                      </button>
+                    </div>
+                    {row.extractionMode === "keyValue" && (
+                      <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-[1.4fr_1.4fr_0.7fr_1.4fr_0.7fr] lg:pl-2">
+                        <Input mono placeholder="containerSelector" value={row.containerSelector} onChange={(e) => updateFieldRow(index, { containerSelector: e.target.value })} />
+                        <Input mono placeholder="keySelector" value={row.keySelector} onChange={(e) => updateFieldRow(index, { keySelector: e.target.value })} />
+                        <Select value={row.keyAttribute} onChange={(e) => updateFieldRow(index, { keyAttribute: e.target.value })}>
+                          <option value="text">text</option><option value="href">href</option><option value="src">src</option>
+                        </Select>
+                        <Input mono placeholder="valueSelector" value={row.valueSelector} onChange={(e) => updateFieldRow(index, { valueSelector: e.target.value })} />
+                        <Select value={row.valueAttribute} onChange={(e) => updateFieldRow(index, { valueAttribute: e.target.value })}>
+                          <option value="text">text</option><option value="href">href</option><option value="src">src</option>
+                        </Select>
+                      </div>
+                    )}
+                    {row.extractionMode === "posterVideo" && (
+                      <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-[1.4fr_1.4fr_0.7fr_1.4fr_0.7fr] lg:pl-2">
+                        <Input mono placeholder="containerSelector" value={row.containerSelector} onChange={(e) => updateFieldRow(index, { containerSelector: e.target.value })} />
+                        <Input mono placeholder="posterSelector" value={row.posterSelector} onChange={(e) => updateFieldRow(index, { posterSelector: e.target.value })} />
+                        <Select value={row.posterAttribute} onChange={(e) => updateFieldRow(index, { posterAttribute: e.target.value })}>
+                          <option value="src">src</option><option value="href">href</option>
+                        </Select>
+                        <Input mono placeholder="videoSelector" value={row.videoSelector} onChange={(e) => updateFieldRow(index, { videoSelector: e.target.value })} />
+                        <Select value={row.videoAttribute} onChange={(e) => updateFieldRow(index, { videoAttribute: e.target.value })}>
+                          <option value="src">src</option><option value="href">href</option>
+                        </Select>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -771,7 +890,26 @@ function SourceFormDialog({
                 {testResult && (
                   <div className="mt-2 text-label-sm bg-surface-container-low border border-border rounded p-2">
                     {testResult.error ? (
-                      <p className="text-error">{testResult.error}</p>
+                      <div className="space-y-2 text-error">
+                        <div className="flex flex-wrap items-center gap-2">
+                          {testResult.errorCode && (
+                            <span className="rounded bg-error/10 px-1.5 py-0.5 font-mono">
+                              {testResult.errorCode}
+                            </span>
+                          )}
+                          {testResult.httpStatus && (
+                            <span className="font-mono">HTTP {testResult.httpStatus}</span>
+                          )}
+                        </div>
+                        <p>{testResult.error}</p>
+                        {testResult.recommendedActions.length > 0 && (
+                          <ul className="list-disc space-y-1 pl-5 text-on-surface-variant">
+                            {testResult.recommendedActions.map((action) => (
+                              <li key={action}>{action}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
                     ) : (
                       <>
                         <p className="text-on-surface">Trovati {testResult.adUrlsFound} collegamenti ad annunci.</p>
@@ -1113,12 +1251,20 @@ export default function SourcesPage() {
   const disable = useDisableSource();
   const enable = useEnableSource();
   const checkRobots = useCheckSourceRobots();
+  const exportSources = useExportSources();
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [importOpen, setImportOpen] = useState(false);
   const [formSource, setFormSource] = useState<Source | null | "new">(null);
   const [deleteTarget, setDeleteTarget] = useState<Source | null>(null);
   const [duplicateTarget, setDuplicateTarget] = useState<Source | null>(null);
   const [scheduleTarget, setScheduleTarget] = useState<Source | null>(null);
   const [robotsResultBySource, setRobotsResultBySource] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const visibleIds = new Set(sources.data?.map((source) => source.id) ?? []);
+    setSelectedIds((current) => new Set([...current].filter((id) => visibleIds.has(id))));
+  }, [sources.data]);
 
   function toggleExpanded(id: string) {
     setExpandedIds((prev) => {
@@ -1149,6 +1295,29 @@ export default function SourcesPage() {
     }
   }
 
+  async function handleExport(scope: "all" | "selected") {
+    try {
+      const document = await exportSources.mutateAsync({
+        scope,
+        sourceIds: scope === "selected" ? [...selectedIds] : [],
+      });
+      const blob = new Blob([JSON.stringify(document, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = window.document.createElement("a");
+      const timestamp = new Date().toISOString().slice(0, 16).replace("T", "-").replace(":", "");
+      link.href = url;
+      link.download = `fonti-${timestamp}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      // The mutation error is rendered in the page-level alert.
+    }
+  }
+
+  const allSelected = Boolean(
+    sources.data?.length && sources.data.every((source) => selectedIds.has(source.id)),
+  );
+
   const cards: SummaryCardConfig[] = [
     { key: "total", label: "Fonti totali", value: summary.data?.total, accent: "border-t-primary" },
     { key: "active", label: "Attive", value: summary.data?.active, accent: "border-t-success" },
@@ -1158,7 +1327,7 @@ export default function SourcesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-end">
+      <div className="flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-end">
         <div>
           <h2 className="text-headline-md text-on-surface">Fonti dati</h2>
           <p className="text-body-md text-on-surface-variant mt-1">
@@ -1166,10 +1335,32 @@ export default function SourcesPage() {
           </p>
         </div>
         {isAdmin && (
-          <Button onClick={() => setFormSource("new")}>
-            <Icon name="add" size={18} />
-            Aggiungi fonte
-          </Button>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button variant="secondary" onClick={() => setImportOpen(true)}>
+              <Icon name="upload" size={18} />
+              Importa
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => handleExport("selected")}
+              disabled={selectedIds.size === 0 || exportSources.isPending}
+            >
+              <Icon name="download" size={18} />
+              Esporta selezionate
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => handleExport("all")}
+              disabled={!sources.data?.length || exportSources.isPending}
+            >
+              <Icon name="download" size={18} />
+              Esporta tutte
+            </Button>
+            <Button onClick={() => setFormSource("new")}>
+              <Icon name="add" size={18} />
+              Aggiungi fonte
+            </Button>
+          </div>
         )}
       </div>
 
@@ -1197,9 +1388,9 @@ export default function SourcesPage() {
       </div>
 
       {/* Sources Table */}
-      {(enable.isError || runScan.isError) && (
+      {(enable.isError || runScan.isError || exportSources.isError) && (
         <div role="alert" className="bg-error-container/20 border border-error/20 rounded-lg p-4 text-error text-body-md">
-          {describeError(enable.error ?? runScan.error).description}
+          {describeError(enable.error ?? runScan.error ?? exportSources.error).description}
         </div>
       )}
       <div className="bg-surface-container-lowest border border-border rounded-lg shadow-[0_1px_2px_rgba(0,0,0,0.02)] flex flex-col min-h-[400px]">
@@ -1212,6 +1403,18 @@ export default function SourcesPage() {
         <Table>
           <THead>
             <Tr className="hover:bg-transparent">
+              {isAdmin && (
+                <Th className="w-10">
+                  <input
+                    type="checkbox"
+                    aria-label="Seleziona tutte le fonti"
+                    checked={allSelected}
+                    onChange={(event) => setSelectedIds(
+                      event.target.checked ? new Set(sources.data?.map((source) => source.id) ?? []) : new Set(),
+                    )}
+                  />
+                </Th>
+              )}
               <Th>Nome fonte</Th>
               <Th>Stato</Th>
               <Th className="text-right">Priorità</Th>
@@ -1223,15 +1426,30 @@ export default function SourcesPage() {
             </Tr>
           </THead>
           <TBody>
-            {sources.isLoading && <LoadingRow colSpan={8} />}
-            {sources.isError && <ErrorRow colSpan={8} error={sources.error} onRetry={() => sources.refetch()} />}
-            {sources.data && sources.data.length === 0 && <EmptyRow colSpan={8} message="Nessuna fonte configurata." />}
+            {sources.isLoading && <LoadingRow colSpan={isAdmin ? 9 : 8} />}
+            {sources.isError && <ErrorRow colSpan={isAdmin ? 9 : 8} error={sources.error} onRetry={() => sources.refetch()} />}
+            {sources.data && sources.data.length === 0 && <EmptyRow colSpan={isAdmin ? 9 : 8} message="Nessuna fonte configurata." />}
             {sources.data?.map((source) => {
               const isExpanded = expandedIds.has(source.id);
               const isBroken = source.consecutiveFailures >= CONSECUTIVE_FAILURES_ALERT_THRESHOLD;
               return (
               <Fragment key={source.id}>
               <Tr className={isBroken ? "bg-error-container/10" : undefined}>
+                {isAdmin && (
+                  <Td>
+                    <input
+                      type="checkbox"
+                      aria-label={`Seleziona ${source.name}`}
+                      checked={selectedIds.has(source.id)}
+                      onChange={(event) => setSelectedIds((current) => {
+                        const next = new Set(current);
+                        if (event.target.checked) next.add(source.id);
+                        else next.delete(source.id);
+                        return next;
+                      })}
+                    />
+                  </Td>
+                )}
                 <Td>
                   <div className="flex items-center gap-1.5">
                     <button
@@ -1391,7 +1609,7 @@ export default function SourcesPage() {
                   </div>
                 </Td>
               </Tr>
-              {isExpanded && <SourceRunsPanel sourceId={source.id} colSpan={8} />}
+              {isExpanded && <SourceRunsPanel sourceId={source.id} colSpan={isAdmin ? 9 : 8} />}
               </Fragment>
               );
             })}
@@ -1411,6 +1629,7 @@ export default function SourcesPage() {
         onClose={() => setDuplicateTarget(null)}
       />
       <SourceScheduleDialog source={scheduleTarget} onClose={() => setScheduleTarget(null)} />
+      <SourceImportDialog open={importOpen} onClose={() => setImportOpen(false)} />
     </div>
   );
 }

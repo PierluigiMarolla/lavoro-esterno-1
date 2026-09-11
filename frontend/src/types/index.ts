@@ -63,10 +63,22 @@ export interface Source {
   automaticScrapingState: AutomaticScrapingState;
 }
 
+export type ScrapeFieldExtractionMode = "value" | "keyValue" | "posterVideo";
+
 export interface ScrapeFieldConfig {
-  selector: string;
+  selector?: string | null;
   attribute: string;
   multiple: boolean;
+  extractionMode?: ScrapeFieldExtractionMode;
+  containerSelector?: string | null;
+  keySelector?: string | null;
+  keyAttribute?: string;
+  valueSelector?: string | null;
+  valueAttribute?: string;
+  posterSelector?: string | null;
+  posterAttribute?: string;
+  videoSelector?: string | null;
+  videoAttribute?: string;
 }
 
 export interface ScrapeConfig {
@@ -89,6 +101,49 @@ export interface ScrapeConfig {
   fields: Record<string, ScrapeFieldConfig>;
 }
 
+export interface SourceTransferItem {
+  name: string;
+  slug: string;
+  baseUrl: string;
+  priority: SourcePriority;
+  scrapeConfig: ScrapeConfig | null;
+  proxyPoolName: string | null;
+  watermarkRemoval: WatermarkRemovalConfig;
+}
+
+export interface SourceTransferDocument {
+  format: "lavoro-esterno-sources";
+  version: 1;
+  exportedAt: string;
+  sources: SourceTransferItem[];
+}
+
+export interface SourceImportPreviewEntry {
+  index: number;
+  slug: string | null;
+  name: string | null;
+  status: "new" | "conflict" | "invalid";
+  proxyPoolStatus: "none" | "resolved" | "missing";
+  proxyPoolName: string | null;
+  errors: string[];
+  warnings: string[];
+}
+
+export interface SourceImportPreviewResult {
+  valid: boolean;
+  format: string | null;
+  version: number | null;
+  entries: SourceImportPreviewEntry[];
+  globalErrors: string[];
+}
+
+export interface SourceImportResult {
+  created: number;
+  updated: number;
+  skipped: number;
+  warnings: string[];
+}
+
 export interface RobotsCheckResult {
   allowed: boolean;
   robotsTxtFound: boolean;
@@ -101,12 +156,21 @@ export interface TestConfigResult {
   extractedFields: Record<string, unknown> | null;
   warnings: string[];
   error: string | null;
+  errorCode: ScrapeFailureCode | null;
+  httpStatus: number | null;
+  recommendedActions: string[];
   pagesVisited: number;
   configuredMaxPages: number;
   paginationMode: "none" | "href" | "click";
   paginationStopReason: string;
   uniqueAdsFound: number;
 }
+
+export type ScrapeFailureCode =
+  | "anti_bot_blocked"
+  | "proxy_pool_exhausted"
+  | "robots_disallowed"
+  | "fetch_failed";
 
 export type ProxyScheme = "http" | "https" | "socks4" | "socks5";
 
@@ -247,7 +311,8 @@ export interface RecordOverview {
   contentRevision: number;
 }
 
-export type CustomFieldValue = string | string[] | null;
+export type CustomFieldObject = Record<string, string>;
+export type CustomFieldValue = string | string[] | CustomFieldObject | CustomFieldObject[] | null;
 export type CustomFields = Record<string, CustomFieldValue>;
 
 export interface CustomFieldSourceValue {
@@ -414,6 +479,7 @@ export interface ScrapeError {
   id: string;
   url: string;
   errorMessage: string;
+  errorCode: ScrapeFailureCode | null;
   createdAt: string;
 }
 

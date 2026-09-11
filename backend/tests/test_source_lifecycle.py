@@ -249,6 +249,39 @@ async def test_configuration_uses_draft_without_persisting_it(
     assert source.scrape_config == saved_config
 
 
+@pytest.mark.asyncio
+async def test_configuration_reports_actionable_anti_bot_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.scrapers.generic import AntiBotBlockedError
+
+    source = _source()
+
+    class FakeScraper:
+        def __init__(self, **_kwargs) -> None:
+            return None
+
+        async def discover(self) -> list[str]:
+            raise AntiBotBlockedError(403)
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr("app.scrapers.generic.GenericScraper", FakeScraper)
+
+    result = await execute_test_source_config(
+        source.id,
+        None,
+        db=_FakeSession(source),  # type: ignore[arg-type]
+        _user=SimpleNamespace(id=uuid.uuid4()),  # type: ignore[arg-type]
+    )
+
+    assert result.error_code == "anti_bot_blocked"
+    assert result.http_status == 403
+    assert any("User-Agent" in action for action in result.recommended_actions)
+    assert any("pool" in action for action in result.recommended_actions)
+
+
 @pytest.mark.parametrize("path", ["duplicate", "enable"])
 def test_source_write_routes_reject_viewers(path: str) -> None:
     source = _source(enabled=False, status="offline")

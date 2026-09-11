@@ -28,9 +28,16 @@ from app.schemas.sources import (
     SourceCreate,
     SourceDetailRead,
     SourceDuplicate,
+    SourceExportRequest,
+    SourceImportApplyRequest,
+    SourceImportPreviewRequest,
+    SourceImportPreviewResult,
+    SourceImportResult,
     SourceRead,
     SourceScheduleUpdate,
     SourcesSummaryRead,
+    SourceTransferDocument,
+    SourceTransferItem,
     SourceUpdate,
     TestConfigInput,
     TestConfigResult,
@@ -39,7 +46,9 @@ from app.security.deps import get_current_user, require_admin_with_2fa, require_
 from app.services.audit import log_action
 from app.services.proxy_credentials import decrypt_proxy_credentials
 from app.services.proxy_rotation import ProxyRuntimeConfig, proxy_host_is_allowed
+from app.services.scrape_ingest import decode_scrape_error_message
 from app.services.source_health import summarize_sources_by_status
+from app.services.source_transfer import preview_source_document
 
 # Numero massimo di run restituiti da GET /sources/{id}/runs: un drill-down
 # "storico recente", non un archivio completo paginato (coerente con lo
@@ -276,6 +285,210 @@ async def get_sources_summary(
     caricamento insieme a `GET /sources`)."""
     statuses = (await db.execute(select(Source.status))).scalars().all()
     return SourcesSummaryRead(**summarize_sources_by_status(statuses))
+
+
+@router.post("/export", response_model=SourceTransferDocument)
+async def export_sources(
+    payload: SourceExportRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_role("admin")),
+) -> SourceTransferDocument:
+    """Export portable source configuration without runtime state or proxy secrets."""
+    stmt = select(Source).order_by(Source.name)
+    if payload.scope == "selected":
+        stmt = stmt.where(Source.id.in_(payload.source_ids))
+    sources = (await db.execute(stmt)).scalars().all()
+    if payload.scope == "selected" and len(sources) != len(payload.source_ids):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Una o più fonti non esistono.")
+    if not sources:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Nessuna fonte da esportare.")
+
+    pool_ids = {source.proxy_pool_id for source in sources if source.proxy_pool_id}
+    pools = (
+        (await db.execute(select(ProxyPool).where(ProxyPool.id.in_(pool_ids)))).scalars().all()
+        if pool_ids
+        else []
+    )
+    pool_names = {pool.id: pool.name for pool in pools}
+    document = SourceTransferDocument(
+        format="lavoro-esterno-sources",
+        version=1,
+        exported_at=datetime.now(UTC),
+        sources=[
+            SourceTransferItem(
+                name=source.name,
+                slug=source.slug,
+                base_url=source.base_url,
+                priority=source.priority,
+                scrape_config=source.scrape_config,
+                proxy_pool_name=pool_names.get(source.proxy_pool_id),
+                watermark_removal={
+                    "enabled": source.watermark_removal_enabled,
+                    "authorization_reference": source.watermark_authorization_reference,
+                    "regions": source.watermark_regions or [],
+                },
+            )
+            for source in sources
+        ],
+    )
+    await log_action(
+        db,
+        user_id=user.id,
+        action="export_sources",
+        entity_type="source",
+        details={"count": len(sources), "slugs": [source.slug for source in sources]},
+    )
+    await db.commit()
+    return document
+
+
+@router.post("/import/preview", response_model=SourceImportPreviewResult)
+async def preview_sources_import(
+    payload: SourceImportPreviewRequest,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_role("admin")),
+) -> SourceImportPreviewResult:
+    """Validate an untrusted source document and report item-level problems."""
+    return await preview_source_document(db, payload.document)
+
+
+@router.post("/import", response_model=SourceImportResult)
+async def import_sources(
+    payload: SourceImportApplyRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_role("admin")),
+) -> SourceImportResult:
+    """Atomically create or update the validated sources in a transfer document."""
+    items = payload.document.sources
+    slugs = [item.slug for item in items]
+    existing_sources = (
+        (
+            await db.execute(
+                select(Source).where(Source.slug.in_(slugs)).with_for_update()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    existing_by_slug = {source.slug: source for source in existing_sources}
+    existing_slugs = set(existing_by_slug)
+    missing_actions = existing_slugs - payload.conflict_actions.keys()
+    extra_actions = payload.conflict_actions.keys() - existing_slugs
+    if missing_actions:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"Manca un'azione per gli slug esistenti: {', '.join(sorted(missing_actions))}.",
+        )
+    if extra_actions:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"Azioni specificate per slug non in conflitto: {', '.join(sorted(extra_actions))}.",
+        )
+
+    pool_names = {item.proxy_pool_name for item in items if item.proxy_pool_name}
+    pools = (
+        (await db.execute(select(ProxyPool).where(ProxyPool.name.in_(pool_names))))
+        .scalars()
+        .all()
+        if pool_names
+        else []
+    )
+    pools_by_name = {pool.name: pool for pool in pools}
+    created = updated = skipped = 0
+    warnings: list[str] = []
+    priority_jobs = []
+
+    for item in items:
+        source = existing_by_slug.get(item.slug)
+        if source is not None and payload.conflict_actions[item.slug] == "skip":
+            skipped += 1
+            continue
+
+        pool = pools_by_name.get(item.proxy_pool_name) if item.proxy_pool_name else None
+        if item.proxy_pool_name and pool is None:
+            warnings.append(
+                f"{item.slug}: pool proxy '{item.proxy_pool_name}' non trovato; "
+                "associazione rimossa."
+            )
+        scrape_config = item.scrape_config.model_dump() if item.scrape_config else None
+        watermark = item.watermark_removal
+        watermark_regions = [region.model_dump() for region in watermark.regions]
+
+        if source is None:
+            source = Source(
+                name=item.name,
+                slug=item.slug,
+                base_url=item.base_url,
+                priority=item.priority,
+                status="offline",
+                enabled=False,
+                automatic_scraping_enabled=False,
+                scrape_config=scrape_config,
+                proxy_pool_id=pool.id if pool else None,
+                watermark_removal_enabled=watermark.enabled,
+                watermark_authorization_reference=watermark.authorization_reference,
+                watermark_regions=watermark_regions,
+            )
+            db.add(source)
+            created += 1
+        else:
+            if source.priority != item.priority:
+                from app.models.operations import SourcePriorityRecalculationJob
+
+                priority_job = SourcePriorityRecalculationJob(
+                    source_id=source.id,
+                    requested_by_user_id=user.id,
+                    previous_priority=source.priority,
+                    requested_priority=item.priority,
+                )
+                db.add(priority_job)
+                priority_jobs.append(priority_job)
+            source.name = item.name
+            source.base_url = item.base_url
+            source.priority = item.priority
+            source.scrape_config = scrape_config
+            source.proxy_pool_id = pool.id if pool else None
+            source.watermark_removal_enabled = watermark.enabled
+            source.watermark_authorization_reference = watermark.authorization_reference
+            source.watermark_regions = watermark_regions
+            updated += 1
+
+    try:
+        await db.flush()
+        await log_action(
+            db,
+            user_id=user.id,
+            action="import_sources",
+            entity_type="source",
+            details={
+                "created": created,
+                "updated": updated,
+                "skipped": skipped,
+                "slugs": slugs,
+            },
+        )
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "L'import è entrato in conflitto con una modifica concorrente; "
+            "nessuna fonte è stata importata.",
+        ) from exc
+
+    if priority_jobs:
+        from app.workers.tasks_operations import recalculate_source_priority
+
+        for priority_job in priority_jobs:
+            if priority_job.id is not None:
+                recalculate_source_priority.delay(str(priority_job.id))
+
+    return SourceImportResult(
+        created=created,
+        updated=updated,
+        skipped=skipped,
+        warnings=warnings,
+    )
 
 
 @router.post("", response_model=SourceRead, status_code=status.HTTP_201_CREATED)
@@ -620,9 +833,14 @@ async def get_source_runs(
     )
     errors_by_run: dict[uuid.UUID, list[ScrapeErrorRead]] = {}
     for err in errors:
+        error_code, error_message = decode_scrape_error_message(err.error_message)
         errors_by_run.setdefault(err.scrape_run_id, []).append(
             ScrapeErrorRead(
-                id=err.id, url=err.url, error_message=err.error_message, created_at=err.created_at
+                id=err.id,
+                url=err.url,
+                error_message=error_message,
+                error_code=error_code,
+                created_at=err.created_at,
             )
         )
 
@@ -953,7 +1171,40 @@ async def test_source_config(
             detail="Questa fonte non ha ancora una configurazione di scraping (scrape_config).",
         )
 
-    from app.scrapers.generic import GenericScraper, RobotsDisallowedError
+    from app.scrapers.generic import (
+        AntiBotBlockedError,
+        GenericScraper,
+        PageFetchError,
+        ProxyPoolExhaustedError,
+        RobotsDisallowedError,
+    )
+
+    def config_value(snake_case_key: str, camel_case_key: str, default=None):
+        return scrape_config.get(snake_case_key, scrape_config.get(camel_case_key, default))
+
+    def anti_bot_actions(*, pool_exhausted: bool = False) -> list[str]:
+        actions: list[str] = []
+        if config_value("fetch_mode", "fetchMode") != "stealth":
+            actions.append("Usa la modalita Stealth per questa fonte.")
+        if not config_value("solve_cloudflare", "solveCloudflare", False):
+            actions.append("Abilita Gestisci Cloudflare nella configurazione della fonte.")
+        if config_value("user_agent", "userAgent"):
+            actions.append(
+                "Lascia vuoto lo User-Agent per usare quello coerente con il browser Scrapling."
+            )
+        if proxy_pool_id is None:
+            actions.append(
+                "Assegna un pool autorizzato con proxy adatto alla regione della fonte e riprova."
+            )
+        elif pool_exhausted:
+            actions.append(
+                "Verifica disponibilita e regione dei proxy del pool assegnato prima di riprovare."
+            )
+        actions.append(
+            "Se il blocco persiste, sospendi la fonte: il superamento della protezione "
+            "non e garantito."
+        )
+        return actions
 
     proxy_candidates = await _proxy_candidates_for_test(db, proxy_pool_id)
     scraper = GenericScraper(
@@ -993,8 +1244,37 @@ async def test_source_config(
             unique_ads_found=diagnostics.unique_ads_found,
         )
     except RobotsDisallowedError as exc:
-        return TestConfigResult(ad_urls_found=0, error=f"robots.txt vieta l'accesso: {exc}")
+        return TestConfigResult(
+            ad_urls_found=0,
+            error=f"robots.txt vieta l'accesso: {exc}",
+            error_code="robots_disallowed",
+        )
+    except AntiBotBlockedError as exc:
+        return TestConfigResult(
+            ad_urls_found=0,
+            error=str(exc),
+            error_code="anti_bot_blocked",
+            http_status=exc.http_status,
+            recommended_actions=anti_bot_actions(),
+        )
+    except ProxyPoolExhaustedError as exc:
+        return TestConfigResult(
+            ad_urls_found=0,
+            error=str(exc),
+            error_code="proxy_pool_exhausted",
+            recommended_actions=(
+                anti_bot_actions(pool_exhausted=True)
+                if exc.category == "anti_bot_blocked"
+                else ["Verifica disponibilita, credenziali e connettivita del pool assegnato."]
+            ),
+        )
+    except PageFetchError as exc:
+        return TestConfigResult(
+            ad_urls_found=0,
+            error=str(exc),
+            error_code="fetch_failed",
+        )
     except Exception as exc:  # noqa: BLE001 - risposta diagnostica per l'operatore, non un 500
-        return TestConfigResult(ad_urls_found=0, error=str(exc))
+        return TestConfigResult(ad_urls_found=0, error=str(exc), error_code="fetch_failed")
     finally:
         await scraper.aclose()

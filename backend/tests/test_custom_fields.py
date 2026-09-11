@@ -11,6 +11,7 @@ from app.api.v1.records import (
     _tags_from_custom_fields,
     _tags_from_groups,
 )
+from app.schemas.records import CustomFieldValueRead
 from app.scrapers.generic import GenericScraper
 from app.services.scrape_ingest import (
     _changed_fields,
@@ -60,6 +61,19 @@ def test_normalize_preserves_every_configured_non_core_field() -> None:
     }
     core = {"title", "phone", "images", "source_url"}
     assert not core & normalized["custom_fields"].keys()
+
+
+def test_record_schema_accepts_structured_custom_fields() -> None:
+    value = CustomFieldValueRead(
+        value=[{"poster": "/poster.jpg", "video": "/video.mp4"}],
+        source_id=uuid.uuid4(),
+        source_name="Source",
+        source_code="source",
+        advertisement_id=uuid.uuid4(),
+        is_canonical=True,
+    )
+
+    assert value.value == [{"poster": "/poster.jpg", "video": "/video.mp4"}]
 
 
 def test_custom_fields_change_content_hash_independently_of_key_order() -> None:
@@ -131,6 +145,25 @@ def test_record_groups_arbitrary_fields_from_every_source_with_provenance() -> N
     assert _tags_from_groups(groups) == ["one", "two"]
 
 
+def test_record_groups_keep_structured_values() -> None:
+    advertisement_id = uuid.uuid4()
+    rows = [
+        (
+            SimpleNamespace(
+                id=advertisement_id,
+                custom_fields={"details": {"eta": "26", "tipo_annuncio": "privato"}},
+            ),
+            uuid.uuid4(),
+            "Source",
+            "source",
+        )
+    ]
+
+    groups = _aggregate_custom_fields(rows, advertisement_id)
+
+    assert groups[0].values[0].value == {"eta": "26", "tipo_annuncio": "privato"}
+
+
 def test_record_groups_keep_case_distinct_and_drop_only_same_source_duplicates() -> None:
     source_id = uuid.uuid4()
     other_source_id = uuid.uuid4()
@@ -168,13 +201,28 @@ def test_record_groups_keep_case_distinct_and_drop_only_same_source_duplicates()
 
 def test_export_csv_serializes_custom_fields_as_deterministic_json() -> None:
     payload = _csv_bytes(
-        [{"id": "ad-1", "custom_fields": {"tags": ["one"], "city": "Roma"}}],
+        [
+            {
+                "id": "ad-1",
+                "custom_fields": {
+                    "tags": ["one"],
+                    "city": "Roma",
+                    "details": {"tipo_annuncio": "privato", "eta": "26"},
+                },
+            }
+        ],
         ["id", "custom_fields"],
     )
     row = next(csv.DictReader(io.StringIO(payload.decode("utf-8-sig"))))
 
-    assert row["custom_fields"] == '{"city":"Roma","tags":["one"]}'
-    assert json.loads(row["custom_fields"]) == {"city": "Roma", "tags": ["one"]}
+    assert row["custom_fields"] == (
+        '{"city":"Roma","details":{"eta":"26","tipo_annuncio":"privato"},'
+        '"tags":["one"]}'
+    )
+    assert json.loads(row["custom_fields"])["details"] == {
+        "eta": "26",
+        "tipo_annuncio": "privato",
+    }
 
 
 def test_media_set_hash_is_order_independent_and_deduplicated() -> None:

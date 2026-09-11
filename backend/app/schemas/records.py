@@ -10,7 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.common import CamelModel
 
-CustomFieldValue = str | list[str] | None
+CustomFieldObject = dict[str, str]
+CustomFieldValue = str | list[str] | CustomFieldObject | list[CustomFieldObject] | None
 
 
 class AdvertisementRead(BaseModel):

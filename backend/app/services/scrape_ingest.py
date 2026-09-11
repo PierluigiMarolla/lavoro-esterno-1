@@ -38,9 +38,11 @@ from app.models.media import Media
 from app.models.record import Record
 from app.models.sources import Source
 from app.scrapers.generic import (
+    AntiBotBlockedError,
     DiscoveryDiagnostics,
     GenericScraper,
     PageFetchError,
+    ProxyPoolExhaustedError,
     RobotsDisallowedError,
 )
 from app.services.canonical import (
@@ -62,6 +64,35 @@ from app.services.phone_crypto import (
 from app.services.proxy_rotation import ProxyRuntimeConfig, ProxyRuntimeEvent
 
 logger = logging.getLogger(__name__)
+
+_SCRAPE_ERROR_CODES = {
+    "anti_bot_blocked",
+    "proxy_pool_exhausted",
+    "robots_disallowed",
+    "fetch_failed",
+}
+
+
+def encode_scrape_error_message(code: str | None, message: str) -> str:
+    return f"[{code}] {message}" if code in _SCRAPE_ERROR_CODES else message
+
+
+def decode_scrape_error_message(message: str) -> tuple[str | None, str]:
+    for code in _SCRAPE_ERROR_CODES:
+        prefix = f"[{code}] "
+        if message.startswith(prefix):
+            return code, message[len(prefix) :]
+    return None, message
+
+
+def scrape_error_code(exc: Exception) -> str:
+    if isinstance(exc, RobotsDisallowedError):
+        return "robots_disallowed"
+    if isinstance(exc, AntiBotBlockedError):
+        return "anti_bot_blocked"
+    if isinstance(exc, ProxyPoolExhaustedError):
+        return "proxy_pool_exhausted"
+    return "fetch_failed"
 
 
 def advertisement_content_hash(normalized: dict) -> str:
@@ -102,6 +133,7 @@ class CollectedAd:
 class ScrapeErrorDetail:
     url: str
     message: str
+    code: str | None = None
 
 
 @dataclass
@@ -143,7 +175,11 @@ async def collect_ads(
             )
             return CollectionResult(
                 ads=[],
-                errors=[ScrapeErrorDetail(url=exc.url, message=str(exc))],
+                errors=[
+                    ScrapeErrorDetail(
+                        url=exc.url, message=str(exc), code="robots_disallowed"
+                    )
+                ],
                 discovery_diagnostics=scraper.discovery_diagnostics,
                 proxy_events=scraper.proxy_events,
             )
@@ -151,7 +187,13 @@ async def collect_ads(
             logger.warning("Errore durante discover() per '%s': %s", source.slug, exc)
             return CollectionResult(
                 ads=[],
-                errors=[ScrapeErrorDetail(url=source.base_url, message=str(exc))],
+                errors=[
+                    ScrapeErrorDetail(
+                        url=source.base_url,
+                        message=str(exc),
+                        code=scrape_error_code(exc),
+                    )
+                ],
                 discovery_diagnostics=scraper.discovery_diagnostics,
                 proxy_events=scraper.proxy_events,
             )
@@ -167,7 +209,11 @@ async def collect_ads(
                 raw = await scraper.scrape_ad(url)
             except (RobotsDisallowedError, httpx.HTTPError, PageFetchError) as exc:
                 logger.info("Annuncio saltato (%s): %s", url, exc)
-                errors.append(ScrapeErrorDetail(url=url, message=str(exc)))
+                errors.append(
+                    ScrapeErrorDetail(
+                        url=url, message=str(exc), code=scrape_error_code(exc)
+                    )
+                )
                 continue
 
             normalized = scraper.normalize(raw)

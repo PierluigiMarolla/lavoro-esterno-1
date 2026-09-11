@@ -86,6 +86,9 @@ blocco tutte le sessioni dell'utente.
 
 | Metodo | Path | Scopo |
 |---|---|---|
+| POST | `/api/v1/sources/export` | Esporta tutte le fonti o una selezione in un documento JSON portabile e versionato. Solo Admin. |
+| POST | `/api/v1/sources/import/preview` | Valida un documento di fonti senza modificarle e segnala nuove fonti, conflitti, errori e pool proxy mancanti. Solo Admin. |
+| POST | `/api/v1/sources/import` | Applica atomicamente un documento validato, richiedendo `update` o `skip` per ogni slug esistente. Solo Admin. |
 | GET | `/api/v1/sources` | Elenco e stato delle fonti, inclusi `enabled`, metriche recenti e schedulazione (`automaticScrapingEnabled`, intervallo, revisione, ultima/prossima esecuzione e stato `waiting/pending/running/paused/disabled`). |
 | GET | `/api/v1/sources/summary` | Conteggio fonti per stato (`total`/`active`/`degraded`/`offline`). |
 | GET | `/api/v1/sources/{source_id}` | Dettaglio di una fonte, incluso `scrapeConfig` completo (assente da `GET /sources`, che espone solo il booleano `hasScrapeConfig`) — usato per precompilare il form "Edit configuration". |
@@ -94,13 +97,29 @@ blocco tutte le sessioni dell'utente.
 | PATCH | `/api/v1/sources/{source_id}` | Modifica `name`/`baseUrl`/`priority`/`scrapeConfig`/`watermarkRemoval` (solo Admin). Non permette di cambiare `slug`. |
 | DELETE | `/api/v1/sources/{source_id}` | Rimuove una fonte (solo Admin). 409 se esistono `advertisement` collegati (storico preservato). |
 | POST | `/api/v1/sources/{source_id}/check-robots` | Verifica live il `robots.txt` pubblico della fonte usando lo stesso User-Agent configurato per lo scan — nessun altro contenuto scaricato. Nessuna restrizione di ruolo oltre l'autenticazione. |
-| POST | `/api/v1/sources/{source_id}/test-config` | Prova una bozza opzionale `{"scrapeConfig": ...}` senza salvarla; senza body usa la configurazione persistita. Restituisce campione, pagine visitate, modalità e motivo di arresto. Richiede Admin/Operator. |
-| GET | `/api/v1/sources/{source_id}/runs` | Storico dei run con origine `manual`/`scheduled`, accodamento, istante pianificato, errori e diagnostica di paginazione/proxy. |
+| POST | `/api/v1/sources/{source_id}/test-config` | Prova una bozza opzionale `{"scrapeConfig": ...}` senza salvarla; senza body usa la configurazione persistita. Restituisce campione, paginazione e, in caso di errore, `errorCode`, `httpStatus` e `recommendedActions`. Richiede Admin/Operator. |
+| GET | `/api/v1/sources/{source_id}/runs` | Storico dei run con origine `manual`/`scheduled`, accodamento, istante pianificato, errori con `errorCode` opzionale e diagnostica di paginazione/proxy. |
 | PATCH | `/api/v1/sources/{source_id}/schedule` | Configura il fixed-delay con `enabled`, `intervalValue`, `intervalUnit` e `revision`. Solo Admin con 2FA; intervallo 15 minuti–30 giorni. |
 | POST | `/api/v1/sources/{source_id}/pause` | Mette in pausa una fonte (`enabled=false`, status di salute invariato). Riservato ad Admin/Operator. |
 | POST | `/api/v1/sources/{source_id}/disable` | Disabilita definitivamente una fonte (`enabled=false`, `status="offline"`). Riservato ad Admin/Operator. |
 | POST | `/api/v1/sources/{source_id}/enable` | Riabilita una fonte disabilitata o in pausa (`enabled=true`, `status="healthy"`). Idempotente; riservato ad Admin/Operator. |
 | POST | `/api/v1/sources/{source_id}/scan` | Crea un run persistente `pending` e risponde `202`. Restituisce `409` se la fonte ha già un run pending/running; anche il completamento manuale riavvia il timer automatico. |
+
+### Trasferimento configurazioni delle fonti
+
+Il formato `lavoro-esterno-sources` versione `1` contiene `name`, `slug`,
+`baseUrl`, `priority`, `scrapeConfig`, `proxyPoolName` e la configurazione
+`watermarkRemoval`. Non contiene ID, credenziali proxy, run, metriche,
+timestamp, stato o pianificazione. L'export usa `scope: "all"` oppure
+`scope: "selected"` con `sourceIds`.
+
+L'import deve essere preceduto dall'anteprima. Lo slug identifica la fonte:
+quelle nuove nascono offline, disabilitate e senza schedule; per quelle
+esistenti il client sceglie `update` o `skip`. Un aggiornamento conserva stato
+e schedule locali. Il pool viene risolto per nome; se manca, l'anteprima
+mostra un avviso e l'import rimuove l'associazione. L'intera applicazione usa
+una singola transazione, quindi un conflitto concorrente annulla tutte le
+modifiche.
 
 ### Motore di scraping generico (`scrapeConfig`)
 
@@ -143,8 +162,16 @@ con `fetchMode: "http"` di default; `"dynamic"` abilita il browser headless
 per contenuti generati via JavaScript, `"stealth"` abilita le opzioni
 anti-bot di Scrapling configurate sulla fonte. `renderJs` resta accettato
 per compatibilità e, se `fetchMode` manca, equivale a `"dynamic"`. Il
-motore rispetta sempre `robots.txt`. `userAgent` è opzionale e, se assente,
-usa il default `app/scrapers/base.py:Scraper.user_agent`.
+motore rispetta sempre `robots.txt`. `userAgent` è opzionale: se assente,
+HTTP, robots e media usano il default del progetto, mentre Dynamic/Stealth
+lasciano a Scrapling la generazione di uno User-Agent coerente con Chromium.
+Le modalità browser riusano la stessa sessione, inclusi cookie e storage, per
+tutto il run; la sessione viene ricreata quando cambia proxy.
+
+I codici diagnostici sono `anti_bot_blocked`, `proxy_pool_exhausted`,
+`robots_disallowed` e `fetch_failed`. `solveCloudflare` esegue tentativi
+limitati e non garantisce l'accesso: una challenge ancora attiva interrompe
+la richiesta o causa la rotazione sul successivo proxy del pool.
 
 `nextPageSelector` deve identificare esattamente un solo controllo Next. Se
 l'elemento ha `href`, il motore segue il link; se non lo ha, i mode `dynamic`

@@ -6,6 +6,7 @@ import ProgressBar from "@/components/ui/ProgressBar";
 import { EmptyRow, ErrorRow, LoadingRow, Table, TBody, Td, Th, THead, Tr } from "@/components/ui/Table";
 import CustomFields from "@/components/records/CustomFields";
 import { formatDateTime } from "@/lib/format";
+import type { CustomFields as CustomFieldsMap } from "@/types";
 
 // Replicates desing/record_detail_occurrences/code.html: every scraped
 // occurrence that was merged into this record, with the canonical one
@@ -20,7 +21,7 @@ function OccurrenceDetails({
 }: {
   recordId: string;
   occurrenceId: string;
-  customFields: Record<string, string | string[] | null>;
+  customFields: CustomFieldsMap;
 }) {
   const versions = useOccurrenceVersions(recordId, occurrenceId);
   return (

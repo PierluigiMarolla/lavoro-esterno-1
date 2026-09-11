@@ -286,6 +286,9 @@ scrivere su DB -> scan reale).
       usa il default `Scraper.user_agent`
       (`backend/app/scrapers/base.py`). Lo stesso valore viene usato da
       Scrapling, download media e verifica `robots.txt`.
+- [x] Rendere persistente la sessione browser Scrapling per ogni run, con
+      riuso di cookie/storage, User-Agent browser automatico quando non
+      configurato e diagnostica `anti_bot_blocked` dopo i tentativi limitati.
 - [x] Dashboard/alert per **fonti che smettono di funzionare**:
       `consecutiveFailures` in `GET /sources` (run consecutivi falliti,
       dati già in `scrape_runs`), badge "Connector broken?" in UI quando
@@ -310,6 +313,11 @@ scrivere su DB -> scan reale).
       esistono annunci collegati). Unico modo per creare una fonte oggi:
       i 9 connettori stub e lo script di seed sono stati rimossi in un
       secondo momento (vedi nota sotto).
+- [x] **Import/export configurazioni fonti**: documento JSON versionato per
+      tutte le fonti o una selezione, senza ID, stato operativo o credenziali
+      proxy. L'import Admin mostra un'anteprima, risolve i conflitti per slug
+      con aggiornamento/salto ed è applicato in una sola transazione. Le fonti
+      nuove nascono offline e disabilitate; i pool sono associati per nome.
 - [x] **Verifica `robots.txt`**: enforcement automatico nel motore (sopra)
       + strumento di verifica manuale in UI (`POST /sources/{id}/
       check-robots`, scarica solo il file pubblico `robots.txt`, nessun

@@ -69,6 +69,11 @@ normalmente, mentre l'opzione Sources “Chrome reale” usa Google Chrome trami
 Patchright. Se un'immagine precedente segnala che `/opt/google/chrome/chrome`
 non esiste, ricostruire `api` e `worker-scraper` con `--build`.
 
+Gli Admin possono trasferire le configurazioni tra installazioni dalla pagina
+Fonti: l'export produce JSON versionato e l'import mostra sempre un'anteprima
+prima dell'applicazione atomica. Le nuove fonti importate restano disabilitate
+finché non vengono verificate e attivate manualmente.
+
 Applicazione raggiungibile su `http://localhost/` (reverse proxy nginx),
 documentazione API interattiva su `http://localhost/docs`. Sequenza
 verificata su un ambiente Docker reale in questa sessione di sviluppo.

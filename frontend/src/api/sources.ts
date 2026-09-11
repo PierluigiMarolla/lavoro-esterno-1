@@ -1,5 +1,17 @@
 import { apiRequest } from "./client";
-import type { RobotsCheckResult, ScrapeConfig, ScrapeIntervalUnit, ScrapeRun, Source, SourcePriority, TestConfigResult, WatermarkRemovalConfig } from "@/types";
+import type {
+  RobotsCheckResult,
+  ScrapeConfig,
+  ScrapeIntervalUnit,
+  ScrapeRun,
+  Source,
+  SourceImportPreviewResult,
+  SourceImportResult,
+  SourcePriority,
+  SourceTransferDocument,
+  TestConfigResult,
+  WatermarkRemovalConfig,
+} from "@/types";
 
 export interface SourcesSummary {
   total: number;
@@ -44,6 +56,16 @@ export interface SourceScheduleInput {
   revision: number;
 }
 
+export interface SourceExportInput {
+  scope: "all" | "selected";
+  sourceIds: string[];
+}
+
+export interface SourceImportInput {
+  document: SourceTransferDocument;
+  conflictActions: Record<string, "update" | "skip">;
+}
+
 export interface ScanTriggerResponse {
   taskId: string;
   sourceId: string;
@@ -56,6 +78,21 @@ export function fetchSources(): Promise<Source[]> {
 
 export function fetchSourcesSummary(): Promise<SourcesSummary> {
   return apiRequest<SourcesSummary>("/sources/summary");
+}
+
+export function exportSources(input: SourceExportInput): Promise<SourceTransferDocument> {
+  return apiRequest<SourceTransferDocument>("/sources/export", { method: "POST", body: input });
+}
+
+export function previewSourcesImport(document: unknown): Promise<SourceImportPreviewResult> {
+  return apiRequest<SourceImportPreviewResult>("/sources/import/preview", {
+    method: "POST",
+    body: { document },
+  });
+}
+
+export function importSources(input: SourceImportInput): Promise<SourceImportResult> {
+  return apiRequest<SourceImportResult>("/sources/import", { method: "POST", body: input });
 }
 
 export function runSourceScan(id: string): Promise<ScanTriggerResponse> {

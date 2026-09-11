@@ -83,7 +83,9 @@ def _has_custom_field_value(value: object) -> bool:
     if isinstance(value, str):
         return bool(value.strip())
     if isinstance(value, list):
-        return any(isinstance(item, str) and item.strip() for item in value)
+        return any(_has_custom_field_value(item) for item in value)
+    if isinstance(value, dict):
+        return any(_has_custom_field_value(item) for item in value.values())
     return False
 
 

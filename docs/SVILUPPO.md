@@ -168,6 +168,13 @@ aggiungere una fonte.
   ogni minuto, recupera pending non acquisiti dopo due minuti e chiude come
   falliti i run oltre il limite operativo di sei ore.
 
+Gli Admin possono trasferire le configurazioni dalla pagina Fonti. L'export
+produce un JSON versionato per tutte le fonti o per quelle selezionate;
+l'import mostra un'anteprima e richiede `Aggiorna` o `Salta` per ogni slug
+esistente. Le nuove fonti nascono offline e disabilitate. I pool proxy sono
+risolti solo per nome, senza esportare endpoint o credenziali; un pool assente
+genera un avviso e lascia la fonte senza associazione. L'import è atomico.
+
 ## 6. Configurare il motore di scraping generico
 
 `app/scrapers/generic.py:GenericScraper` esegue scraping REALE tramite
@@ -208,15 +215,20 @@ progetto non lo fa per te).
    deve individuare un solo controllo Next: per esempio
    `a.page-link[aria-label="Next"]`, non il generico `a.page-link`. Il risultato
    mostra pagine visitate, URL annunci unici, modalità `href`/`click` e motivo
-   di arresto.
+   di arresto. I blocchi anti-bot sono distinti dagli errori dei selettori e
+   includono azioni operative consigliate.
 4. Solo quando l'estrazione di prova è corretta, lanciare uno scan reale
    (`POST /sources/{id}/scan` o il bottone "Avvia scansione" in UI, visibile solo
    quando `hasScrapeConfig` è vero).
 
 Rate limiting (minimo 1s tra le richieste) e rispetto di `robots.txt` sono
 applicati SEMPRE dal motore, non sono opzioni disattivabili dalla
-configurazione. Se `userAgent` non viene configurato, il motore usa il
-default `LavoroEsternoBot/...`.
+configurazione. Se `userAgent` non viene configurato, HTTP, robots e media
+usano il default del progetto; i mode Dynamic/Stealth lasciano invece che
+Scrapling generi uno User-Agent coerente con Chromium. Una sessione browser
+persiste tra listing e annunci, conservando cookie e storage; al cambio proxy
+viene chiusa e ricreata. `solveCloudflare` resta best-effort: dopo i tentativi
+limitati il run si ferma con `anti_bot_blocked` oppure ruota il pool disponibile.
 
 ## 7. Pipeline AI e media
 

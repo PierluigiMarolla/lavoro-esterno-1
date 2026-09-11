@@ -1,5 +1,6 @@
 /** Raggruppa i campi dinamici di più fonti mantenendo visibile la provenienza. */
 import type { CustomFieldGroup, CustomFieldValue } from "@/types";
+import CustomFieldValueDisplay from "./CustomFieldValueDisplay";
 
 interface AggregatedCustomFieldsProps {
   groups: CustomFieldGroup[];
@@ -7,18 +8,7 @@ interface AggregatedCustomFieldsProps {
 }
 
 function FieldValue({ value }: { value: CustomFieldValue }) {
-  if (Array.isArray(value)) {
-    return (
-      <ul className="space-y-1">
-        {value.map((item, index) => (
-          <li key={`${item}-${index}`} className="whitespace-pre-line break-words">
-            {item}
-          </li>
-        ))}
-      </ul>
-    );
-  }
-  return <span className="whitespace-pre-line break-words">{value}</span>;
+  return <CustomFieldValueDisplay value={value} />;
 }
 
 export default function AggregatedCustomFields({
