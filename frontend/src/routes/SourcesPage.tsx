@@ -35,6 +35,7 @@ import type {
   ScrapeFetchMode,
   ScrapeFieldConfig,
   ScrapeFieldExtractionMode,
+  ScrapeSelectorType,
   Source,
   SourcePriority,
   SourceStatus,
@@ -112,7 +113,9 @@ function SourceRunsPanel({ sourceId, colSpan }: { sourceId: string; colSpan: num
   return (
     <tr className="bg-surface-container-low">
       <td colSpan={colSpan} className="px-5 py-4">
-        {runs.isLoading && <p className="text-body-md text-on-surface-variant">Caricamento cronologia esecuzioni…</p>}
+        {runs.isLoading && (
+          <p className="text-body-md text-on-surface-variant">Caricamento cronologia esecuzioni…</p>
+        )}
         {runs.isError && <ErrorState error={runs.error} onRetry={() => runs.refetch()} />}
         {runs.data && runs.data.length === 0 && (
           <p className="text-body-md text-on-surface-variant">Nessuna scansione ancora registrata.</p>
@@ -124,7 +127,9 @@ function SourceRunsPanel({ sourceId, colSpan }: { sourceId: string; colSpan: num
                 <div className="flex flex-wrap items-center gap-3 justify-between">
                   <div className="flex items-center gap-3">
                     <Badge tone={RUN_STATUS_TONE[run.status]}>{RUN_STATUS_LABEL[run.status]}</Badge>
-                    <Badge tone="neutral">{run.triggerType === "scheduled" ? "Pianificata" : "Manuale"}</Badge>
+                    <Badge tone="neutral">
+                      {run.triggerType === "scheduled" ? "Pianificata" : "Manuale"}
+                    </Badge>
                     <span className="text-body-md text-on-surface-variant">
                       {formatDateTime(run.startedAt ?? run.queuedAt)} → {formatDateTime(run.finishedAt)}
                     </span>
@@ -138,7 +143,9 @@ function SourceRunsPanel({ sourceId, colSpan }: { sourceId: string; colSpan: num
                     <span>Pagination: {run.paginationMode}</span>
                     <span>Proxy attempts: {run.proxyAttemptsCount}</span>
                     <span>Rotations: {run.proxyRotationsCount}</span>
-                    <span className={run.errorsCount > 0 ? "text-error" : undefined}>Errori: {run.errorsCount}</span>
+                    <span className={run.errorsCount > 0 ? "text-error" : undefined}>
+                      Errori: {run.errorsCount}
+                    </span>
                   </div>
                 </div>
                 {run.paginationStopReason && (
@@ -196,21 +203,33 @@ function formatRelativeTime(iso: string | null): string {
 interface FieldRow {
   name: string;
   selector: string;
+  selectorType: ScrapeSelectorType;
   attribute: string;
   multiple: boolean;
   extractionMode: ScrapeFieldExtractionMode;
   containerSelector: string;
+  containerSelectorType: ScrapeSelectorType;
   keySelector: string;
+  keySelectorType: ScrapeSelectorType;
   keyAttribute: string;
   valueSelector: string;
+  valueSelectorType: ScrapeSelectorType;
   valueAttribute: string;
   posterSelector: string;
+  posterSelectorType: ScrapeSelectorType;
   posterAttribute: string;
   videoSelector: string;
+  videoSelectorType: ScrapeSelectorType;
   videoAttribute: string;
-  itemFields: Array<{ name: string; selector: string; attribute: "text" | "href" | "src" }>;
+  itemFields: Array<{
+    name: string;
+    selector: string;
+    selectorType: ScrapeSelectorType;
+    attribute: "text" | "href" | "src";
+  }>;
   paginationEnabled: boolean;
   paginationNextSelector: string;
+  paginationNextSelectorType: ScrapeSelectorType;
   paginationMaxPages: number;
   paginationMaxItems: number;
 }
@@ -218,21 +237,28 @@ interface FieldRow {
 const emptyFieldRow = (name = ""): FieldRow => ({
   name,
   selector: "",
+  selectorType: "css",
   attribute: "text",
   multiple: false,
   extractionMode: "value",
   containerSelector: "",
+  containerSelectorType: "css",
   keySelector: "",
+  keySelectorType: "css",
   keyAttribute: "text",
   valueSelector: "",
+  valueSelectorType: "css",
   valueAttribute: "text",
   posterSelector: "",
+  posterSelectorType: "css",
   posterAttribute: "src",
   videoSelector: "",
+  videoSelectorType: "css",
   videoAttribute: "src",
   itemFields: [],
   paginationEnabled: false,
   paginationNextSelector: "",
+  paginationNextSelectorType: "css",
   paginationMaxPages: 10,
   paginationMaxItems: 1000,
 });
@@ -242,18 +268,26 @@ function fieldsToRows(fields: Record<string, ScrapeFieldConfig>): FieldRow[] {
     ...emptyFieldRow(name),
     ...field,
     selector: field.selector ?? "",
+    selectorType: field.selectorType ?? "css",
     containerSelector: field.containerSelector ?? "",
+    containerSelectorType: field.containerSelectorType ?? "css",
     keySelector: field.keySelector ?? "",
+    keySelectorType: field.keySelectorType ?? "css",
     valueSelector: field.valueSelector ?? "",
+    valueSelectorType: field.valueSelectorType ?? "css",
     posterSelector: field.posterSelector ?? "",
+    posterSelectorType: field.posterSelectorType ?? "css",
     videoSelector: field.videoSelector ?? "",
+    videoSelectorType: field.videoSelectorType ?? "css",
     itemFields: Object.entries(field.itemFields ?? {}).map(([fieldName, config]) => ({
       name: fieldName,
       selector: config.selector,
+      selectorType: config.selectorType ?? "css",
       attribute: config.attribute,
     })),
     paginationEnabled: field.pagination != null,
     paginationNextSelector: field.pagination?.nextSelector ?? "",
+    paginationNextSelectorType: field.pagination?.nextSelectorType ?? "css",
     paginationMaxPages: field.pagination?.maxPages ?? 10,
     paginationMaxItems: field.pagination?.maxItems ?? 1000,
     extractionMode: field.extractionMode ?? "value",
@@ -268,6 +302,7 @@ function rowsToFields(rows: FieldRow[]): Record<string, ScrapeFieldConfig> {
     const pagination = row.paginationEnabled
       ? {
           nextSelector: row.paginationNextSelector.trim(),
+          nextSelectorType: row.paginationNextSelectorType,
           maxPages: row.paginationMaxPages,
           maxItems: row.paginationMaxItems,
         }
@@ -275,6 +310,7 @@ function rowsToFields(rows: FieldRow[]): Record<string, ScrapeFieldConfig> {
     if (row.extractionMode === "value" && row.selector.trim()) {
       fields[name] = {
         selector: row.selector.trim(),
+        selectorType: row.selectorType,
         attribute: row.attribute,
         multiple: row.multiple,
         extractionMode: "value",
@@ -286,9 +322,12 @@ function rowsToFields(rows: FieldRow[]): Record<string, ScrapeFieldConfig> {
         multiple: true,
         extractionMode: "keyValue",
         containerSelector: row.containerSelector.trim(),
+        containerSelectorType: row.containerSelectorType,
         keySelector: row.keySelector.trim() || null,
+        keySelectorType: row.keySelectorType,
         keyAttribute: row.keyAttribute,
         valueSelector: row.valueSelector.trim() || null,
+        valueSelectorType: row.valueSelectorType,
         valueAttribute: row.valueAttribute,
         pagination,
       };
@@ -298,9 +337,12 @@ function rowsToFields(rows: FieldRow[]): Record<string, ScrapeFieldConfig> {
         multiple: true,
         extractionMode: "posterVideo",
         containerSelector: row.containerSelector.trim(),
+        containerSelectorType: row.containerSelectorType,
         posterSelector: row.posterSelector.trim() || null,
+        posterSelectorType: row.posterSelectorType,
         posterAttribute: row.posterAttribute,
         videoSelector: row.videoSelector.trim() || null,
+        videoSelectorType: row.videoSelectorType,
         videoAttribute: row.videoAttribute,
         pagination,
       };
@@ -310,12 +352,13 @@ function rowsToFields(rows: FieldRow[]): Record<string, ScrapeFieldConfig> {
         multiple: true,
         extractionMode: "items",
         containerSelector: row.containerSelector.trim(),
+        containerSelectorType: row.containerSelectorType,
         itemFields: Object.fromEntries(
           row.itemFields
             .filter((item) => item.name.trim() && item.selector.trim())
             .map((item) => [
               item.name.trim(),
-              { selector: item.selector.trim(), attribute: item.attribute },
+              { selector: item.selector.trim(), selectorType: item.selectorType, attribute: item.attribute },
             ]),
         ),
         pagination,
@@ -331,9 +374,34 @@ function isScalarStandardField(name: string): boolean {
   return ["phone", "title", "description", "source_url"].includes(name.trim());
 }
 
+function SelectorTypeSelect({
+  value,
+  onChange,
+  ariaLabel,
+  disabled = false,
+}: {
+  value: ScrapeSelectorType;
+  onChange: (value: ScrapeSelectorType) => void;
+  ariaLabel: string;
+  disabled?: boolean;
+}) {
+  return (
+    <Select
+      value={value}
+      disabled={disabled}
+      aria-label={ariaLabel}
+      className="shrink-0"
+      onChange={(event) => onChange(event.target.value as ScrapeSelectorType)}
+    >
+      <option value="css">CSS</option>
+      <option value="xpath">XPath</option>
+    </Select>
+  );
+}
+
 // Add/Edit dialog: name/base_url/priority plus the full generic scraping
 // engine configuration (start URLs, ad link/pagination selectors, per-field
-// CSS selectors). The operator supplies every selector themselves — this
+// CSS/XPath selectors). The operator supplies every selector themselves — this
 // component has no knowledge of any specific target site (see
 // PROGETTO.md § 4 for why).
 function SourceFormDialog({
@@ -358,7 +426,9 @@ function SourceFormDialog({
   const [priority, setPriority] = useState<SourcePriority>("medium");
   const [startUrlsText, setStartUrlsText] = useState("");
   const [adLinkSelector, setAdLinkSelector] = useState("");
+  const [adLinkSelectorType, setAdLinkSelectorType] = useState<ScrapeSelectorType>("css");
   const [nextPageSelector, setNextPageSelector] = useState("");
+  const [nextPageSelectorType, setNextPageSelectorType] = useState<ScrapeSelectorType>("css");
   const [maxPages, setMaxPages] = useState(3);
   const [maxAdsPerRun, setMaxAdsPerRun] = useState(50);
   const [rateLimitSeconds, setRateLimitSeconds] = useState(2);
@@ -371,6 +441,7 @@ function SourceFormDialog({
   const [blockAds, setBlockAds] = useState(false);
   const [proxyPoolId, setProxyPoolId] = useState("");
   const [waitSelector, setWaitSelector] = useState("");
+  const [waitSelectorType, setWaitSelectorType] = useState<ScrapeSelectorType>("css");
   const [waitMs, setWaitMs] = useState<number | "">("");
   const [fieldRows, setFieldRows] = useState<FieldRow[]>(EMPTY_FIELD_ROWS);
   const [watermarkEnabled, setWatermarkEnabled] = useState(false);
@@ -390,7 +461,9 @@ function SourceFormDialog({
       setPriority("medium");
       setStartUrlsText("");
       setAdLinkSelector("");
+      setAdLinkSelectorType("css");
       setNextPageSelector("");
+      setNextPageSelectorType("css");
       setMaxPages(3);
       setMaxAdsPerRun(50);
       setRateLimitSeconds(2);
@@ -403,6 +476,7 @@ function SourceFormDialog({
       setBlockAds(false);
       setProxyPoolId("");
       setWaitSelector("");
+      setWaitSelectorType("css");
       setWaitMs("");
       setFieldRows(EMPTY_FIELD_ROWS);
       setWatermarkEnabled(false);
@@ -427,7 +501,9 @@ function SourceFormDialog({
     if (cfg) {
       setStartUrlsText(cfg.startUrls.join("\n"));
       setAdLinkSelector(cfg.adLinkSelector);
+      setAdLinkSelectorType(cfg.adLinkSelectorType ?? "css");
       setNextPageSelector(cfg.nextPageSelector ?? "");
+      setNextPageSelectorType(cfg.nextPageSelectorType ?? "css");
       setMaxPages(cfg.maxPages);
       setMaxAdsPerRun(cfg.maxAdsPerRun);
       setRateLimitSeconds(cfg.rateLimitSeconds);
@@ -439,12 +515,15 @@ function SourceFormDialog({
       setRealChrome(cfg.realChrome ?? false);
       setBlockAds(cfg.blockAds ?? false);
       setWaitSelector(cfg.waitSelector ?? "");
+      setWaitSelectorType(cfg.waitSelectorType ?? "css");
       setWaitMs(cfg.waitMs ?? "");
       setFieldRows(fieldsToRows(cfg.fields));
     } else {
       setStartUrlsText("");
       setAdLinkSelector("");
+      setAdLinkSelectorType("css");
       setNextPageSelector("");
+      setNextPageSelectorType("css");
       setMaxPages(3);
       setMaxAdsPerRun(50);
       setRateLimitSeconds(2);
@@ -457,6 +536,7 @@ function SourceFormDialog({
       setBlockAds(false);
       setProxyPoolId(detail.data.proxyPoolId ?? "");
       setWaitSelector("");
+      setWaitSelectorType("css");
       setWaitMs("");
       setFieldRows(EMPTY_FIELD_ROWS);
     }
@@ -470,13 +550,23 @@ function SourceFormDialog({
     setFieldRows((rows) =>
       rows.map((row, index) =>
         index === fieldIndex
-          ? { ...row, itemFields: [...row.itemFields, { name: "", selector: "", attribute: "text" }] }
+          ? {
+              ...row,
+              itemFields: [
+                ...row.itemFields,
+                { name: "", selector: "", selectorType: "css", attribute: "text" },
+              ],
+            }
           : row,
       ),
     );
   }
 
-  function updateItemField(fieldIndex: number, itemIndex: number, patch: Partial<FieldRow["itemFields"][number]>) {
+  function updateItemField(
+    fieldIndex: number,
+    itemIndex: number,
+    patch: Partial<FieldRow["itemFields"][number]>,
+  ) {
     setFieldRows((rows) =>
       rows.map((row, index) =>
         index === fieldIndex
@@ -523,7 +613,9 @@ function SourceFormDialog({
     return {
       startUrls,
       adLinkSelector: adLinkSelector.trim(),
+      adLinkSelectorType,
       nextPageSelector: nextPageSelector.trim() || null,
+      nextPageSelectorType,
       maxPages,
       maxAdsPerRun,
       rateLimitSeconds,
@@ -536,6 +628,7 @@ function SourceFormDialog({
       realChrome,
       blockAds,
       waitSelector: waitSelector.trim() || null,
+      waitSelectorType,
       waitMs: waitMs === "" ? null : Number(waitMs),
       fields: rowsToFields(fieldRows),
     };
@@ -555,10 +648,25 @@ function SourceFormDialog({
       if (isEdit && editingSource) {
         await updateSource.mutateAsync({
           id: editingSource.id,
-          input: { name, priority, scrapeConfig, watermarkRemoval, proxyPoolId: proxyPoolId || null, ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}) },
+          input: {
+            name,
+            priority,
+            scrapeConfig,
+            watermarkRemoval,
+            proxyPoolId: proxyPoolId || null,
+            ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}),
+          },
         });
       } else {
-        await createSource.mutateAsync({ name, slug, baseUrl, priority, scrapeConfig, watermarkRemoval, proxyPoolId: proxyPoolId || null });
+        await createSource.mutateAsync({
+          name,
+          slug,
+          baseUrl,
+          priority,
+          scrapeConfig,
+          watermarkRemoval,
+          proxyPoolId: proxyPoolId || null,
+        });
       }
       onClose();
     } catch (err) {
@@ -590,7 +698,11 @@ function SourceFormDialog({
       return;
     }
     try {
-      const result = await testConfig.mutateAsync({ id: editingSource.id, scrapeConfig, proxyPoolId: proxyPoolId || null });
+      const result = await testConfig.mutateAsync({
+        id: editingSource.id,
+        scrapeConfig,
+        proxyPoolId: proxyPoolId || null,
+      });
       setTestResult(result);
     } catch (err) {
       setTestResult({
@@ -660,7 +772,8 @@ function SourceFormDialog({
 
         <div>
           <label htmlFor="source-base-url" className="text-label-sm text-on-surface-variant block mb-1">
-            URL di base {isEdit && <span className="text-outline">(lascia vuoto per mantenere quello attuale)</span>}
+            URL di base{" "}
+            {isEdit && <span className="text-outline">(lascia vuoto per mantenere quello attuale)</span>}
           </label>
           <Input
             id="source-base-url"
@@ -675,7 +788,8 @@ function SourceFormDialog({
         <div className="border-t border-border pt-3">
           <h4 className="text-body-md font-semibold text-on-surface mb-1">Configurazione acquisizione</h4>
           <p className="text-label-sm text-on-surface-variant mb-3">
-            Opzionale alla creazione. Il motore usa esclusivamente i selettori CSS configurati qui per il sito specifico.
+            Opzionale alla creazione. Il motore usa esclusivamente i selettori CSS/XPath configurati qui per
+            il sito specifico.
           </p>
 
           <div className="space-y-3">
@@ -695,37 +809,63 @@ function SourceFormDialog({
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label htmlFor="source-ad-link-selector" className="text-label-sm text-on-surface-variant block mb-1">
-                  Selettore collegamento annuncio (CSS)
+                <label
+                  htmlFor="source-ad-link-selector"
+                  className="text-label-sm text-on-surface-variant block mb-1"
+                >
+                  Selettore collegamento annuncio
                 </label>
-                <Input
-                  id="source-ad-link-selector"
-                  mono
-                  value={adLinkSelector}
-                  onChange={(e) => setAdLinkSelector(e.target.value)}
-                  placeholder="a.ad-card"
-                />
+                <div className="flex gap-2">
+                  <SelectorTypeSelect
+                    value={adLinkSelectorType}
+                    onChange={setAdLinkSelectorType}
+                    ariaLabel="Tipo selettore collegamento annuncio"
+                  />
+                  <Input
+                    id="source-ad-link-selector"
+                    mono
+                    value={adLinkSelector}
+                    onChange={(e) => setAdLinkSelector(e.target.value)}
+                    placeholder={adLinkSelectorType === "xpath" ? "//article//a" : "a.ad-card"}
+                  />
+                </div>
               </div>
               <div>
-                <label htmlFor="source-next-page-selector" className="text-label-sm text-on-surface-variant block mb-1">
+                <label
+                  htmlFor="source-next-page-selector"
+                  className="text-label-sm text-on-surface-variant block mb-1"
+                >
                   Selettore pagina successiva (opzionale)
                 </label>
-                <Input
-                  id="source-next-page-selector"
-                  mono
-                  value={nextPageSelector}
-                  onChange={(e) => setNextPageSelector(e.target.value)}
-                  placeholder="a.pagination-next"
-                />
+                <div className="flex gap-2">
+                  <SelectorTypeSelect
+                    value={nextPageSelectorType}
+                    onChange={setNextPageSelectorType}
+                    ariaLabel="Tipo selettore pagina successiva"
+                  />
+                  <Input
+                    id="source-next-page-selector"
+                    mono
+                    value={nextPageSelector}
+                    onChange={(e) => setNextPageSelector(e.target.value)}
+                    placeholder={
+                      nextPageSelectorType === "xpath" ? "//a[@aria-label='Next']" : "a.pagination-next"
+                    }
+                  />
+                </div>
                 <p className="mt-1 text-xs text-on-surface-variant">
-                  Deve identificare un solo controllo “Successiva”. I collegamenti usano automaticamente href; le modalità browser possono usare un controllo JavaScript.
+                  Può identificare più link equivalenti con lo stesso href; più controlli JavaScript restano
+                  ambigui. Le modalità browser possono eseguire il click.
                 </p>
               </div>
             </div>
 
             <div className="grid grid-cols-3 gap-3">
               <div>
-                <label htmlFor="source-max-pages" className="text-label-sm text-on-surface-variant block mb-1">
+                <label
+                  htmlFor="source-max-pages"
+                  className="text-label-sm text-on-surface-variant block mb-1"
+                >
                   Pagine massime
                 </label>
                 <Input
@@ -751,7 +891,10 @@ function SourceFormDialog({
                 />
               </div>
               <div>
-                <label htmlFor="source-rate-limit" className="text-label-sm text-on-surface-variant block mb-1">
+                <label
+                  htmlFor="source-rate-limit"
+                  className="text-label-sm text-on-surface-variant block mb-1"
+                >
                   Intervallo richieste (s)
                 </label>
                 <Input
@@ -798,19 +941,32 @@ function SourceFormDialog({
             {fetchMode !== "http" && (
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label htmlFor="source-wait-selector" className="text-label-sm text-on-surface-variant block mb-1">
+                  <label
+                    htmlFor="source-wait-selector"
+                    className="text-label-sm text-on-surface-variant block mb-1"
+                  >
                     Selettore di attesa (opzionale)
                   </label>
-                  <Input
-                    id="source-wait-selector"
-                    mono
-                    value={waitSelector}
-                    onChange={(e) => setWaitSelector(e.target.value)}
-                    placeholder=".loaded"
-                  />
+                  <div className="flex gap-2">
+                    <SelectorTypeSelect
+                      value={waitSelectorType}
+                      onChange={setWaitSelectorType}
+                      ariaLabel="Tipo selettore di attesa"
+                    />
+                    <Input
+                      id="source-wait-selector"
+                      mono
+                      value={waitSelector}
+                      onChange={(e) => setWaitSelector(e.target.value)}
+                      placeholder={waitSelectorType === "xpath" ? "//*[@data-loaded]" : ".loaded"}
+                    />
+                  </div>
                 </div>
                 <div>
-                  <label htmlFor="source-wait-ms" className="text-label-sm text-on-surface-variant block mb-1">
+                  <label
+                    htmlFor="source-wait-ms"
+                    className="text-label-sm text-on-surface-variant block mb-1"
+                  >
                     Attesa aggiuntiva (ms)
                   </label>
                   <Input
@@ -830,7 +986,11 @@ function SourceFormDialog({
               <label htmlFor="source-proxy-pool" className="text-label-sm text-on-surface-variant block">
                 Pool proxy
               </label>
-              <Select id="source-proxy-pool" value={proxyPoolId} onChange={(e) => setProxyPoolId(e.target.value)}>
+              <Select
+                id="source-proxy-pool"
+                value={proxyPoolId}
+                onChange={(e) => setProxyPoolId(e.target.value)}
+              >
                 <option value="">Connessione diretta</option>
                 {proxyPools.data?.map((pool) => (
                   <option key={pool.id} value={pool.id} disabled={!pool.enabled}>
@@ -855,7 +1015,10 @@ function SourceFormDialog({
                     ["realChrome", "Chrome reale", realChrome, setRealChrome],
                     ["blockAds", "Blocca pubblicità", blockAds, setBlockAds],
                   ].map(([id, label, checked, setter]) => (
-                    <label key={id as string} className="flex items-center gap-2 text-label-sm text-on-surface-variant">
+                    <label
+                      key={id as string}
+                      className="flex items-center gap-2 text-label-sm text-on-surface-variant"
+                    >
                       <input
                         type="checkbox"
                         checked={checked as boolean}
@@ -873,7 +1036,11 @@ function SourceFormDialog({
                 <span className="text-label-sm text-on-surface-variant">
                   Campi da estrarre (è obbligatorio un campo <code>phone</code>)
                 </span>
-                <button type="button" onClick={addFieldRow} className="text-label-sm text-primary hover:underline">
+                <button
+                  type="button"
+                  onClick={addFieldRow}
+                  className="text-label-sm text-primary hover:underline"
+                >
                   + Aggiungi campo
                 </button>
               </div>
@@ -885,18 +1052,34 @@ function SourceFormDialog({
                         mono
                         placeholder="nome campo"
                         value={row.name}
-                        onChange={(e) => updateFieldRow(index, {
-                          name: e.target.value,
-                          ...(isScalarStandardField(e.target.value) ? { paginationEnabled: false } : {}),
-                        })}
+                        onChange={(e) =>
+                          updateFieldRow(index, {
+                            name: e.target.value,
+                            ...(isScalarStandardField(e.target.value) ? { paginationEnabled: false } : {}),
+                          })
+                        }
                       />
-                      <Input
-                        mono
-                        disabled={row.extractionMode !== "value"}
-                        placeholder={row.extractionMode === "value" ? "selettore CSS" : "usa il container sotto"}
-                        value={row.selector}
-                        onChange={(e) => updateFieldRow(index, { selector: e.target.value })}
-                      />
+                      <div className="flex min-w-0 gap-2">
+                        <SelectorTypeSelect
+                          value={row.selectorType}
+                          disabled={row.extractionMode !== "value"}
+                          ariaLabel={`Tipo selettore ${row.name || index + 1}`}
+                          onChange={(selectorType) => updateFieldRow(index, { selectorType })}
+                        />
+                        <Input
+                          mono
+                          disabled={row.extractionMode !== "value"}
+                          placeholder={
+                            row.extractionMode !== "value"
+                              ? "usa il container sotto"
+                              : row.selectorType === "xpath"
+                                ? "//elemento"
+                                : "selettore CSS"
+                          }
+                          value={row.selector}
+                          onChange={(e) => updateFieldRow(index, { selector: e.target.value })}
+                        />
+                      </div>
                       <Select
                         disabled={row.extractionMode !== "value"}
                         value={row.attribute}
@@ -927,7 +1110,14 @@ function SourceFormDialog({
                                   multiple: true,
                                   itemFields: row.itemFields.length
                                     ? row.itemFields
-                                    : [{ name: "text", selector: ".text", attribute: "text" as const }],
+                                    : [
+                                        {
+                                          name: "text",
+                                          selector: ".text",
+                                          selectorType: "css" as const,
+                                          attribute: "text" as const,
+                                        },
+                                      ],
                                 }
                               : {}),
                           });
@@ -949,37 +1139,146 @@ function SourceFormDialog({
                     </div>
                     {row.extractionMode === "keyValue" && (
                       <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-[1.4fr_1.4fr_0.7fr_1.4fr_0.7fr] lg:pl-2">
-                        <Input mono placeholder="containerSelector" value={row.containerSelector} onChange={(e) => updateFieldRow(index, { containerSelector: e.target.value })} />
-                        <Input mono placeholder="keySelector" value={row.keySelector} onChange={(e) => updateFieldRow(index, { keySelector: e.target.value })} />
-                        <Select value={row.keyAttribute} onChange={(e) => updateFieldRow(index, { keyAttribute: e.target.value })}>
-                          <option value="text">text</option><option value="href">href</option><option value="src">src</option>
+                        <div className="flex gap-2">
+                          <SelectorTypeSelect
+                            value={row.containerSelectorType}
+                            onChange={(containerSelectorType) =>
+                              updateFieldRow(index, { containerSelectorType })
+                            }
+                            ariaLabel={`Tipo container ${row.name || index + 1}`}
+                          />
+                          <Input
+                            mono
+                            placeholder={
+                              row.containerSelectorType === "xpath" ? "//container" : "containerSelector"
+                            }
+                            value={row.containerSelector}
+                            onChange={(e) => updateFieldRow(index, { containerSelector: e.target.value })}
+                          />
+                        </div>
+                        <div className="flex gap-2">
+                          <SelectorTypeSelect
+                            value={row.keySelectorType}
+                            onChange={(keySelectorType) => updateFieldRow(index, { keySelectorType })}
+                            ariaLabel={`Tipo chiave ${row.name || index + 1}`}
+                          />
+                          <Input
+                            mono
+                            placeholder={row.keySelectorType === "xpath" ? ".//chiave" : "keySelector"}
+                            value={row.keySelector}
+                            onChange={(e) => updateFieldRow(index, { keySelector: e.target.value })}
+                          />
+                        </div>
+                        <Select
+                          value={row.keyAttribute}
+                          onChange={(e) => updateFieldRow(index, { keyAttribute: e.target.value })}
+                        >
+                          <option value="text">text</option>
+                          <option value="href">href</option>
+                          <option value="src">src</option>
                         </Select>
-                        <Input mono placeholder="valueSelector" value={row.valueSelector} onChange={(e) => updateFieldRow(index, { valueSelector: e.target.value })} />
-                        <Select value={row.valueAttribute} onChange={(e) => updateFieldRow(index, { valueAttribute: e.target.value })}>
-                          <option value="text">text</option><option value="href">href</option><option value="src">src</option>
+                        <div className="flex gap-2">
+                          <SelectorTypeSelect
+                            value={row.valueSelectorType}
+                            onChange={(valueSelectorType) => updateFieldRow(index, { valueSelectorType })}
+                            ariaLabel={`Tipo valore ${row.name || index + 1}`}
+                          />
+                          <Input
+                            mono
+                            placeholder={row.valueSelectorType === "xpath" ? ".//valore" : "valueSelector"}
+                            value={row.valueSelector}
+                            onChange={(e) => updateFieldRow(index, { valueSelector: e.target.value })}
+                          />
+                        </div>
+                        <Select
+                          value={row.valueAttribute}
+                          onChange={(e) => updateFieldRow(index, { valueAttribute: e.target.value })}
+                        >
+                          <option value="text">text</option>
+                          <option value="href">href</option>
+                          <option value="src">src</option>
                         </Select>
                       </div>
                     )}
                     {row.extractionMode === "posterVideo" && (
                       <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-[1.4fr_1.4fr_0.7fr_1.4fr_0.7fr] lg:pl-2">
-                        <Input mono placeholder="containerSelector" value={row.containerSelector} onChange={(e) => updateFieldRow(index, { containerSelector: e.target.value })} />
-                        <Input mono placeholder="posterSelector" value={row.posterSelector} onChange={(e) => updateFieldRow(index, { posterSelector: e.target.value })} />
-                        <Select value={row.posterAttribute} onChange={(e) => updateFieldRow(index, { posterAttribute: e.target.value })}>
-                          <option value="src">src</option><option value="href">href</option>
+                        <div className="flex gap-2">
+                          <SelectorTypeSelect
+                            value={row.containerSelectorType}
+                            onChange={(containerSelectorType) =>
+                              updateFieldRow(index, { containerSelectorType })
+                            }
+                            ariaLabel={`Tipo container ${row.name || index + 1}`}
+                          />
+                          <Input
+                            mono
+                            placeholder={
+                              row.containerSelectorType === "xpath" ? "//container" : "containerSelector"
+                            }
+                            value={row.containerSelector}
+                            onChange={(e) => updateFieldRow(index, { containerSelector: e.target.value })}
+                          />
+                        </div>
+                        <div className="flex gap-2">
+                          <SelectorTypeSelect
+                            value={row.posterSelectorType}
+                            onChange={(posterSelectorType) => updateFieldRow(index, { posterSelectorType })}
+                            ariaLabel={`Tipo poster ${row.name || index + 1}`}
+                          />
+                          <Input
+                            mono
+                            placeholder={row.posterSelectorType === "xpath" ? ".//img" : "posterSelector"}
+                            value={row.posterSelector}
+                            onChange={(e) => updateFieldRow(index, { posterSelector: e.target.value })}
+                          />
+                        </div>
+                        <Select
+                          value={row.posterAttribute}
+                          onChange={(e) => updateFieldRow(index, { posterAttribute: e.target.value })}
+                        >
+                          <option value="src">src</option>
+                          <option value="href">href</option>
                         </Select>
-                        <Input mono placeholder="videoSelector" value={row.videoSelector} onChange={(e) => updateFieldRow(index, { videoSelector: e.target.value })} />
-                        <Select value={row.videoAttribute} onChange={(e) => updateFieldRow(index, { videoAttribute: e.target.value })}>
-                          <option value="src">src</option><option value="href">href</option>
+                        <div className="flex gap-2">
+                          <SelectorTypeSelect
+                            value={row.videoSelectorType}
+                            onChange={(videoSelectorType) => updateFieldRow(index, { videoSelectorType })}
+                            ariaLabel={`Tipo video ${row.name || index + 1}`}
+                          />
+                          <Input
+                            mono
+                            placeholder={row.videoSelectorType === "xpath" ? ".//video" : "videoSelector"}
+                            value={row.videoSelector}
+                            onChange={(e) => updateFieldRow(index, { videoSelector: e.target.value })}
+                          />
+                        </div>
+                        <Select
+                          value={row.videoAttribute}
+                          onChange={(e) => updateFieldRow(index, { videoAttribute: e.target.value })}
+                        >
+                          <option value="src">src</option>
+                          <option value="href">href</option>
                         </Select>
                       </div>
                     )}
                     {row.extractionMode === "items" && (
                       <div className="mt-2 space-y-2 rounded border border-border p-2 lg:ml-2">
                         <div className="flex items-center gap-2">
+                          <SelectorTypeSelect
+                            value={row.containerSelectorType}
+                            onChange={(containerSelectorType) =>
+                              updateFieldRow(index, { containerSelectorType })
+                            }
+                            ariaLabel={`Tipo container ${row.name || index + 1}`}
+                          />
                           <Input
                             mono
                             className="flex-1"
-                            placeholder="containerSelector (es. .review)"
+                            placeholder={
+                              row.containerSelectorType === "xpath"
+                                ? "//article[@class='review']"
+                                : "containerSelector (es. .review)"
+                            }
                             value={row.containerSelector}
                             onChange={(e) => updateFieldRow(index, { containerSelector: e.target.value })}
                           />
@@ -992,13 +1291,52 @@ function SourceFormDialog({
                           </button>
                         </div>
                         {row.itemFields.map((itemField, itemIndex) => (
-                          <div key={itemIndex} className="grid grid-cols-[1fr_2fr_0.8fr_auto] gap-2">
-                            <Input mono placeholder="nome" value={itemField.name} onChange={(e) => updateItemField(index, itemIndex, { name: e.target.value })} />
-                            <Input mono placeholder="selettore relativo" value={itemField.selector} onChange={(e) => updateItemField(index, itemIndex, { selector: e.target.value })} />
-                            <Select value={itemField.attribute} onChange={(e) => updateItemField(index, itemIndex, { attribute: e.target.value as "text" | "href" | "src" })}>
-                              <option value="text">text</option><option value="href">href</option><option value="src">src</option>
+                          <div key={itemIndex} className="grid grid-cols-[1fr_2.5fr_0.8fr_auto] gap-2">
+                            <Input
+                              mono
+                              placeholder="nome"
+                              value={itemField.name}
+                              onChange={(e) => updateItemField(index, itemIndex, { name: e.target.value })}
+                            />
+                            <div className="flex gap-2">
+                              <SelectorTypeSelect
+                                value={itemField.selectorType}
+                                onChange={(selectorType) =>
+                                  updateItemField(index, itemIndex, { selectorType })
+                                }
+                                ariaLabel={`Tipo sotto-campo ${itemField.name || itemIndex + 1}`}
+                              />
+                              <Input
+                                mono
+                                placeholder={
+                                  itemField.selectorType === "xpath"
+                                    ? ".//elemento relativo"
+                                    : "selettore relativo"
+                                }
+                                value={itemField.selector}
+                                onChange={(e) =>
+                                  updateItemField(index, itemIndex, { selector: e.target.value })
+                                }
+                              />
+                            </div>
+                            <Select
+                              value={itemField.attribute}
+                              onChange={(e) =>
+                                updateItemField(index, itemIndex, {
+                                  attribute: e.target.value as "text" | "href" | "src",
+                                })
+                              }
+                            >
+                              <option value="text">text</option>
+                              <option value="href">href</option>
+                              <option value="src">src</option>
                             </Select>
-                            <button type="button" onClick={() => removeItemField(index, itemIndex)} className="text-on-surface-variant hover:text-error" aria-label={`Rimuovi sotto-campo ${itemField.name || itemIndex + 1}`}>
+                            <button
+                              type="button"
+                              onClick={() => removeItemField(index, itemIndex)}
+                              className="text-on-surface-variant hover:text-error"
+                              aria-label={`Rimuovi sotto-campo ${itemField.name || itemIndex + 1}`}
+                            >
                               <Icon name="close" size={16} />
                             </button>
                           </div>
@@ -1012,23 +1350,70 @@ function SourceFormDialog({
                           aria-label={`Impagina ${row.name || index + 1}`}
                           disabled={isScalarStandardField(row.name)}
                           checked={row.paginationEnabled}
-                          onChange={(e) => updateFieldRow(index, {
-                            paginationEnabled: e.target.checked,
-                            ...(e.target.checked && row.extractionMode === "value" ? { multiple: true } : {}),
-                          })}
+                          onChange={(e) =>
+                            updateFieldRow(index, {
+                              paginationEnabled: e.target.checked,
+                              ...(e.target.checked && row.extractionMode === "value"
+                                ? { multiple: true }
+                                : {}),
+                            })
+                          }
                         />
                         Campo impaginato
                       </label>
                       {row.paginationEnabled && (
                         <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-[2fr_1fr_1fr]">
-                          <Input mono required aria-label={`Selettore paginazione ${row.name || index + 1}`} placeholder="selettore Next / Carica altri" value={row.paginationNextSelector} onChange={(e) => updateFieldRow(index, { paginationNextSelector: e.target.value })} />
-                          <Input type="number" min={1} max={50} value={row.paginationMaxPages} onChange={(e) => updateFieldRow(index, { paginationMaxPages: Number(e.target.value) })} aria-label={`Pagine massime ${row.name || index + 1}`} />
-                          <Input type="number" min={1} max={5000} value={row.paginationMaxItems} onChange={(e) => updateFieldRow(index, { paginationMaxItems: Number(e.target.value) })} aria-label={`Elementi massimi ${row.name || index + 1}`} />
+                          <div className="flex gap-2">
+                            <SelectorTypeSelect
+                              value={row.paginationNextSelectorType}
+                              onChange={(paginationNextSelectorType) =>
+                                updateFieldRow(index, { paginationNextSelectorType })
+                              }
+                              ariaLabel={`Tipo paginazione ${row.name || index + 1}`}
+                            />
+                            <Input
+                              mono
+                              required
+                              aria-label={`Selettore paginazione ${row.name || index + 1}`}
+                              placeholder={
+                                row.paginationNextSelectorType === "xpath"
+                                  ? "//button[@aria-label='Next']"
+                                  : "selettore Next / Carica altri"
+                              }
+                              value={row.paginationNextSelector}
+                              onChange={(e) =>
+                                updateFieldRow(index, { paginationNextSelector: e.target.value })
+                              }
+                            />
+                          </div>
+                          <Input
+                            type="number"
+                            min={1}
+                            max={50}
+                            value={row.paginationMaxPages}
+                            onChange={(e) =>
+                              updateFieldRow(index, { paginationMaxPages: Number(e.target.value) })
+                            }
+                            aria-label={`Pagine massime ${row.name || index + 1}`}
+                          />
+                          <Input
+                            type="number"
+                            min={1}
+                            max={5000}
+                            value={row.paginationMaxItems}
+                            onChange={(e) =>
+                              updateFieldRow(index, { paginationMaxItems: Number(e.target.value) })
+                            }
+                            aria-label={`Elementi massimi ${row.name || index + 1}`}
+                          />
                         </div>
                       )}
                       {row.paginationEnabled && (
-                        <p className={`mt-1 text-xs ${fetchMode === "http" ? "text-error" : "text-on-surface-variant"}`}>
-                          Prima pagina inclusa nel limite. Richiede acquisizione JavaScript dinamica o discreta.
+                        <p
+                          className={`mt-1 text-xs ${fetchMode === "http" ? "text-error" : "text-on-surface-variant"}`}
+                        >
+                          Prima pagina inclusa nel limite. Richiede acquisizione JavaScript dinamica o
+                          discreta.
                         </p>
                       )}
                     </div>
@@ -1037,7 +1422,12 @@ function SourceFormDialog({
               </div>
               <div className="rounded border border-border bg-surface-container-low p-2 text-label-sm text-on-surface-variant">
                 <p>
-                  I campi media devono chiamarsi <code>images</code> o <code>videos</code> e avere <code>multi</code> abilitato.
+                  Ogni selettore può usare CSS oppure XPath 1.0. Gli XPath devono selezionare elementi; nei
+                  sotto-campi usare espressioni relative come <code>.//span</code>.
+                </p>
+                <p>
+                  I campi media devono chiamarsi <code>images</code> o <code>videos</code> e avere{" "}
+                  <code>multi</code> abilitato.
                 </p>
                 <p className="mt-1 font-mono">Anteprima: img.full-image + src</p>
                 <p className="font-mono">Originale: a:has(img.full-image) + href</p>
@@ -1046,7 +1436,12 @@ function SourceFormDialog({
 
             {isEdit && (
               <div className="border-t border-border pt-3">
-                <Button type="button" variant="secondary" onClick={handleTestConfig} disabled={testConfig.isPending}>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={handleTestConfig}
+                  disabled={testConfig.isPending}
+                >
                   {testConfig.isPending ? "Verifica…" : "Prova configurazione"}
                 </Button>
                 {testResult && (
@@ -1074,7 +1469,9 @@ function SourceFormDialog({
                       </div>
                     ) : (
                       <>
-                        <p className="text-on-surface">Trovati {testResult.adUrlsFound} collegamenti ad annunci.</p>
+                        <p className="text-on-surface">
+                          Trovati {testResult.adUrlsFound} collegamenti ad annunci.
+                        </p>
                         <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 font-mono text-on-surface-variant">
                           <span>
                             Pagine: {testResult.pagesVisited}/{testResult.configuredMaxPages}
@@ -1084,13 +1481,18 @@ function SourceFormDialog({
                           <span>Arresto: {testResult.paginationStopReason}</span>
                         </div>
                         {testResult.sampleUrl && (
-                          <p className="font-mono text-on-surface-variant truncate">Esempio: {testResult.sampleUrl}</p>
+                          <p className="font-mono text-on-surface-variant truncate">
+                            Esempio: {testResult.sampleUrl}
+                          </p>
                         )}
                         {Object.entries(testResult.fieldPagination).length > 0 && (
                           <div className="mt-2 space-y-1">
                             <p className="font-medium text-on-surface">Impaginazione dei campi</p>
                             {Object.entries(testResult.fieldPagination).map(([fieldName, diagnostic]) => (
-                              <div key={fieldName} className="flex flex-wrap gap-x-3 rounded border border-border px-2 py-1 font-mono text-on-surface-variant">
+                              <div
+                                key={fieldName}
+                                className="flex flex-wrap gap-x-3 rounded border border-border px-2 py-1 font-mono text-on-surface-variant"
+                              >
                                 <span>{fieldName}</span>
                                 <span>{diagnostic.itemsCollected} elementi</span>
                                 <span>{diagnostic.pagesVisited} pagine</span>
@@ -1120,7 +1522,9 @@ function SourceFormDialog({
               </div>
             )}
             {!isEdit && (
-              <p className="text-label-sm text-outline">Salva prima la fonte per provarne la configurazione.</p>
+              <p className="text-label-sm text-outline">
+                Salva prima la fonte per provarne la configurazione.
+              </p>
             )}
           </div>
         </div>
@@ -1128,7 +1532,11 @@ function SourceFormDialog({
         <fieldset className="border border-border rounded-lg p-3 space-y-3">
           <legend className="px-1 text-label-sm text-on-surface">Rimozione filigrana autorizzata</legend>
           <label className="flex items-center gap-2 text-body-md text-on-surface-variant">
-            <input type="checkbox" checked={watermarkEnabled} onChange={(event) => setWatermarkEnabled(event.target.checked)} />
+            <input
+              type="checkbox"
+              checked={watermarkEnabled}
+              onChange={(event) => setWatermarkEnabled(event.target.checked)}
+            />
             Abilita per questa fonte (gli originali vengono sempre conservati)
           </label>
           {watermarkEnabled && (
@@ -1149,7 +1557,9 @@ function SourceFormDialog({
                       max="1"
                       step="0.01"
                       value={watermarkRegion[key]}
-                      onChange={(event) => setWatermarkRegion((region) => ({ ...region, [key]: Number(event.target.value) }))}
+                      onChange={(event) =>
+                        setWatermarkRegion((region) => ({ ...region, [key]: Number(event.target.value) }))
+                      }
                     />
                   </label>
                 ))}
@@ -1190,7 +1600,8 @@ function DeleteSourceDialog({ source, onClose }: { source: Source | null; onClos
     <Dialog open={source !== null} onClose={handleClose} title="Elimina fonte">
       <div className="flex flex-col gap-4">
         <p className="text-body-md text-on-surface">
-          Eliminare la fonte <span className="font-semibold">{source?.name}</span>? L’operazione è bloccata se esistono annunci collegati.
+          Eliminare la fonte <span className="font-semibold">{source?.name}</span>? L’operazione è bloccata se
+          esistono annunci collegati.
         </p>
         {deleteSource.isError && (
           <p className="text-body-md text-error">{describeError(deleteSource.error).description}</p>
@@ -1256,7 +1667,8 @@ function DuplicateSourceDialog({
     <Dialog open={source !== null} onClose={handleClose} title="Duplica fonte">
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <p className="text-body-md text-on-surface-variant">
-          Verranno copiate tutte le impostazioni di acquisizione e filigrana. La copia nasce disabilitata e senza annunci o cronologia.
+          Verranno copiate tutte le impostazioni di acquisizione e filigrana. La copia nasce disabilitata e
+          senza annunci o cronologia.
         </p>
         <div>
           <label htmlFor="duplicate-source-name" className="text-label-sm text-on-surface-variant block mb-1">
@@ -1288,7 +1700,9 @@ function DuplicateSourceDialog({
           <p className="text-body-md text-error">{describeError(duplicateSource.error).description}</p>
         )}
         <div className="flex justify-end gap-2">
-          <Button type="button" variant="secondary" onClick={handleClose}>Annulla</Button>
+          <Button type="button" variant="secondary" onClick={handleClose}>
+            Annulla
+          </Button>
           <Button type="submit" disabled={duplicateSource.isPending}>
             {duplicateSource.isPending ? "Duplicazione…" : "Duplica"}
           </Button>
@@ -1320,7 +1734,7 @@ function SourceScheduleDialog({ source, onClose }: { source: Source | null; onCl
     updateSchedule.reset();
   }, [source]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const normalizedMinutes = intervalValue * ({ minutes: 1, hours: 60, days: 1440 }[intervalUnit]);
+  const normalizedMinutes = intervalValue * { minutes: 1, hours: 60, days: 1440 }[intervalUnit];
   const intervalValid = normalizedMinutes >= 15 && normalizedMinutes <= 43200;
   const canEnable = Boolean(source?.enabled && source.hasScrapeConfig);
 
@@ -1347,7 +1761,8 @@ function SourceScheduleDialog({ source, onClose }: { source: Source | null; onCl
     <Dialog open={source !== null} onClose={onClose} title="Pianificazione acquisizione automatica">
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <p className="text-body-md text-on-surface-variant">
-          L’intervallo parte soltanto al termine di una scansione. Anche una scansione manuale riavvia il timer, impedendo due esecuzioni contemporanee.
+          L’intervallo parte soltanto al termine di una scansione. Anche una scansione manuale riavvia il
+          timer, impedendo due esecuzioni contemporanee.
         </p>
         <label className="flex items-center gap-3 text-body-md text-on-surface">
           <input
@@ -1366,12 +1781,16 @@ function SourceScheduleDialog({ source, onClose }: { source: Source | null; onCl
         )}
         {source?.proxyPoolStatus === "unavailable" && (
           <p className="text-label-sm text-warning">
-            Il pool proxy selezionato non ha endpoint disponibili; le scansioni pianificate verranno bloccate senza connessione diretta.
+            Il pool proxy selezionato non ha endpoint disponibili; le scansioni pianificate verranno bloccate
+            senza connessione diretta.
           </p>
         )}
         <div className="grid grid-cols-[1fr_1fr] gap-3">
           <div>
-            <label htmlFor="schedule-interval-value" className="text-label-sm text-on-surface-variant block mb-1">
+            <label
+              htmlFor="schedule-interval-value"
+              className="text-label-sm text-on-surface-variant block mb-1"
+            >
               Intervallo
             </label>
             <Input
@@ -1384,7 +1803,10 @@ function SourceScheduleDialog({ source, onClose }: { source: Source | null; onCl
             />
           </div>
           <div>
-            <label htmlFor="schedule-interval-unit" className="text-label-sm text-on-surface-variant block mb-1">
+            <label
+              htmlFor="schedule-interval-unit"
+              className="text-label-sm text-on-surface-variant block mb-1"
+            >
               Unità
             </label>
             <Select
@@ -1399,7 +1821,9 @@ function SourceScheduleDialog({ source, onClose }: { source: Source | null; onCl
           </div>
         </div>
         {!intervalValid && (
-          <p className="text-label-sm text-error">L’intervallo deve essere compreso tra 15 minuti e 30 giorni.</p>
+          <p className="text-label-sm text-error">
+            L’intervallo deve essere compreso tra 15 minuti e 30 giorni.
+          </p>
         )}
         {updateSchedule.isError && (
           <p role="alert" className="text-body-md text-error">
@@ -1407,7 +1831,9 @@ function SourceScheduleDialog({ source, onClose }: { source: Source | null; onCl
           </p>
         )}
         <div className="flex justify-end gap-2">
-          <Button type="button" variant="secondary" onClick={onClose}>Annulla</Button>
+          <Button type="button" variant="secondary" onClick={onClose}>
+            Annulla
+          </Button>
           <Button type="submit" disabled={!intervalValid || updateSchedule.isPending}>
             {updateSchedule.isPending ? "Salvataggio…" : "Salva pianificazione"}
           </Button>
@@ -1545,7 +1971,10 @@ export default function SourcesPage() {
       <div className="grid grid-cols-4 gap-gutter">
         {summary.isLoading &&
           Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="bg-surface-container-lowest border border-border rounded-lg p-4 h-[84px] animate-pulse" />
+            <div
+              key={i}
+              className="bg-surface-container-lowest border border-border rounded-lg p-4 h-[84px] animate-pulse"
+            />
           ))}
         {summary.isError && (
           <div className="col-span-4 bg-error-container/20 border border-error/20 rounded-lg p-4 text-error text-body-md">
@@ -1558,7 +1987,9 @@ export default function SourcesPage() {
               key={card.key}
               className={`bg-surface-container-lowest border border-border border-t-2 ${card.accent} rounded-lg p-4 shadow-[0_1px_2px_rgba(0,0,0,0.02)]`}
             >
-              <h3 className="text-label-sm text-on-surface-variant uppercase tracking-wider mb-2">{card.label}</h3>
+              <h3 className="text-label-sm text-on-surface-variant uppercase tracking-wider mb-2">
+                {card.label}
+              </h3>
               <div className="text-headline-md text-on-surface">{card.value?.toLocaleString() ?? "-"}</div>
             </div>
           ))}
@@ -1566,7 +1997,10 @@ export default function SourcesPage() {
 
       {/* Sources Table */}
       {(enable.isError || runScan.isError || exportSources.isError) && (
-        <div role="alert" className="bg-error-container/20 border border-error/20 rounded-lg p-4 text-error text-body-md">
+        <div
+          role="alert"
+          className="bg-error-container/20 border border-error/20 rounded-lg p-4 text-error text-body-md"
+        >
           {describeError(enable.error ?? runScan.error ?? exportSources.error).description}
         </div>
       )}
@@ -1586,9 +2020,13 @@ export default function SourcesPage() {
                     type="checkbox"
                     aria-label="Seleziona tutte le fonti"
                     checked={allSelected}
-                    onChange={(event) => setSelectedIds(
-                      event.target.checked ? new Set(sources.data?.map((source) => source.id) ?? []) : new Set(),
-                    )}
+                    onChange={(event) =>
+                      setSelectedIds(
+                        event.target.checked
+                          ? new Set(sources.data?.map((source) => source.id) ?? [])
+                          : new Set(),
+                      )
+                    }
                   />
                 </Th>
               )}
@@ -1604,190 +2042,227 @@ export default function SourcesPage() {
           </THead>
           <TBody>
             {sources.isLoading && <LoadingRow colSpan={isAdmin ? 9 : 8} />}
-            {sources.isError && <ErrorRow colSpan={isAdmin ? 9 : 8} error={sources.error} onRetry={() => sources.refetch()} />}
-            {sources.data && sources.data.length === 0 && <EmptyRow colSpan={isAdmin ? 9 : 8} message="Nessuna fonte configurata." />}
+            {sources.isError && (
+              <ErrorRow colSpan={isAdmin ? 9 : 8} error={sources.error} onRetry={() => sources.refetch()} />
+            )}
+            {sources.data && sources.data.length === 0 && (
+              <EmptyRow colSpan={isAdmin ? 9 : 8} message="Nessuna fonte configurata." />
+            )}
             {sources.data?.map((source) => {
               const isExpanded = expandedIds.has(source.id);
               const isBroken = source.consecutiveFailures >= CONSECUTIVE_FAILURES_ALERT_THRESHOLD;
               return (
-              <Fragment key={source.id}>
-              <Tr className={isBroken ? "bg-error-container/10" : undefined}>
-                {isAdmin && (
-                  <Td>
-                    <input
-                      type="checkbox"
-                      aria-label={`Seleziona ${source.name}`}
-                      checked={selectedIds.has(source.id)}
-                      onChange={(event) => setSelectedIds((current) => {
-                        const next = new Set(current);
-                        if (event.target.checked) next.add(source.id);
-                        else next.delete(source.id);
-                        return next;
-                      })}
-                    />
-                  </Td>
-                )}
-                <Td>
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      onClick={() => toggleExpanded(source.id)}
-                      title={isExpanded ? "Nascondi cronologia esecuzioni" : "Mostra cronologia esecuzioni"}
-                      className="p-0.5 text-on-surface-variant hover:text-primary rounded transition-colors"
+                <Fragment key={source.id}>
+                  <Tr className={isBroken ? "bg-error-container/10" : undefined}>
+                    {isAdmin && (
+                      <Td>
+                        <input
+                          type="checkbox"
+                          aria-label={`Seleziona ${source.name}`}
+                          checked={selectedIds.has(source.id)}
+                          onChange={(event) =>
+                            setSelectedIds((current) => {
+                              const next = new Set(current);
+                              if (event.target.checked) next.add(source.id);
+                              else next.delete(source.id);
+                              return next;
+                            })
+                          }
+                        />
+                      </Td>
+                    )}
+                    <Td>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => toggleExpanded(source.id)}
+                          title={
+                            isExpanded ? "Nascondi cronologia esecuzioni" : "Mostra cronologia esecuzioni"
+                          }
+                          className="p-0.5 text-on-surface-variant hover:text-primary rounded transition-colors"
+                        >
+                          <Icon name={isExpanded ? "expand_more" : "chevron_right"} size={18} />
+                        </button>
+                        <div>
+                          <div className="font-medium text-on-surface flex items-center gap-1.5">
+                            {source.name}
+                            {isBroken && (
+                              <span
+                                title={`${source.consecutiveFailures} esecuzioni consecutive non riuscite`}
+                              >
+                                <Badge tone="error">Connettore non funzionante?</Badge>
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-label-sm text-on-surface-variant font-mono">{source.code}</div>
+                        </div>
+                      </div>
+                    </Td>
+                    <Td>
+                      <Badge tone={STATUS_TONE[source.status]}>{STATUS_LABEL[source.status]}</Badge>
+                    </Td>
+                    <Td className="text-right">
+                      <span className="font-mono text-mono-data text-on-surface bg-surface-container px-2 py-1 rounded">
+                        {PRIORITY_LABEL[source.priority]}
+                      </span>
+                    </Td>
+                    <Td className="text-on-surface-variant">{formatRelativeTime(source.lastRunAt)}</Td>
+                    <Td>
+                      <div className="space-y-1 min-w-[170px]">
+                        <Badge
+                          tone={
+                            source.automaticScrapingState === "waiting"
+                              ? "success"
+                              : source.automaticScrapingState === "running"
+                                ? "warning"
+                                : source.automaticScrapingState === "pending"
+                                  ? "neutral"
+                                  : "neutral"
+                          }
+                        >
+                          {source.automaticScrapingState === "waiting"
+                            ? "In attesa"
+                            : source.automaticScrapingState === "pending"
+                              ? "Pianificata"
+                              : source.automaticScrapingState === "running"
+                                ? "In esecuzione"
+                                : source.automaticScrapingState === "paused"
+                                  ? "In pausa"
+                                  : "Disabilitata"}
+                        </Badge>
+                        <div className="text-label-sm text-on-surface-variant">
+                          {source.automaticScrapingEnabled
+                            ? `Ogni ${formatInterval(source.scrapeIntervalMinutes)}`
+                            : "Disabilitata"}
+                        </div>
+                        {source.automaticScrapingState === "pending" ||
+                        source.automaticScrapingState === "running" ? (
+                          <div className="text-label-sm text-warning">
+                            Il timer parte al termine di questa scansione
+                          </div>
+                        ) : source.nextScrapeAt ? (
+                          <div className="text-label-sm text-on-surface-variant">
+                            Prossima: {formatDateTime(source.nextScrapeAt)}
+                          </div>
+                        ) : null}
+                      </div>
+                    </Td>
+                    <Td className="text-right font-mono text-on-surface">
+                      {source.itemsLast24h.toLocaleString()}
+                    </Td>
+                    <Td
+                      className={`text-right font-mono ${
+                        source.status === "offline"
+                          ? "text-error"
+                          : source.status === "degraded"
+                            ? "text-warning"
+                            : "text-success"
+                      }`}
                     >
-                      <Icon name={isExpanded ? "expand_more" : "chevron_right"} size={18} />
-                    </button>
-                    <div>
-                      <div className="font-medium text-on-surface flex items-center gap-1.5">
-                        {source.name}
-                        {isBroken && (
-                          <span title={`${source.consecutiveFailures} esecuzioni consecutive non riuscite`}>
-                            <Badge tone="error">Connettore non funzionante?</Badge>
+                      {(source.errorRate * 100).toFixed(2)}%
+                    </Td>
+                    <Td className="text-right">
+                      <div className="flex justify-end items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {robotsResultBySource[source.id] && (
+                          <span className="text-label-sm text-on-surface-variant">
+                            {robotsResultBySource[source.id]}
                           </span>
                         )}
+                        <button
+                          onClick={() => handleCheckRobots(source)}
+                          disabled={checkRobots.isPending}
+                          title="Controlla robots.txt"
+                          className="p-1.5 text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded transition-colors disabled:opacity-50"
+                        >
+                          <Icon name="policy" size={16} />
+                        </button>
+                        {canManageSources && source.enabled && source.hasScrapeConfig && (
+                          <button
+                            onClick={() => handleRunScan(source.id)}
+                            disabled={
+                              runScan.isPending ||
+                              source.automaticScrapingState === "pending" ||
+                              source.automaticScrapingState === "running"
+                            }
+                            title="Avvia scansione"
+                            className="p-1.5 text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded transition-colors disabled:opacity-50"
+                          >
+                            <Icon name="play_arrow" size={16} />
+                          </button>
+                        )}
+                        {canManageSources && source.enabled && (
+                          <button
+                            onClick={() => pause.mutate(source.id)}
+                            disabled={pause.isPending}
+                            title="Metti in pausa"
+                            className="p-1.5 text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded transition-colors disabled:opacity-50"
+                          >
+                            <Icon name="pause" size={16} />
+                          </button>
+                        )}
+                        {isAdmin && (
+                          <button
+                            onClick={() => setScheduleTarget(source)}
+                            title="Pianificazione automatica"
+                            aria-label={`Pianifica ${source.name}`}
+                            className="p-1.5 text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded transition-colors"
+                          >
+                            <Icon name="schedule" size={16} />
+                          </button>
+                        )}
+                        {isAdmin && (
+                          <button
+                            onClick={() => setDuplicateTarget(source)}
+                            title="Duplica"
+                            aria-label={`Duplica ${source.name}`}
+                            className="p-1.5 text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded transition-colors"
+                          >
+                            <Icon name="content_copy" size={16} />
+                          </button>
+                        )}
+                        {isAdmin && (
+                          <button
+                            onClick={() => setFormSource(source)}
+                            title={source.hasScrapeConfig ? "Modifica configurazione" : "Configura"}
+                            className="p-1.5 text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded transition-colors"
+                          >
+                            <Icon name="tune" size={16} />
+                          </button>
+                        )}
+                        {canManageSources && source.enabled && (
+                          <button
+                            onClick={() => disable.mutate(source.id)}
+                            disabled={disable.isPending}
+                            title="Disabilita"
+                            className="p-1.5 text-on-surface-variant hover:text-error hover:bg-error-container/30 rounded transition-colors disabled:opacity-50"
+                          >
+                            <Icon name="block" size={16} />
+                          </button>
+                        )}
+                        {canManageSources && !source.enabled && (
+                          <button
+                            onClick={() => enable.mutate(source.id)}
+                            disabled={enable.isPending}
+                            title="Abilita"
+                            aria-label={`Abilita ${source.name}`}
+                            className="p-1.5 text-on-surface-variant hover:text-success hover:bg-success/10 rounded transition-colors disabled:opacity-50"
+                          >
+                            <Icon name="power_settings_new" size={16} />
+                          </button>
+                        )}
+                        {isAdmin && (
+                          <button
+                            onClick={() => setDeleteTarget(source)}
+                            title="Elimina"
+                            className="p-1.5 text-on-surface-variant hover:text-error hover:bg-error-container/30 rounded transition-colors"
+                          >
+                            <Icon name="delete" size={16} />
+                          </button>
+                        )}
                       </div>
-                      <div className="text-label-sm text-on-surface-variant font-mono">{source.code}</div>
-                    </div>
-                  </div>
-                </Td>
-                <Td>
-                  <Badge tone={STATUS_TONE[source.status]}>{STATUS_LABEL[source.status]}</Badge>
-                </Td>
-                <Td className="text-right">
-                  <span className="font-mono text-mono-data text-on-surface bg-surface-container px-2 py-1 rounded">
-                    {PRIORITY_LABEL[source.priority]}
-                  </span>
-                </Td>
-                <Td className="text-on-surface-variant">{formatRelativeTime(source.lastRunAt)}</Td>
-                <Td>
-                  <div className="space-y-1 min-w-[170px]">
-                    <Badge
-                      tone={
-                        source.automaticScrapingState === "waiting" ? "success" :
-                        source.automaticScrapingState === "running" ? "warning" :
-                        source.automaticScrapingState === "pending" ? "neutral" : "neutral"
-                      }
-                    >
-                      {source.automaticScrapingState === "waiting" ? "In attesa" : source.automaticScrapingState === "pending" ? "Pianificata" : source.automaticScrapingState === "running" ? "In esecuzione" : source.automaticScrapingState === "paused" ? "In pausa" : "Disabilitata"}
-                    </Badge>
-                    <div className="text-label-sm text-on-surface-variant">
-                      {source.automaticScrapingEnabled
-                        ? `Ogni ${formatInterval(source.scrapeIntervalMinutes)}`
-                        : "Disabilitata"}
-                    </div>
-                    {(source.automaticScrapingState === "pending" || source.automaticScrapingState === "running") ? (
-                      <div className="text-label-sm text-warning">Il timer parte al termine di questa scansione</div>
-                    ) : source.nextScrapeAt ? (
-                      <div className="text-label-sm text-on-surface-variant">
-                        Prossima: {formatDateTime(source.nextScrapeAt)}
-                      </div>
-                    ) : null}
-                  </div>
-                </Td>
-                <Td className="text-right font-mono text-on-surface">{source.itemsLast24h.toLocaleString()}</Td>
-                <Td
-                  className={`text-right font-mono ${
-                    source.status === "offline" ? "text-error" : source.status === "degraded" ? "text-warning" : "text-success"
-                  }`}
-                >
-                  {(source.errorRate * 100).toFixed(2)}%
-                </Td>
-                <Td className="text-right">
-                  <div className="flex justify-end items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                    {robotsResultBySource[source.id] && (
-                      <span className="text-label-sm text-on-surface-variant">{robotsResultBySource[source.id]}</span>
-                    )}
-                    <button
-                      onClick={() => handleCheckRobots(source)}
-                      disabled={checkRobots.isPending}
-                      title="Controlla robots.txt"
-                      className="p-1.5 text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded transition-colors disabled:opacity-50"
-                    >
-                      <Icon name="policy" size={16} />
-                    </button>
-                    {canManageSources && source.enabled && source.hasScrapeConfig && (
-                      <button
-                        onClick={() => handleRunScan(source.id)}
-                        disabled={runScan.isPending || source.automaticScrapingState === "pending" || source.automaticScrapingState === "running"}
-                        title="Avvia scansione"
-                        className="p-1.5 text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded transition-colors disabled:opacity-50"
-                      >
-                        <Icon name="play_arrow" size={16} />
-                      </button>
-                    )}
-                    {canManageSources && source.enabled && (
-                      <button
-                        onClick={() => pause.mutate(source.id)}
-                        disabled={pause.isPending}
-                        title="Metti in pausa"
-                        className="p-1.5 text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded transition-colors disabled:opacity-50"
-                      >
-                        <Icon name="pause" size={16} />
-                      </button>
-                    )}
-                    {isAdmin && (
-                      <button
-                        onClick={() => setScheduleTarget(source)}
-                        title="Pianificazione automatica"
-                        aria-label={`Pianifica ${source.name}`}
-                        className="p-1.5 text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded transition-colors"
-                      >
-                        <Icon name="schedule" size={16} />
-                      </button>
-                    )}
-                    {isAdmin && (
-                      <button
-                        onClick={() => setDuplicateTarget(source)}
-                        title="Duplica"
-                        aria-label={`Duplica ${source.name}`}
-                        className="p-1.5 text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded transition-colors"
-                      >
-                        <Icon name="content_copy" size={16} />
-                      </button>
-                    )}
-                    {isAdmin && (
-                      <button
-                        onClick={() => setFormSource(source)}
-                        title={source.hasScrapeConfig ? "Modifica configurazione" : "Configura"}
-                        className="p-1.5 text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded transition-colors"
-                      >
-                        <Icon name="tune" size={16} />
-                      </button>
-                    )}
-                    {canManageSources && source.enabled && (
-                      <button
-                        onClick={() => disable.mutate(source.id)}
-                        disabled={disable.isPending}
-                        title="Disabilita"
-                        className="p-1.5 text-on-surface-variant hover:text-error hover:bg-error-container/30 rounded transition-colors disabled:opacity-50"
-                      >
-                        <Icon name="block" size={16} />
-                      </button>
-                    )}
-                    {canManageSources && !source.enabled && (
-                      <button
-                        onClick={() => enable.mutate(source.id)}
-                        disabled={enable.isPending}
-                        title="Abilita"
-                        aria-label={`Abilita ${source.name}`}
-                        className="p-1.5 text-on-surface-variant hover:text-success hover:bg-success/10 rounded transition-colors disabled:opacity-50"
-                      >
-                        <Icon name="power_settings_new" size={16} />
-                      </button>
-                    )}
-                    {isAdmin && (
-                      <button
-                        onClick={() => setDeleteTarget(source)}
-                        title="Elimina"
-                        className="p-1.5 text-on-surface-variant hover:text-error hover:bg-error-container/30 rounded transition-colors"
-                      >
-                        <Icon name="delete" size={16} />
-                      </button>
-                    )}
-                  </div>
-                </Td>
-              </Tr>
-              {isExpanded && <SourceRunsPanel sourceId={source.id} colSpan={isAdmin ? 9 : 8} />}
-              </Fragment>
+                    </Td>
+                  </Tr>
+                  {isExpanded && <SourceRunsPanel sourceId={source.id} colSpan={isAdmin ? 9 : 8} />}
+                </Fragment>
               );
             })}
           </TBody>

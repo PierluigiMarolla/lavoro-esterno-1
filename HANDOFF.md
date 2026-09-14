@@ -1952,3 +1952,42 @@ Il normale `docker compose up -d --build api worker-scraper` è stato bloccato
 dal riferimento preesistente `minio/minio:latest`, rifiutato dal registry; il
 collaudo è proseguito costruendo i soli due servizi e avviandoli con
 `--no-deps`. Nessun volume applicativo è stato eliminato o ricreato.
+
+# Sessione 24 — 14 settembre 2026: supporto XPath per lo scraper
+
+Ogni selettore della configurazione Sources può ora scegliere autonomamente
+tra CSS e XPath 1.0. I nuovi campi camelCase sono
+`adLinkSelectorType`, `nextPageSelectorType`, `waitSelectorType`,
+`selectorType`, `containerSelectorType`, `keySelectorType`,
+`valueSelectorType`, `posterSelectorType`, `videoSelectorType` e
+`nextSelectorType`; i valori ammessi sono `css` e `xpath`, con default `css`
+per piena compatibilità con tutte le configurazioni precedenti.
+
+Il motore centralizza la selezione degli elementi: Scrapling usa `.css()` o
+`.xpath()` nel parsing HTTP e i flussi Dynamic/Stealth usano locator Playwright
+con engine XPath esplicito. Testo e attributi `href`/`src` vengono estratti in
+modo uniforme. Container e sotto-campi di `keyValue`, `posterVideo` e `items`
+possono mescolare i due linguaggi; gli XPath annidati sono relativi al
+container tramite sintassi `.//...`. Anche discovery, Next globali, Next dei
+campi e wait selector supportano XPath.
+
+Il rilevamento del cambiamento dopo un click non usa più
+`document.querySelectorAll`, ma interroga il locator configurato, preservando
+timeout, deduplicazione, same-origin, robots, rate limit e gestione dei Next
+duplicati equivalenti. Nessuna migrazione DB o nuova dipendenza è necessaria;
+duplicazione e import/export continuano a copiare il JSONB completo.
+
+La modale Sources mostra una scelta CSS/XPath per ciascun input e conserva i
+tipi durante creazione, modifica, riapertura e prova della bozza. README, API,
+architettura, guida sviluppo e `PROGETTO.md` sono stati allineati.
+
+Verifica finale: Ruff superato; suite backend completa `282 passed`, inclusi
+24 test browser Playwright; lint frontend senza errori (restano i due warning
+Fast Refresh preesistenti), controllo i18n e build Vite superati; E2E Sources
+`7 passed` sia sul server di sviluppo sia sul bundle Docker. Le immagini API,
+worker scraper e frontend sono state ricostruite; API health HTTP 200, worker
+Celery `pong` e `/sources` HTTP 200. Un probe Dynamic nell'immagine API con
+wait selector e campo XPath ha estratto correttamente `Example Domain`.
+Nessun volume applicativo è stato eliminato o ricreato; i servizi interessati
+sono stati avviati con `--no-deps` per non coinvolgere il riferimento MinIO
+preesistente non disponibile nel registry.

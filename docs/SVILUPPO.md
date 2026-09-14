@@ -187,12 +187,12 @@ progetto non lo fa per te).
 
 1. Nel form "Aggiungi fonte" (o via `PATCH /sources/{id}` con `scrapeConfig`),
    fornire: uno o più `startUrls` (pagine di elenco annunci),
-   `adLinkSelector` (selettore CSS dei link ai singoli annunci),
+   `adLinkSelector` (selettore CSS o XPath dei link ai singoli annunci),
    opzionalmente `nextPageSelector` (paginazione), `fetchMode`,
    `userAgent`, opzioni browser/stealth (`waitSelector`, `waitMs`,
    `solveCloudflare`, `blockWebrtc`, `hideCanvas`, `realChrome`,
    `blockAds`) e i `fields` da estrarre da ogni pagina annuncio
-   (selettore CSS + `attribute` `text`/`href`/`src` + `multiple` per liste
+   (selettore CSS/XPath + `attribute` `text`/`href`/`src` + `multiple` per liste
    come le immagini). Un campo `phone` è obbligatorio: senza telefono un
    annuncio non può essere collegato a nessun Record.
    Ogni nome non standard, per esempio `tags`, `city` o `price`, viene salvato
@@ -204,6 +204,10 @@ progetto non lo fa per te).
    funzione richiede `dynamic` o `stealth`; segue link same-origin o esegue un
    click JavaScript, applicando il rate limit tra le transizioni. La prima
    visualizzazione conta come pagina 1.
+   Ogni input selettore ha una scelta indipendente CSS/XPath, serializzata nei
+   campi `*SelectorType`; se omessa vale CSS. XPath usa la sintassi 1.0 e deve
+   identificare elementi HTML. Nei sotto-campi di `items`, `keyValue` e
+   `posterVideo` usare XPath relativi al container come `.//span`, non `//span`.
    Per commenti e recensioni strutturati usare il tipo `items`: il
    `containerSelector` identifica ogni elemento e gli `itemFields` estraggono
    valori scalari relativi come autore, data, voto e testo. Risultati ripetuti

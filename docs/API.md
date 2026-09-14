@@ -130,8 +130,10 @@ generico" per il razionale completo. Struttura di `scrapeConfig` (sia in
 ```json
 {
   "startUrls": ["https://example.com/listing"],
-  "adLinkSelector": "a.ad-card",
+  "adLinkSelector": "//article//a[@class='ad-card']",
+  "adLinkSelectorType": "xpath",
   "nextPageSelector": "a.pagination-next",
+  "nextPageSelectorType": "css",
   "maxPages": 5,
   "maxAdsPerRun": 200,
   "rateLimitSeconds": 2,
@@ -142,10 +144,11 @@ generico" per il razionale completo. Struttura di `scrapeConfig` (sia in
   "hideCanvas": false,
   "realChrome": false,
   "blockAds": false,
-  "waitSelector": null,
+  "waitSelector": "//*[@data-loaded]",
+  "waitSelectorType": "xpath",
   "waitMs": null,
   "fields": {
-    "phone": { "selector": ".ad-phone", "attribute": "text" },
+    "phone": { "selector": "//span[@class='ad-phone']", "selectorType": "xpath", "attribute": "text" },
     "title": { "selector": "h1.ad-title", "attribute": "text" },
     "tags": { "selector": ".tags span", "attribute": "text", "multiple": true },
     "city": { "selector": ".location", "attribute": "text" },
@@ -155,6 +158,7 @@ generico" per il razionale completo. Struttura di `scrapeConfig` (sia in
       "multiple": true,
       "pagination": {
         "nextSelector": "button.gallery-next",
+        "nextSelectorType": "css",
         "maxPages": 10,
         "maxItems": 1000
       }
@@ -163,8 +167,9 @@ generico" per il razionale completo. Struttura di `scrapeConfig` (sia in
       "extractionMode": "items",
       "multiple": true,
       "containerSelector": ".review",
+      "containerSelectorType": "css",
       "itemFields": {
-        "author": { "selector": ".author", "attribute": "text" },
+        "author": { "selector": ".//span[@class='author']", "selectorType": "xpath", "attribute": "text" },
         "rating": { "selector": ".rating", "attribute": "text" },
         "text": { "selector": ".body", "attribute": "text" }
       },
@@ -177,6 +182,15 @@ generico" per il razionale completo. Struttura di `scrapeConfig` (sia in
   }
 }
 ```
+
+Ogni selettore ha un tipo indipendente `"css"` o `"xpath"`: i campi
+`adLinkSelectorType`, `nextPageSelectorType`, `waitSelectorType`,
+`selectorType`, `containerSelectorType`, `keySelectorType`,
+`valueSelectorType`, `posterSelectorType`, `videoSelectorType` e
+`nextSelectorType` valgono `"css"` quando omessi. XPath è limitato alla
+versione 1.0 e deve selezionare elementi; nei container i sotto-selettori XPath
+relativi usano, per esempio, `.//span`. CSS e XPath possono convivere nella
+stessa fonte.
 
 Vincoli validati lato server, non aggirabili: il campo `phone` è
 obbligatorio in `fields` (senza telefono un annuncio non può essere

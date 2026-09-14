@@ -124,9 +124,78 @@ def test_scrape_config_accepts_structured_paginated_items() -> None:
     assert reviews.pagination is not None
     assert reviews.pagination.max_pages == 10
     assert reviews.pagination.max_items == 1000
-    assert config.model_dump(by_alias=True)["fields"]["reviews"]["pagination"][
-        "nextSelector"
-    ] == "button.more"
+    assert (
+        config.model_dump(by_alias=True)["fields"]["reviews"]["pagination"]["nextSelector"]
+        == "button.more"
+    )
+
+
+def test_scrape_config_supports_mixed_css_and_xpath_selector_types() -> None:
+    config = ScrapeConfigInput.model_validate(
+        {
+            "startUrls": ["https://example.com/list"],
+            "adLinkSelector": "//article//a",
+            "adLinkSelectorType": "xpath",
+            "nextPageSelector": "a.next",
+            "nextPageSelectorType": "css",
+            "fetchMode": "dynamic",
+            "waitSelector": "//*[@data-loaded]",
+            "waitSelectorType": "xpath",
+            "fields": {
+                "phone": {
+                    "selector": "//span[@data-phone]",
+                    "selectorType": "xpath",
+                },
+                "reviews": {
+                    "extractionMode": "items",
+                    "multiple": True,
+                    "containerSelector": "//article[@class='review']",
+                    "containerSelectorType": "xpath",
+                    "itemFields": {
+                        "text": {
+                            "selector": ".//p",
+                            "selectorType": "xpath",
+                        }
+                    },
+                    "pagination": {
+                        "nextSelector": "//button[@aria-label='Next']",
+                        "nextSelectorType": "xpath",
+                    },
+                },
+            },
+        }
+    )
+
+    dumped = config.model_dump(mode="json", by_alias=True)
+    assert dumped["adLinkSelectorType"] == "xpath"
+    assert dumped["nextPageSelectorType"] == "css"
+    assert dumped["waitSelectorType"] == "xpath"
+    assert dumped["fields"]["phone"]["selectorType"] == "xpath"
+    assert dumped["fields"]["reviews"]["containerSelectorType"] == "xpath"
+    assert dumped["fields"]["reviews"]["itemFields"]["text"]["selectorType"] == "xpath"
+    assert dumped["fields"]["reviews"]["pagination"]["nextSelectorType"] == "xpath"
+
+
+def test_scrape_config_defaults_legacy_selectors_to_css_and_rejects_unknown_type() -> None:
+    config = ScrapeConfigInput(
+        start_urls=["https://example.com/list"],
+        ad_link_selector="a.ad",
+        fields={"phone": {"selector": ".phone"}},
+    )
+    assert config.ad_link_selector_type == "css"
+    assert config.next_page_selector_type == "css"
+    assert config.wait_selector_type == "css"
+    assert config.fields["phone"].selector_type == "css"
+
+    with pytest.raises(ValidationError):
+        ScrapeConfigInput.model_validate(
+            {
+                "startUrls": ["https://example.com/list"],
+                "adLinkSelector": "//a",
+                "adLinkSelectorType": "xquery",
+                "fields": {"phone": {"selector": ".phone"}},
+            }
+        )
 
 
 def test_scrape_config_rejects_field_pagination_in_http_mode() -> None:
@@ -453,16 +522,21 @@ def test_source_transfer_preserves_paginated_structured_fields() -> None:
                     "baseUrl": "https://example.com",
                     "scrapeConfig": {
                         "startUrls": ["https://example.com/list"],
-                        "adLinkSelector": "a.ad",
+                        "adLinkSelector": "//a[contains(@class, 'ad')]",
+                        "adLinkSelectorType": "xpath",
                         "fetchMode": "dynamic",
                         "fields": {
                             "phone": {"selector": ".phone"},
                             "reviews": {
                                 "extractionMode": "items",
                                 "multiple": True,
-                                "containerSelector": ".review",
+                                "containerSelector": "//article[@class='review']",
+                                "containerSelectorType": "xpath",
                                 "itemFields": {"text": {"selector": ".text"}},
-                                "pagination": {"nextSelector": "button.more"},
+                                "pagination": {
+                                    "nextSelector": "//button[@class='more']",
+                                    "nextSelectorType": "xpath",
+                                },
                             },
                         },
                     },
@@ -471,12 +545,14 @@ def test_source_transfer_preserves_paginated_structured_fields() -> None:
         }
     )
 
-    reviews = document.model_dump(mode="json", by_alias=True)["sources"][0][
-        "scrapeConfig"
-    ]["fields"]["reviews"]
+    reviews = document.model_dump(mode="json", by_alias=True)["sources"][0]["scrapeConfig"][
+        "fields"
+    ]["reviews"]
     assert reviews["itemFields"]["text"]["selector"] == ".text"
+    assert reviews["containerSelectorType"] == "xpath"
     assert reviews["pagination"] == {
-        "nextSelector": "button.more",
+        "nextSelector": "//button[@class='more']",
+        "nextSelectorType": "xpath",
         "maxPages": 10,
         "maxItems": 1000,
     }

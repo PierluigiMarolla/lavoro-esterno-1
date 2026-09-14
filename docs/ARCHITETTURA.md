@@ -111,7 +111,7 @@ verificato dal vivo, è più preciso su questi punti (vedi PROGETTO.md § 4):
   GenericScraper` usa Scrapling per richieste HTTP, browser headless e
   modalità stealth configurabile (`fetchMode`) per qualunque fonte con
   `Source.scrape_config` valorizzato — nessuna fonte specifica è hardcoded
-  nel motore, i selettori CSS (URL di partenza, link annunci, paginazione,
+  nel motore, i selettori CSS o XPath 1.0 (link annunci, paginazione,
   campi) sono forniti dall'operatore via `PATCH /sources/{id}` o il form
   "Aggiungi/Modifica fonte" nell'interfaccia. Rispetta sempre `robots.txt` (verificato PRIMA
   di ogni richiesta, non solo come check manuale), un rate limit minimo e
@@ -126,6 +126,9 @@ verificato dal vivo, è più preciso su questi punti (vedi PROGETTO.md § 4):
   La risoluzione comune del Next accetta link duplicati in header/footer solo
   quando tutti conducono alla stessa destinazione normalizzata; i controlli
   JavaScript multipli o le destinazioni discordanti restano ambigui.
+  Ogni selettore dichiara autonomamente il proprio tipo; Scrapling usa `.css()`
+  o `.xpath()` nel parsing HTTP, mentre il browser usa locator Playwright. Le
+  configurazioni prive del tipo restano CSS.
   È l'unico motore di scraping del progetto: non esistono più connettori
   Python per-sito precompilati (i 9 stub iniziali descritti nelle versioni
   precedenti di questo documento sono stati rimossi, insieme al

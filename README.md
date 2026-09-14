@@ -71,6 +71,8 @@ non esiste, ricostruire `api` e `worker-scraper` con `--build`.
 I campi di una pagina annuncio possono essere impaginati singolarmente in
 modalità Dynamic/Stealth per raccogliere caroselli, commenti e recensioni;
 sono supportate sia liste di valori sia elementi strutturati configurabili.
+Ogni selettore dello scraper può usare CSS oppure XPath 1.0; il tipo si sceglie
+separatamente per link annunci, paginazione, attesa, campi e sotto-campi.
 
 Gli Admin possono trasferire le configurazioni tra installazioni dalla pagina
 Fonti: l'export produce JSON versionato e l'import mostra sempre un'anteprima

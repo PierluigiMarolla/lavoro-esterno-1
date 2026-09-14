@@ -13,6 +13,8 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.common import CamelModel
 
+SelectorType = Literal["css", "xpath"]
+
 
 def _validate_http_url(value: str) -> str:
     parsed = urlparse(value)
@@ -25,6 +27,7 @@ class ScrapeItemFieldConfig(CamelModel):
     """Sotto-campo scalare estratto relativamente a un elemento strutturato."""
 
     selector: str = Field(min_length=1, max_length=500)
+    selector_type: SelectorType = "css"
     attribute: Literal["text", "href", "src"] = "text"
 
 
@@ -32,27 +35,34 @@ class ScrapeFieldPaginationConfig(CamelModel):
     """Navigazione interna a un campo della pagina annuncio."""
 
     next_selector: str = Field(min_length=1, max_length=500)
+    next_selector_type: SelectorType = "css"
     max_pages: int = Field(default=10, ge=1, le=50)
     max_items: int = Field(default=1000, ge=1, le=5000)
 
 
 class ScrapeFieldConfig(CamelModel):
-    """Un singolo campo da estrarre da una pagina annuncio: selettore CSS +
+    """Un singolo campo da estrarre da una pagina annuncio: selettore CSS/XPath +
     dove prendere il valore (testo del nodo, o un suo attributo HTML come
     `src`/`href`)."""
 
     selector: str | None = Field(default=None, min_length=1)
+    selector_type: SelectorType = "css"
     attribute: str = "text"
     multiple: bool = False
     extraction_mode: Literal["value", "keyValue", "posterVideo", "items"] = "value"
     container_selector: str | None = Field(default=None, min_length=1)
+    container_selector_type: SelectorType = "css"
     key_selector: str | None = Field(default=None, min_length=1)
+    key_selector_type: SelectorType = "css"
     key_attribute: str = "text"
     value_selector: str | None = Field(default=None, min_length=1)
+    value_selector_type: SelectorType = "css"
     value_attribute: str = "text"
     poster_selector: str | None = Field(default=None, min_length=1)
+    poster_selector_type: SelectorType = "css"
     poster_attribute: str = "src"
     video_selector: str | None = Field(default=None, min_length=1)
+    video_selector_type: SelectorType = "css"
     video_attribute: str = "src"
     item_fields: dict[str, ScrapeItemFieldConfig] = Field(default_factory=dict)
     pagination: ScrapeFieldPaginationConfig | None = None
@@ -92,8 +102,7 @@ class ScrapeFieldConfig(CamelModel):
             raise ValueError("itemFields e consentito solo per extractionMode='items'.")
         if not self.poster_selector or not self.video_selector:
             raise ValueError(
-                "posterSelector e videoSelector sono obbligatori per "
-                "extractionMode='posterVideo'."
+                "posterSelector e videoSelector sono obbligatori per extractionMode='posterVideo'."
             )
         if self.poster_attribute not in {"src", "href"}:
             raise ValueError("posterAttribute deve essere 'src' o 'href'.")
@@ -148,7 +157,9 @@ class ScrapeConfigInput(CamelModel):
 
     start_urls: list[str] = Field(min_length=1)
     ad_link_selector: str = Field(min_length=1)
+    ad_link_selector_type: SelectorType = "css"
     next_page_selector: str | None = None
+    next_page_selector_type: SelectorType = "css"
     max_pages: int = Field(default=3, ge=1, le=20)
     max_ads_per_run: int = Field(default=50, ge=1, le=500)
     # Minimo 1s: rate limiting non disattivabile da configurazione (vedi
@@ -167,6 +178,7 @@ class ScrapeConfigInput(CamelModel):
     real_chrome: bool = False
     block_ads: bool = False
     wait_selector: str | None = Field(default=None, min_length=1, max_length=500)
+    wait_selector_type: SelectorType = "css"
     wait_ms: int | None = Field(default=None, ge=0, le=120_000)
     fields: dict[str, ScrapeFieldConfig] = Field(default_factory=dict)
 
@@ -510,13 +522,16 @@ class ScrapeErrorRead(CamelModel):
     id: uuid.UUID
     url: str
     error_message: str
-    error_code: Literal[
-        "anti_bot_blocked",
-        "proxy_pool_exhausted",
-        "robots_disallowed",
-        "fetch_failed",
-        "field_pagination_incomplete",
-    ] | None = None
+    error_code: (
+        Literal[
+            "anti_bot_blocked",
+            "proxy_pool_exhausted",
+            "robots_disallowed",
+            "fetch_failed",
+            "field_pagination_incomplete",
+        ]
+        | None
+    ) = None
     created_at: datetime
 
 
@@ -580,12 +595,15 @@ class TestConfigResult(CamelModel):
     extracted_fields: dict | None = None
     warnings: list[str] = Field(default_factory=list)
     error: str | None = None
-    error_code: Literal[
-        "anti_bot_blocked",
-        "proxy_pool_exhausted",
-        "robots_disallowed",
-        "fetch_failed",
-    ] | None = None
+    error_code: (
+        Literal[
+            "anti_bot_blocked",
+            "proxy_pool_exhausted",
+            "robots_disallowed",
+            "fetch_failed",
+        ]
+        | None
+    ) = None
     http_status: int | None = None
     recommended_actions: list[str] = Field(default_factory=list)
     pages_visited: int = 0

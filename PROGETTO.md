@@ -265,7 +265,7 @@ sezione** (che chiedeva selettori hardcoded per le 9 fonti sotto): è stato
 costruito un **motore di scraping generico e reale**
 (`backend/app/scrapers/generic.py:GenericScraper`) — fetch e parsing HTML
 via Scrapling, nessun sito specifico conosciuto dal motore. La conoscenza
-del sito (URL, selettori CSS per
+del sito (URL, selettori CSS o XPath 1.0 per
 link annunci/paginazione/campi) è fornita dall'operatore tramite l'app
 (`PATCH /sources/{id}` o il form "Aggiungi/Modifica fonte" nell'interfaccia), non scritta da
 chi ha sviluppato il progetto. Motivazione: implementare selettori reali
@@ -276,7 +276,7 @@ un'autorizzazione legale o una finalità legittima — un rischio concreto
 di abilitare stalking/doxxing/molestie verso una popolazione vulnerabile,
 indipendentemente dal contesto d'uso dichiarato. Per questo le 9 checkbox
 per-fonte restano non spuntate: il lavoro rimanente per ciascuna è ora
-"verificare ToS/robots.txt e trovare i selettori CSS giusti", non più
+"verificare ToS/robots.txt e trovare i selettori CSS/XPath giusti", non più
 "scrivere codice" — vedi `docs/SVILUPPO.md` § 7 per la procedura completa
 (Controlla robots.txt -> Testa configurazione su un annuncio reale, senza
 scrivere su DB -> scan reale).

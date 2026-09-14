@@ -44,14 +44,12 @@ const disabledSource = {
   enabled: false,
 };
 
-async function mockSourcesPage(page: Page, role = "admin", extraSources: typeof enabledSource[] = []) {
+async function mockSourcesPage(page: Page, role = "admin", extraSources: (typeof enabledSource)[] = []) {
   await page.addInitScript(() => {
     localStorage.setItem("lavoro_esterno_access_token", "token");
     localStorage.setItem("lavoro_esterno_refresh_token", "refresh");
   });
-  await page.route("**/api/v1/auth/me", (route) =>
-    route.fulfill({ json: { ...admin, role } }),
-  );
+  await page.route("**/api/v1/auth/me", (route) => route.fulfill({ json: { ...admin, role } }));
   await page.route("**/api/v1/notifications", (route) =>
     route.fulfill({ json: { items: [], unreadCount: 0 } }),
   );
@@ -61,18 +59,18 @@ async function mockSourcesPage(page: Page, role = "admin", extraSources: typeof 
   await page.route("**/api/v1/sources", (route) =>
     route.fulfill({ json: [enabledSource, disabledSource, ...extraSources] }),
   );
-  await page.route("**/api/v1/admin/proxy-pools", (route) =>
-    route.fulfill({ json: [] }),
-  );
+  await page.route("**/api/v1/admin/proxy-pools", (route) => route.fulfill({ json: [] }));
 }
 
 test("admin duplicates a source with a collision-safe suggested identity", async ({ page }) => {
-  await mockSourcesPage(page, "admin", [{
-    ...enabledSource,
-    id: "40000000-0000-4000-8000-000000000004",
-    code: "original_copy",
-    name: "Existing copy",
-  }]);
+  await mockSourcesPage(page, "admin", [
+    {
+      ...enabledSource,
+      id: "40000000-0000-4000-8000-000000000004",
+      code: "original_copy",
+      name: "Existing copy",
+    },
+  ]);
   let requestBody: unknown;
   await page.route(`**/api/v1/sources/${enabledSource.id}/duplicate`, async (route) => {
     requestBody = route.request().postDataJSON();
@@ -159,30 +157,36 @@ test("enable failure is surfaced without hiding the source", async ({ page }) =>
   await expect(page.getByText("Disabled source")).toBeVisible();
 });
 
-test("configuration test sends the unsaved pagination draft and shows diagnostics", async ({
-  page,
-}) => {
+test("configuration test sends the unsaved pagination draft and shows diagnostics", async ({ page }) => {
   await mockSourcesPage(page);
   const savedConfig = {
     startUrls: ["https://example.test/list"],
     adLinkSelector: "a.ad",
+    adLinkSelectorType: "css" as const,
     nextPageSelector: "a.old-next",
+    nextPageSelectorType: "css" as const,
     maxPages: 1,
     maxAdsPerRun: 50,
     rateLimitSeconds: 2,
     fetchMode: "stealth",
     renderJs: true,
     fields: {
-      phone: { selector: ".phone", attribute: "text", multiple: false },
+      phone: { selector: ".phone", selectorType: "css" as const, attribute: "text", multiple: false },
       reviews: {
         extractionMode: "items",
         multiple: true,
-        containerSelector: ".review",
+        containerSelector: "//article[@class='review']",
+        containerSelectorType: "xpath" as const,
         itemFields: {
-          author: { selector: ".author", attribute: "text" },
-          text: { selector: ".text", attribute: "text" },
+          author: { selector: ".//span[@class='author']", selectorType: "xpath" as const, attribute: "text" },
+          text: { selector: ".text", selectorType: "css" as const, attribute: "text" },
         },
-        pagination: { nextSelector: "button.more", maxPages: 10, maxItems: 1000 },
+        pagination: {
+          nextSelector: "//button[@class='more']",
+          nextSelectorType: "xpath" as const,
+          maxPages: 10,
+          maxItems: 1000,
+        },
       },
     },
   };
@@ -229,12 +233,14 @@ test("configuration test sends the unsaved pagination draft and shows diagnostic
   await row.getByTitle("Modifica configurazione").click();
   const dialog = page.getByRole("dialog", { name: "Modifica fonte" });
   await expect(dialog.getByLabel("Tipo estrazione reviews")).toHaveValue("items");
+  await expect(dialog.getByLabel("Tipo container reviews")).toHaveValue("xpath");
+  await expect(dialog.getByLabel("Tipo sotto-campo author")).toHaveValue("xpath");
+  await expect(dialog.getByLabel("Tipo paginazione reviews")).toHaveValue("xpath");
   await expect(dialog.getByLabel("Impagina reviews")).toBeChecked();
-  await expect(dialog.getByLabel("Selettore paginazione reviews")).toHaveValue("button.more");
+  await expect(dialog.getByLabel("Selettore paginazione reviews")).toHaveValue("//button[@class='more']");
   await dialog.getByLabel("Pagine massime", { exact: true }).fill("5");
-  await dialog.getByLabel("Selettore pagina successiva (opzionale)").fill(
-    'a.page-link[aria-label="Next"]',
-  );
+  await dialog.getByLabel("Selettore pagina successiva (opzionale)").fill("//a[@aria-label='Next']");
+  await dialog.getByLabel("Tipo selettore pagina successiva").selectOption("xpath");
   await dialog.getByRole("button", { name: "Prova configurazione" }).click();
 
   await expect(dialog.getByText("Pagine: 5/5")).toBeVisible();
@@ -243,9 +249,11 @@ test("configuration test sends the unsaved pagination draft and shows diagnostic
   await expect(dialog.getByText("24 elementi")).toBeVisible();
   await expect(dialog.getByText("completa")).toBeVisible();
   expect(testBody.scrapeConfig?.maxPages).toBe(5);
-  expect(testBody.scrapeConfig?.nextPageSelector).toBe('a.page-link[aria-label="Next"]');
+  expect(testBody.scrapeConfig?.nextPageSelector).toBe("//a[@aria-label='Next']");
+  expect(testBody.scrapeConfig?.nextPageSelectorType).toBe("xpath");
   expect(testBody.scrapeConfig?.fields.reviews.pagination).toEqual({
-    nextSelector: "button.more",
+    nextSelector: "//button[@class='more']",
+    nextSelectorType: "xpath",
     maxPages: 10,
     maxItems: 1000,
   });

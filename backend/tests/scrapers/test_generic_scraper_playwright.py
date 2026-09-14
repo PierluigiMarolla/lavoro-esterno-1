@@ -294,6 +294,55 @@ async def test_discover_follows_pagination_and_collects_all_ad_links(
     assert scraper.discovery_diagnostics.stop_reason == "end_of_pagination"
 
 
+async def test_browser_discovery_supports_xpath_link_pagination(
+    _chromium_ready: None, open_site_url: str
+) -> None:
+    scraper = _scraper(
+        open_site_url,
+        ad_link_selector="//a[contains(@class, 'ad-link')]",
+        ad_link_selector_type="xpath",
+        next_page_selector="//a[contains(@class, 'next')]",
+        next_page_selector_type="xpath",
+    )
+    try:
+        urls = await scraper.discover()
+    finally:
+        await scraper.aclose()
+
+    assert [url.rsplit("/", 1)[-1] for url in urls] == [
+        "ad1.html",
+        "ad2.html",
+        "ad3.html",
+    ]
+    assert scraper.discovery_diagnostics.pagination_mode == "href"
+
+
+async def test_browser_discovery_supports_xpath_javascript_pagination(
+    _chromium_ready: None, javascript_pagination_site_url: str
+) -> None:
+    scraper = _scraper(
+        javascript_pagination_site_url,
+        start_urls=[f"{javascript_pagination_site_url}/listing.html"],
+        ad_link_selector="//a[contains(@class, 'ad-link')]",
+        ad_link_selector_type="xpath",
+        next_page_selector="//a[@aria-label='Next']",
+        next_page_selector_type="xpath",
+        max_pages=3,
+    )
+    try:
+        urls = await scraper.discover()
+    finally:
+        await scraper.aclose()
+
+    assert [url.rsplit("/", 1)[-1] for url in urls] == [
+        "ad1.html",
+        "ad2.html",
+        "ad3.html",
+        "ad4.html",
+    ]
+    assert scraper.discovery_diagnostics.pagination_mode == "click"
+
+
 async def test_browser_discover_accepts_hidden_and_visible_equivalent_next_links(
     _chromium_ready: None, paginated_fields_site_url: str
 ) -> None:
@@ -404,6 +453,22 @@ async def test_scrape_ad_extracts_configured_fields(
     assert raw["description"] == "This is a synthetic test fixture, not real content."
     assert raw["phone"] == "+39 333 111 1111"
     assert raw["images"] == ["/img1.jpg", "/img2.jpg"]
+
+
+async def test_browser_wait_selector_supports_xpath(
+    _chromium_ready: None, open_site_url: str
+) -> None:
+    scraper = _scraper(
+        open_site_url,
+        wait_selector="//h1[contains(@class, 'ad-title')]",
+        wait_selector_type="xpath",
+    )
+    try:
+        raw = await scraper.scrape_ad(f"{open_site_url}/ad1.html")
+    finally:
+        await scraper.aclose()
+
+    assert raw["title"] == "Synthetic Ad One"
 
 
 async def test_field_pagination_collects_replaced_carousel_values(
@@ -580,6 +645,56 @@ async def test_field_pagination_accepts_equivalent_duplicate_links(
         assert diagnostic.pagination_mode == "href"
         assert diagnostic.stop_reason == "end_of_pagination"
         assert diagnostic.complete is True
+
+
+async def test_field_pagination_supports_xpath_for_values_items_and_next(
+    _chromium_ready: None, paginated_fields_site_url: str
+) -> None:
+    scraper = _scraper(
+        paginated_fields_site_url,
+        fields={
+            "phone": {
+                "selector": "//span[@class='phone']",
+                "selectorType": "xpath",
+            },
+            "comments": {
+                "selector": "//p[@class='comment']",
+                "selectorType": "xpath",
+                "multiple": True,
+                "pagination": {
+                    "nextSelector": "//a[contains(@class, 'reviews-next')]",
+                    "nextSelectorType": "xpath",
+                    "maxPages": 3,
+                },
+            },
+            "reviews": {
+                "extractionMode": "items",
+                "multiple": True,
+                "containerSelector": "//article[@class='review']",
+                "containerSelectorType": "xpath",
+                "itemFields": {
+                    "author": {
+                        "selector": ".//b[@class='author']",
+                        "selectorType": "xpath",
+                    }
+                },
+                "pagination": {
+                    "nextSelector": "//a[contains(@class, 'reviews-next')]",
+                    "nextSelectorType": "xpath",
+                    "maxPages": 3,
+                },
+            },
+        },
+    )
+    try:
+        raw = await scraper.scrape_ad(f"{paginated_fields_site_url}/duplicate-items-1.html")
+    finally:
+        await scraper.aclose()
+
+    assert raw["comments"] == ["Prima", "Seconda"]
+    assert raw["reviews"] == [{"author": "Ada"}, {"author": "Lin"}]
+    assert scraper.field_pagination_diagnostics["comments"].complete is True
+    assert scraper.field_pagination_diagnostics["reviews"].complete is True
 
 
 @pytest.mark.parametrize(

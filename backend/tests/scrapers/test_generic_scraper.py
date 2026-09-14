@@ -261,6 +261,27 @@ async def test_discover_follows_pagination_and_collects_all_ad_links(open_site_u
     assert urls[2].endswith("/ad3.html")  # dalla pagina 2, raggiunta via next_page_selector
 
 
+async def test_http_discovery_supports_xpath_for_ads_and_pagination(
+    open_site_url: str,
+) -> None:
+    scraper = _scraper(
+        open_site_url,
+        ad_link_selector="//a[contains(@class, 'ad-link')]",
+        ad_link_selector_type="xpath",
+        next_page_selector="//a[contains(@class, 'next')]",
+        next_page_selector_type="xpath",
+    )
+
+    urls = await scraper.discover()
+
+    assert [url.rsplit("/", 1)[-1] for url in urls] == [
+        "ad1.html",
+        "ad2.html",
+        "ad3.html",
+    ]
+    assert scraper.discovery_diagnostics.pages_visited == 2
+
+
 async def test_http_discover_accepts_duplicate_next_links_with_equivalent_targets(
     open_site_url: str,
 ) -> None:
@@ -396,6 +417,30 @@ async def test_scrape_ad_extracts_configured_fields(open_site_url: str) -> None:
     assert raw["images"] == ["/img1.jpg", "/img2.jpg"]
 
 
+async def test_scrape_ad_extracts_text_and_attributes_with_xpath(open_site_url: str) -> None:
+    scraper = _scraper(
+        open_site_url,
+        fields={
+            "phone": {
+                "selector": "//span[contains(@class, 'ad-phone')]",
+                "selectorType": "xpath",
+                "attribute": "text",
+            },
+            "images": {
+                "selector": "//div[contains(@class, 'ad-gallery')]//img",
+                "selectorType": "xpath",
+                "attribute": "src",
+                "multiple": True,
+            },
+        },
+    )
+
+    raw = await scraper.scrape_ad(f"{open_site_url}/ad1.html")
+
+    assert raw["phone"] == "+39 333 111 1111"
+    assert raw["images"] == ["/img1.jpg", "/img2.jpg"]
+
+
 @pytest.mark.parametrize(
     ("raw_key", "expected"),
     [
@@ -508,6 +553,67 @@ def test_structured_items_extract_scalar_subfields_and_skip_empty_items() -> Non
             },
         },
     ) == [{"author": "Ada", "rating": "5"}, {"author": "Lin"}]
+
+
+def test_structured_modes_support_relative_xpath_selectors() -> None:
+    page = Selector(
+        """
+        <section class="detail"><dt>Età</dt><dd>26</dd></section>
+        <section class="clip"><img src="/poster.jpg"><video src="/video.mp4"></video></section>
+        <article class="review"><b>Ada</b><p>Ottima</p></article>
+        """
+    )
+    scraper = _scraper("https://example.com")
+
+    assert scraper._extract_field(
+        page,
+        {
+            "extractionMode": "keyValue",
+            "containerSelector": "//section[@class='detail']",
+            "containerSelectorType": "xpath",
+            "keySelector": ".//dt",
+            "keySelectorType": "xpath",
+            "valueSelector": ".//dd",
+            "valueSelectorType": "xpath",
+        },
+    ) == {"eta": "26"}
+    assert scraper._extract_field(
+        page,
+        {
+            "extractionMode": "posterVideo",
+            "containerSelector": "//section[@class='clip']",
+            "containerSelectorType": "xpath",
+            "posterSelector": ".//img",
+            "posterSelectorType": "xpath",
+            "posterAttribute": "src",
+            "videoSelector": ".//video",
+            "videoSelectorType": "xpath",
+            "videoAttribute": "src",
+        },
+    ) == [{"poster": "/poster.jpg", "video": "/video.mp4"}]
+    assert scraper._extract_field(
+        page,
+        {
+            "extractionMode": "items",
+            "containerSelector": "//article[@class='review']",
+            "containerSelectorType": "xpath",
+            "itemFields": {
+                "author": {"selector": ".//b", "selectorType": "xpath"},
+                "text": {"selector": ".//p", "selectorType": "xpath"},
+            },
+        },
+    ) == [{"author": "Ada", "text": "Ottima"}]
+
+
+def test_xpath_wait_selector_is_encoded_for_the_browser() -> None:
+    scraper = _scraper(
+        "https://example.com",
+        fetch_mode="dynamic",
+        wait_selector="//*[@data-loaded]",
+        wait_selector_type="xpath",
+    )
+
+    assert scraper._browser_request_kwargs()["wait_selector"] == "xpath=//*[@data-loaded]"
 
 
 def test_paginated_merge_deduplicates_lists_and_keeps_first_key_value() -> None:

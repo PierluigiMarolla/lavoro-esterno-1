@@ -1,6 +1,6 @@
 """Motore di scraping generico, reale e configurabile.
 
-`GenericScraper` non conosce alcun sito specifico: URL, selettori CSS per
+`GenericScraper` non conosce alcun sito specifico: URL, selettori CSS/XPath per
 link annunci/paginazione e campi da estrarre arrivano da
 `Source.scrape_config` (JSONB, validato da
 `app/schemas/sources.py:ScrapeConfigInput` prima di essere salvato).
@@ -348,7 +348,10 @@ class GenericScraper(Scraper):
                 self._config_value("solve_cloudflare", "solveCloudflare", False)
             )
         if wait_selector := self._config_value("wait_selector", "waitSelector"):
-            kwargs["wait_selector"] = str(wait_selector)
+            wait_selector_type = self._config_value("wait_selector_type", "waitSelectorType", "css")
+            kwargs["wait_selector"] = self._browser_selector(
+                str(wait_selector), str(wait_selector_type)
+            )
         if wait_ms := self._config_value("wait_ms", "waitMs"):
             kwargs["wait"] = int(wait_ms)
         return kwargs
@@ -435,16 +438,30 @@ class GenericScraper(Scraper):
             raise PageFetchError(f"Risposta HTTP {status_code} per {url}")
 
     @staticmethod
-    def _extract_all(page: Any, selector: str, attribute: str) -> list[str]:
+    def _browser_selector(selector: str, selector_type: str) -> str:
+        """Converte il selettore configurato nel formato accettato da Playwright."""
+        return f"xpath={selector}" if selector_type == "xpath" else selector
+
+    @staticmethod
+    def _select_elements(page: Any, selector: str, selector_type: str = "css") -> list[Any]:
+        """Seleziona elementi con l'engine CSS o XPath 1.0 di Scrapling."""
+        selected = page.xpath(selector) if selector_type == "xpath" else page.css(selector)
+        return list(selected)
+
+    @classmethod
+    def _extract_all(
+        cls, page: Any, selector: str, attribute: str, selector_type: str = "css"
+    ) -> list[str]:
+        elements = cls._select_elements(page, selector, selector_type)
         if attribute == "text":
             # `selector::text` restituisce un valore per ciascun nodo testuale:
             # con <p>prima<br>seconda</p> il consumer non-multiple prendeva
             # quindi soltanto "prima". Selezioniamo invece gli elementi e ne
             # ricostruiamo il testo completo, conservando i <br> come newline.
-            values = [GenericScraper._element_text(element) for element in page.css(selector)]
+            values = [cls._element_text(element) for element in elements]
         else:
-            values = page.css(f"{selector}::attr({attribute})").getall()
-        return [str(value).strip() for value in values if str(value).strip()]
+            values = [element.attrib.get(attribute) for element in elements]
+        return [str(value).strip() for value in values if value is not None and str(value).strip()]
 
     @staticmethod
     def _element_text(element: Any) -> str:
@@ -494,7 +511,13 @@ class GenericScraper(Scraper):
             self._config_value("max_ads_per_run", "maxAdsPerRun") or _DEFAULT_MAX_ADS_PER_RUN
         )
         ad_link_selector = self._config_value("ad_link_selector", "adLinkSelector")
+        ad_link_selector_type = str(
+            self._config_value("ad_link_selector_type", "adLinkSelectorType", "css")
+        )
         next_page_selector = self._config_value("next_page_selector", "nextPageSelector")
+        next_page_selector_type = str(
+            self._config_value("next_page_selector_type", "nextPageSelectorType", "css")
+        )
 
         self.discovery_diagnostics = DiscoveryDiagnostics(configured_max_pages=max_pages)
         if next_page_selector and max_pages == 1:
@@ -508,14 +531,18 @@ class GenericScraper(Scraper):
                 max_pages=max_pages,
                 max_ads=max_ads,
                 ad_link_selector=ad_link_selector,
+                ad_link_selector_type=ad_link_selector_type,
                 next_page_selector=next_page_selector,
+                next_page_selector_type=next_page_selector_type,
             )
         else:
             urls = await self._discover_browser(
                 max_pages=max_pages,
                 max_ads=max_ads,
                 ad_link_selector=ad_link_selector,
+                ad_link_selector_type=ad_link_selector_type,
                 next_page_selector=next_page_selector,
+                next_page_selector_type=next_page_selector_type,
             )
         self.discovery_diagnostics.unique_ads_found = len(urls)
         return urls
@@ -578,7 +605,9 @@ class GenericScraper(Scraper):
         max_pages: int,
         max_ads: int,
         ad_link_selector: str,
+        ad_link_selector_type: str,
         next_page_selector: str | None,
+        next_page_selector_type: str,
     ) -> list[str]:
         urls: list[str] = []
         seen_urls: set[str] = set()
@@ -599,7 +628,7 @@ class GenericScraper(Scraper):
                     urls,
                     seen_urls,
                     page_url,
-                    self._extract_all(page, ad_link_selector, "href"),
+                    self._extract_all(page, ad_link_selector, "href", ad_link_selector_type),
                     max_ads,
                 ):
                     return urls
@@ -609,7 +638,7 @@ class GenericScraper(Scraper):
                 if page_index + 1 >= max_pages:
                     self.discovery_diagnostics.stop_reason = "max_pages"
                     break
-                controls = list(page.css(next_page_selector))
+                controls = self._select_elements(page, next_page_selector, next_page_selector_type)
                 if not controls:
                     self.discovery_diagnostics.stop_reason = "end_of_pagination"
                     if page_index == 0:
@@ -617,7 +646,9 @@ class GenericScraper(Scraper):
                             "Il selettore di paginazione non ha trovato il controllo Next."
                         )
                     break
-                next_hrefs = self._extract_all(page, next_page_selector, "href")
+                next_hrefs = self._extract_all(
+                    page, next_page_selector, "href", next_page_selector_type
+                )
                 next_url = self._equivalent_next_url(page_url, next_hrefs, len(controls))
                 if len(controls) > 1 and next_url is None:
                     self.discovery_diagnostics.stop_reason = "ambiguous_next_control"
@@ -647,7 +678,9 @@ class GenericScraper(Scraper):
         max_pages: int,
         max_ads: int,
         ad_link_selector: str,
+        ad_link_selector_type: str,
         next_page_selector: str | None,
+        next_page_selector_type: str,
     ) -> list[str]:
         from app.services.robots_check import is_allowed
 
@@ -673,7 +706,9 @@ class GenericScraper(Scraper):
                 nonlocal stop_all
                 for page_index in range(max_pages):
                     current_url = str(browser_page.url)
-                    ad_locator = browser_page.locator(ad_link_selector)
+                    ad_locator = browser_page.locator(
+                        self._browser_selector(ad_link_selector, ad_link_selector_type)
+                    )
                     hrefs = await ad_locator.evaluate_all(
                         "(elements) => elements.map((element) => "
                         "element.getAttribute('href')).filter(Boolean)"
@@ -702,7 +737,9 @@ class GenericScraper(Scraper):
                         self.discovery_diagnostics.stop_reason = "max_pages"
                         break
 
-                    controls = browser_page.locator(next_page_selector)
+                    controls = browser_page.locator(
+                        self._browser_selector(next_page_selector, next_page_selector_type)
+                    )
                     control_count = await controls.count()
                     if control_count == 0:
                         self.discovery_diagnostics.stop_reason = "end_of_pagination"
@@ -755,23 +792,26 @@ class GenericScraper(Scraper):
                         # evita che un overlay puramente visuale intercetti il comando.
                         await control.evaluate("(element) => element.click()")
 
-                    try:
-                        await browser_page.wait_for_function(
-                            "({selector, beforeUrl, beforeLinks}) => {"
-                            "const links = Array.from(document.querySelectorAll(selector))"
-                            ".map((element) => element.getAttribute('href'))"
-                            ".filter(Boolean).map((href) => new URL(href, location.href).href);"
-                            "return location.href !== beforeUrl || "
-                            "JSON.stringify(links) !== beforeLinks;"
-                            "}",
-                            arg={
-                                "selector": ad_link_selector,
-                                "beforeUrl": before_url,
-                                "beforeLinks": before_links,
-                            },
-                            timeout=_PAGINATION_CHANGE_TIMEOUT_MS,
+                    deadline = time.monotonic() + (_PAGINATION_CHANGE_TIMEOUT_MS / 1000)
+                    page_changed = False
+                    while time.monotonic() < deadline:
+                        after_url = str(browser_page.url)
+                        after_locator = browser_page.locator(
+                            self._browser_selector(ad_link_selector, ad_link_selector_type)
                         )
-                    except Exception:  # noqa: BLE001 - convertito in diagnostica sicura
+                        after_hrefs = await after_locator.evaluate_all(
+                            "(elements) => elements.map((element) => "
+                            "element.getAttribute('href')).filter(Boolean)"
+                        )
+                        after_links = json.dumps(
+                            [urljoin(after_url, str(item)) for item in after_hrefs],
+                            separators=(",", ":"),
+                        )
+                        if after_url != before_url or after_links != before_links:
+                            page_changed = True
+                            break
+                        await asyncio.sleep(0.2)
+                    if not page_changed:
                         self.discovery_diagnostics.stop_reason = "page_did_not_change"
                         self.discovery_diagnostics.errors.append(
                             "Il controllo Next non ha modificato URL o annunci entro il timeout."
@@ -843,9 +883,10 @@ class GenericScraper(Scraper):
             return self._extract_items_field(page, spec)
 
         selector = spec["selector"]
+        selector_type = self._field_option(spec, "selector_type", "selectorType", "css")
         attribute = spec.get("attribute", "text")
         multiple = bool(spec.get("multiple", False))
-        values = self._extract_all(page, selector, attribute)
+        values = self._extract_all(page, selector, attribute, selector_type)
         if multiple:
             return values
         return values[0] if values else None
@@ -853,15 +894,19 @@ class GenericScraper(Scraper):
     def _extract_items_field(self, page: Any, spec: dict[str, Any]) -> list[dict[str, str]]:
         """Estrae oggetti usando selettori relativi al rispettivo container."""
         container_selector = self._field_option(spec, "container_selector", "containerSelector")
+        container_selector_type = self._field_option(
+            spec, "container_selector_type", "containerSelectorType", "css"
+        )
         item_fields = self._field_option(spec, "item_fields", "itemFields", {})
         items: list[dict[str, str]] = []
-        for container in page.css(container_selector):
+        for container in self._select_elements(page, container_selector, container_selector_type):
             item: dict[str, str] = {}
             for name, item_spec in item_fields.items():
                 values = self._extract_all(
                     container,
                     self._field_option(item_spec, "selector", "selector"),
                     self._field_option(item_spec, "attribute", "attribute", "text"),
+                    self._field_option(item_spec, "selector_type", "selectorType", "css"),
                 )
                 if values:
                     item[name] = values[0]
@@ -912,6 +957,9 @@ class GenericScraper(Scraper):
 
         pagination = self._field_option(spec, "pagination", "pagination", {})
         next_selector = self._field_option(pagination, "next_selector", "nextSelector")
+        next_selector_type = self._field_option(
+            pagination, "next_selector_type", "nextSelectorType", "css"
+        )
         max_pages = int(self._field_option(pagination, "max_pages", "maxPages", 10))
         max_items = int(self._field_option(pagination, "max_items", "maxItems", 1000))
         extraction_mode = self._field_option(spec, "extraction_mode", "extractionMode", "value")
@@ -951,7 +999,9 @@ class GenericScraper(Scraper):
                     return
 
                 for _page_index in range(1, max_pages):
-                    controls = browser_page.locator(next_selector)
+                    controls = browser_page.locator(
+                        self._browser_selector(next_selector, next_selector_type)
+                    )
                     count = await controls.count()
                     if count == 0:
                         diagnostic.stop_reason = "end_of_pagination"
@@ -1058,14 +1108,23 @@ class GenericScraper(Scraper):
 
     def _extract_key_value_field(self, page: Any, spec: dict[str, Any]) -> dict[str, str]:
         container_selector = self._field_option(spec, "container_selector", "containerSelector")
+        container_selector_type = self._field_option(
+            spec, "container_selector_type", "containerSelectorType", "css"
+        )
         key_selector = self._field_option(spec, "key_selector", "keySelector")
+        key_selector_type = self._field_option(spec, "key_selector_type", "keySelectorType", "css")
         value_selector = self._field_option(spec, "value_selector", "valueSelector")
+        value_selector_type = self._field_option(
+            spec, "value_selector_type", "valueSelectorType", "css"
+        )
         key_attribute = self._field_option(spec, "key_attribute", "keyAttribute", "text")
         value_attribute = self._field_option(spec, "value_attribute", "valueAttribute", "text")
         pairs: dict[str, str] = {}
-        for container in page.css(container_selector):
-            keys = self._extract_all(container, key_selector, key_attribute)
-            values = self._extract_all(container, value_selector, value_attribute)
+        for container in self._select_elements(page, container_selector, container_selector_type):
+            keys = self._extract_all(container, key_selector, key_attribute, key_selector_type)
+            values = self._extract_all(
+                container, value_selector, value_attribute, value_selector_type
+            )
             if not keys or not values:
                 continue
             key = self.normalize_pair_key(keys[0])
@@ -1075,14 +1134,27 @@ class GenericScraper(Scraper):
 
     def _extract_poster_video_field(self, page: Any, spec: dict[str, Any]) -> list[dict[str, str]]:
         container_selector = self._field_option(spec, "container_selector", "containerSelector")
+        container_selector_type = self._field_option(
+            spec, "container_selector_type", "containerSelectorType", "css"
+        )
         poster_selector = self._field_option(spec, "poster_selector", "posterSelector")
+        poster_selector_type = self._field_option(
+            spec, "poster_selector_type", "posterSelectorType", "css"
+        )
         video_selector = self._field_option(spec, "video_selector", "videoSelector")
+        video_selector_type = self._field_option(
+            spec, "video_selector_type", "videoSelectorType", "css"
+        )
         poster_attribute = self._field_option(spec, "poster_attribute", "posterAttribute", "src")
         video_attribute = self._field_option(spec, "video_attribute", "videoAttribute", "src")
         pairs: list[dict[str, str]] = []
-        for container in page.css(container_selector):
-            posters = self._extract_all(container, poster_selector, poster_attribute)
-            videos = self._extract_all(container, video_selector, video_attribute)
+        for container in self._select_elements(page, container_selector, container_selector_type):
+            posters = self._extract_all(
+                container, poster_selector, poster_attribute, poster_selector_type
+            )
+            videos = self._extract_all(
+                container, video_selector, video_attribute, video_selector_type
+            )
             if posters and videos:
                 pairs.append({"poster": posters[0], "video": videos[0]})
         return pairs

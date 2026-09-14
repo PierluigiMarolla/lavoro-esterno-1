@@ -31,6 +31,7 @@ export type LoginResult =
 export type SourceStatus = "healthy" | "degraded" | "offline";
 export type SourcePriority = "high" | "medium" | "low";
 export type ScrapeFetchMode = "http" | "dynamic" | "stealth";
+export type ScrapeSelectorType = "css" | "xpath";
 export type AutomaticScrapingState = "waiting" | "pending" | "running" | "paused" | "disabled";
 export type ScrapeIntervalUnit = "minutes" | "hours" | "days";
 
@@ -67,28 +68,36 @@ export type ScrapeFieldExtractionMode = "value" | "keyValue" | "posterVideo" | "
 
 export interface ScrapeItemFieldConfig {
   selector: string;
+  selectorType?: ScrapeSelectorType;
   attribute: "text" | "href" | "src";
 }
 
 export interface ScrapeFieldPaginationConfig {
   nextSelector: string;
+  nextSelectorType?: ScrapeSelectorType;
   maxPages: number;
   maxItems: number;
 }
 
 export interface ScrapeFieldConfig {
   selector?: string | null;
+  selectorType?: ScrapeSelectorType;
   attribute: string;
   multiple: boolean;
   extractionMode?: ScrapeFieldExtractionMode;
   containerSelector?: string | null;
+  containerSelectorType?: ScrapeSelectorType;
   keySelector?: string | null;
+  keySelectorType?: ScrapeSelectorType;
   keyAttribute?: string;
   valueSelector?: string | null;
+  valueSelectorType?: ScrapeSelectorType;
   valueAttribute?: string;
   posterSelector?: string | null;
+  posterSelectorType?: ScrapeSelectorType;
   posterAttribute?: string;
   videoSelector?: string | null;
+  videoSelectorType?: ScrapeSelectorType;
   videoAttribute?: string;
   itemFields?: Record<string, ScrapeItemFieldConfig>;
   pagination?: ScrapeFieldPaginationConfig | null;
@@ -97,7 +106,9 @@ export interface ScrapeFieldConfig {
 export interface ScrapeConfig {
   startUrls: string[];
   adLinkSelector: string;
+  adLinkSelectorType?: ScrapeSelectorType;
   nextPageSelector: string | null;
+  nextPageSelectorType?: ScrapeSelectorType;
   maxPages: number;
   maxAdsPerRun: number;
   rateLimitSeconds: number;
@@ -110,6 +121,7 @@ export interface ScrapeConfig {
   realChrome?: boolean;
   blockAds?: boolean;
   waitSelector?: string | null;
+  waitSelectorType?: ScrapeSelectorType;
   waitMs?: number | null;
   fields: Record<string, ScrapeFieldConfig>;
 }
@@ -229,12 +241,7 @@ export interface ProxyTestResult {
   message: string;
 }
 
-export type ScrapingRunStatus =
-  | "queued"
-  | "running"
-  | "completed"
-  | "failed"
-  | "rate_limited";
+export type ScrapingRunStatus = "queued" | "running" | "completed" | "failed" | "rate_limited";
 
 export interface ScrapingActivity {
   id: string;
@@ -458,8 +465,7 @@ export interface SummaryGenerationJob {
 }
 
 export type AIProviderName =
-  | "ollama" | "openai" | "anthropic" | "google" | "groq"
-  | "mistral" | "openrouter" | "custom_openai";
+  "ollama" | "openai" | "anthropic" | "google" | "groq" | "mistral" | "openrouter" | "custom_openai";
 
 export interface AIProviderConfig {
   provider: AIProviderName;
@@ -585,35 +591,70 @@ export interface ErasureRequest {
 }
 
 export interface SourcePriorityJob {
-  id: string; sourceId: string; previousPriority: SourcePriority; requestedPriority: SourcePriority;
+  id: string;
+  sourceId: string;
+  previousPriority: SourcePriority;
+  requestedPriority: SourcePriority;
   status: "pending" | "processing" | "completed" | "failed" | "superseded";
-  recordsTotal: number; recordsProcessed: number; canonicalsChanged: number;
-  errorMessage: string | null; createdAt: string; startedAt: string | null; completedAt: string | null;
+  recordsTotal: number;
+  recordsProcessed: number;
+  canonicalsChanged: number;
+  errorMessage: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
 }
 
 export interface SourcePriorityConfig {
-  sourceId: string; name: string; code: string; status: SourceStatus; priority: SourcePriority;
-  affectedRecords: number; latestJob: SourcePriorityJob | null;
+  sourceId: string;
+  name: string;
+  code: string;
+  status: SourceStatus;
+  priority: SourcePriority;
+  affectedRecords: number;
+  latestJob: SourcePriorityJob | null;
 }
 
 export interface ClassifierSettings {
-  modelName: string; modelVersion: string; safeThreshold: number; explicitThreshold: number; revision: number;
-  stats: { classifications: Record<string, number>; processing: Record<string, number>; reviews: Record<string, number> };
+  modelName: string;
+  modelVersion: string;
+  safeThreshold: number;
+  explicitThreshold: number;
+  revision: number;
+  stats: {
+    classifications: Record<string, number>;
+    processing: Record<string, number>;
+    reviews: Record<string, number>;
+  };
 }
 
 export interface OperationalNotification {
-  id: string; kind: string; severity: "info" | "warning" | "error";
-  title: string; message: string; link: string | null; isRead: boolean; createdAt: string;
+  id: string;
+  kind: string;
+  severity: "info" | "warning" | "error";
+  title: string;
+  message: string;
+  link: string | null;
+  isRead: boolean;
+  createdAt: string;
 }
 
-export interface NotificationList { items: OperationalNotification[]; unreadCount: number }
+export interface NotificationList {
+  items: OperationalNotification[];
+  unreadCount: number;
+}
 
 export interface SystemComponent {
-  name: string; status: "healthy" | "degraded" | "unavailable"; latencyMs: number | null; message: string | null;
+  name: string;
+  status: "healthy" | "degraded" | "unavailable";
+  latencyMs: number | null;
+  message: string | null;
 }
 
 export interface SystemStatus {
-  status: "healthy" | "degraded" | "unavailable"; checkedAt: string; components: SystemComponent[];
+  status: "healthy" | "degraded" | "unavailable";
+  checkedAt: string;
+  components: SystemComponent[];
 }
 
 export interface Paginated<T> {
