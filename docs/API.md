@@ -135,7 +135,7 @@ generico" per il razionale completo. Struttura di `scrapeConfig` (sia in
   "maxPages": 5,
   "maxAdsPerRun": 200,
   "rateLimitSeconds": 2,
-  "fetchMode": "http",
+  "fetchMode": "dynamic",
   "userAgent": "CustomScraper/2.0",
   "solveCloudflare": false,
   "blockWebrtc": false,
@@ -149,7 +149,31 @@ generico" per il razionale completo. Struttura di `scrapeConfig` (sia in
     "title": { "selector": "h1.ad-title", "attribute": "text" },
     "tags": { "selector": ".tags span", "attribute": "text", "multiple": true },
     "city": { "selector": ".location", "attribute": "text" },
-    "images": { "selector": ".gallery img", "attribute": "src", "multiple": true }
+    "images": {
+      "selector": ".gallery img",
+      "attribute": "src",
+      "multiple": true,
+      "pagination": {
+        "nextSelector": "button.gallery-next",
+        "maxPages": 10,
+        "maxItems": 1000
+      }
+    },
+    "reviews": {
+      "extractionMode": "items",
+      "multiple": true,
+      "containerSelector": ".review",
+      "itemFields": {
+        "author": { "selector": ".author", "attribute": "text" },
+        "rating": { "selector": ".rating", "attribute": "text" },
+        "text": { "selector": ".body", "attribute": "text" }
+      },
+      "pagination": {
+        "nextSelector": "button.load-more",
+        "maxPages": 10,
+        "maxItems": 1000
+      }
+    }
   }
 }
 ```
@@ -169,16 +193,42 @@ Le modalità browser riusano la stessa sessione, inclusi cookie e storage, per
 tutto il run; la sessione viene ricreata quando cambia proxy.
 
 I codici diagnostici sono `anti_bot_blocked`, `proxy_pool_exhausted`,
-`robots_disallowed` e `fetch_failed`. `solveCloudflare` esegue tentativi
+`robots_disallowed`, `fetch_failed` e `field_pagination_incomplete`.
+`solveCloudflare` esegue tentativi
 limitati e non garantisce l'accesso: una challenge ancora attiva interrompe
 la richiesta o causa la rotazione sul successivo proxy del pool.
 
-`nextPageSelector` deve identificare esattamente un solo controllo Next. Se
-l'elemento ha `href`, il motore segue il link; se non lo ha, i mode `dynamic`
-e `stealth` eseguono un click DOM controllato e attendono che URL o annunci
-cambino. Il mode HTTP segnala invece che serve un browser. URL e contenuti già
-visitati sono bloccati, i link annuncio sono deduplicati e la navigazione di
-paginazione è limitata alla stessa origine.
+`nextPageSelector` deve identificare un controllo Next univoco oppure più link
+duplicati con `href` che, risolti rispetto alla pagina corrente e senza il
+frammento, portano tutti alla stessa destinazione. Questo copre, per esempio,
+lo stesso Next ripetuto sopra e sotto l'elenco; destinazioni diverse, selezioni
+miste link/pulsante e pulsanti JavaScript multipli restano ambigui. Se il
+controllo unico non ha `href`, i mode `dynamic` e `stealth` eseguono un click
+DOM controllato e attendono che URL o annunci cambino. Il mode HTTP segnala
+invece che serve un browser. URL e contenuti già visitati sono bloccati, i link
+annuncio sono deduplicati e la navigazione è limitata alla stessa origine.
+
+La `pagination` annidata in un campo è distinta dalla paginazione delle pagine
+elenco e richiede `fetchMode` `dynamic` o `stealth`. La prima visualizzazione
+conta come pagina 1; `maxPages` vale 10 per default (massimo 50) e `maxItems`
+1000 (massimo 5000). Il controllo può essere un link della stessa origine o un
+pulsante JavaScript che aggiunge o sostituisce elementi. I valori sono uniti
+nell'ordine di prima apparizione e deduplicati. `value` richiede
+`multiple=true`; `keyValue` conserva il primo valore per chiave;
+`posterVideo` e `items` producono liste. `items` è riservato ai campi custom e
+usa `containerSelector` più `itemFields` scalari relativi al container. I
+campi standard scalari `phone`, `title` e `description` non possono essere
+impaginati; tra i campi standard la funzione è prevista per `images` e
+`videos`.
+
+Anche il Next di un campo può comparire più volte, purché tutte le occorrenze
+siano link equivalenti secondo le stesse regole della paginazione dell'elenco.
+
+`POST /sources/{id}/test-config` restituisce anche `fieldPagination`, una
+mappa per campo con `pagesVisited`, `itemsCollected`, `paginationMode`,
+`stopReason` e `complete`. Timeout, loop, navigazioni non consentite e limiti
+mantengono i dati già raccolti ma generano la diagnostica
+`field_pagination_incomplete` nel run reale.
 
 I nomi diversi dai campi standard `title`, `description`, `phone`, `images`
 e `videos` sono campi custom. Lo scan ne salva lo snapshot in

@@ -127,7 +127,10 @@ File (immagine/video) associato a un annuncio.
   generico (`app/scrapers/generic.py`, vedi § "Motore di scraping
   generico" sotto), unico motore esistente. Nullable: una fonte senza
   `scrape_config` non può essere scansionata (il run fallisce
-  esplicitamente finché non viene configurata).
+  esplicitamente finché non viene configurata). La stessa struttura JSONB
+  conserva opzionalmente `fields.*.pagination` e gli `itemFields` delle
+  raccolte strutturate: sono configurazione validata, non nuove entità
+  relazionali, quindi l'impaginazione interna non richiede una migrazione.
 - `watermark_removal_enabled`, `watermark_authorization_reference` e
   `watermark_regions` JSONB: configurazione Admin-only, valida solo con
   autorizzazione e regioni normalizzate.

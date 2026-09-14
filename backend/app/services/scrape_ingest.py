@@ -70,6 +70,7 @@ _SCRAPE_ERROR_CODES = {
     "proxy_pool_exhausted",
     "robots_disallowed",
     "fetch_failed",
+    "field_pagination_incomplete",
 }
 
 
@@ -205,6 +206,7 @@ async def collect_ads(
         ]
 
         for url in ad_urls:
+            pagination_warning_offset = len(scraper.field_pagination_warnings)
             try:
                 raw = await scraper.scrape_ad(url)
             except (RobotsDisallowedError, httpx.HTTPError, PageFetchError) as exc:
@@ -215,6 +217,17 @@ async def collect_ads(
                     )
                 )
                 continue
+
+            errors.extend(
+                ScrapeErrorDetail(
+                    url=url,
+                    message=message,
+                    code="field_pagination_incomplete",
+                )
+                for message in scraper.field_pagination_warnings[
+                    pagination_warning_offset:
+                ]
+            )
 
             normalized = scraper.normalize(raw)
             if not normalized.get("phone_raw"):

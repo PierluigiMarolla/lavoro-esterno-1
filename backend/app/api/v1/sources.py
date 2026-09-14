@@ -1234,6 +1234,7 @@ async def test_source_config(
             extracted_fields=raw,
             warnings=[
                 *scraper.media_extraction_warnings(raw),
+                *getattr(scraper, "field_pagination_warnings", []),
                 *diagnostics.warnings,
                 *diagnostics.errors,
             ],
@@ -1242,6 +1243,18 @@ async def test_source_config(
             pagination_mode=diagnostics.pagination_mode,
             pagination_stop_reason=diagnostics.stop_reason,
             unique_ads_found=diagnostics.unique_ads_found,
+            field_pagination={
+                name: {
+                    "pages_visited": field_diagnostic.pages_visited,
+                    "items_collected": field_diagnostic.items_collected,
+                    "pagination_mode": field_diagnostic.pagination_mode,
+                    "stop_reason": field_diagnostic.stop_reason,
+                    "complete": field_diagnostic.complete,
+                }
+                for name, field_diagnostic in getattr(
+                    scraper, "field_pagination_diagnostics", {}
+                ).items()
+            },
         )
     except RobotsDisallowedError as exc:
         return TestConfigResult(

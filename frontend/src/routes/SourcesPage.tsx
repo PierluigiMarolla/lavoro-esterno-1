@@ -208,6 +208,11 @@ interface FieldRow {
   posterAttribute: string;
   videoSelector: string;
   videoAttribute: string;
+  itemFields: Array<{ name: string; selector: string; attribute: "text" | "href" | "src" }>;
+  paginationEnabled: boolean;
+  paginationNextSelector: string;
+  paginationMaxPages: number;
+  paginationMaxItems: number;
 }
 
 const emptyFieldRow = (name = ""): FieldRow => ({
@@ -225,6 +230,11 @@ const emptyFieldRow = (name = ""): FieldRow => ({
   posterAttribute: "src",
   videoSelector: "",
   videoAttribute: "src",
+  itemFields: [],
+  paginationEnabled: false,
+  paginationNextSelector: "",
+  paginationMaxPages: 10,
+  paginationMaxItems: 1000,
 });
 
 function fieldsToRows(fields: Record<string, ScrapeFieldConfig>): FieldRow[] {
@@ -237,6 +247,15 @@ function fieldsToRows(fields: Record<string, ScrapeFieldConfig>): FieldRow[] {
     valueSelector: field.valueSelector ?? "",
     posterSelector: field.posterSelector ?? "",
     videoSelector: field.videoSelector ?? "",
+    itemFields: Object.entries(field.itemFields ?? {}).map(([fieldName, config]) => ({
+      name: fieldName,
+      selector: config.selector,
+      attribute: config.attribute,
+    })),
+    paginationEnabled: field.pagination != null,
+    paginationNextSelector: field.pagination?.nextSelector ?? "",
+    paginationMaxPages: field.pagination?.maxPages ?? 10,
+    paginationMaxItems: field.pagination?.maxItems ?? 1000,
     extractionMode: field.extractionMode ?? "value",
   }));
 }
@@ -246,12 +265,20 @@ function rowsToFields(rows: FieldRow[]): Record<string, ScrapeFieldConfig> {
   for (const row of rows) {
     const name = row.name.trim();
     if (!name) continue;
+    const pagination = row.paginationEnabled
+      ? {
+          nextSelector: row.paginationNextSelector.trim(),
+          maxPages: row.paginationMaxPages,
+          maxItems: row.paginationMaxItems,
+        }
+      : null;
     if (row.extractionMode === "value" && row.selector.trim()) {
       fields[name] = {
         selector: row.selector.trim(),
         attribute: row.attribute,
         multiple: row.multiple,
         extractionMode: "value",
+        pagination,
       };
     } else if (row.extractionMode === "keyValue" && row.containerSelector.trim()) {
       fields[name] = {
@@ -263,6 +290,7 @@ function rowsToFields(rows: FieldRow[]): Record<string, ScrapeFieldConfig> {
         keyAttribute: row.keyAttribute,
         valueSelector: row.valueSelector.trim() || null,
         valueAttribute: row.valueAttribute,
+        pagination,
       };
     } else if (row.extractionMode === "posterVideo" && row.containerSelector.trim()) {
       fields[name] = {
@@ -274,6 +302,23 @@ function rowsToFields(rows: FieldRow[]): Record<string, ScrapeFieldConfig> {
         posterAttribute: row.posterAttribute,
         videoSelector: row.videoSelector.trim() || null,
         videoAttribute: row.videoAttribute,
+        pagination,
+      };
+    } else if (row.extractionMode === "items" && row.containerSelector.trim()) {
+      fields[name] = {
+        attribute: "text",
+        multiple: true,
+        extractionMode: "items",
+        containerSelector: row.containerSelector.trim(),
+        itemFields: Object.fromEntries(
+          row.itemFields
+            .filter((item) => item.name.trim() && item.selector.trim())
+            .map((item) => [
+              item.name.trim(),
+              { selector: item.selector.trim(), attribute: item.attribute },
+            ]),
+        ),
+        pagination,
       };
     }
   }
@@ -281,6 +326,10 @@ function rowsToFields(rows: FieldRow[]): Record<string, ScrapeFieldConfig> {
 }
 
 const EMPTY_FIELD_ROWS: FieldRow[] = [emptyFieldRow("phone")];
+
+function isScalarStandardField(name: string): boolean {
+  return ["phone", "title", "description", "source_url"].includes(name.trim());
+}
 
 // Add/Edit dialog: name/base_url/priority plus the full generic scraping
 // engine configuration (start URLs, ad link/pagination selectors, per-field
@@ -417,6 +466,41 @@ function SourceFormDialog({
     setFieldRows((rows) => rows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
   }
 
+  function addItemField(fieldIndex: number) {
+    setFieldRows((rows) =>
+      rows.map((row, index) =>
+        index === fieldIndex
+          ? { ...row, itemFields: [...row.itemFields, { name: "", selector: "", attribute: "text" }] }
+          : row,
+      ),
+    );
+  }
+
+  function updateItemField(fieldIndex: number, itemIndex: number, patch: Partial<FieldRow["itemFields"][number]>) {
+    setFieldRows((rows) =>
+      rows.map((row, index) =>
+        index === fieldIndex
+          ? {
+              ...row,
+              itemFields: row.itemFields.map((item, nestedIndex) =>
+                nestedIndex === itemIndex ? { ...item, ...patch } : item,
+              ),
+            }
+          : row,
+      ),
+    );
+  }
+
+  function removeItemField(fieldIndex: number, itemIndex: number) {
+    setFieldRows((rows) =>
+      rows.map((row, index) =>
+        index === fieldIndex
+          ? { ...row, itemFields: row.itemFields.filter((_, nestedIndex) => nestedIndex !== itemIndex) }
+          : row,
+      ),
+    );
+  }
+
   function addFieldRow() {
     setFieldRows((rows) => [...rows, emptyFieldRow()]);
   }
@@ -501,6 +585,7 @@ function SourceFormDialog({
         paginationMode: "none",
         paginationStopReason: "not_started",
         uniqueAdsFound: 0,
+        fieldPagination: {},
       });
       return;
     }
@@ -522,6 +607,7 @@ function SourceFormDialog({
         paginationMode: "none",
         paginationStopReason: "failed",
         uniqueAdsFound: 0,
+        fieldPagination: {},
       });
     }
   }
@@ -799,7 +885,10 @@ function SourceFormDialog({
                         mono
                         placeholder="nome campo"
                         value={row.name}
-                        onChange={(e) => updateFieldRow(index, { name: e.target.value })}
+                        onChange={(e) => updateFieldRow(index, {
+                          name: e.target.value,
+                          ...(isScalarStandardField(e.target.value) ? { paginationEnabled: false } : {}),
+                        })}
                       />
                       <Input
                         mono
@@ -829,11 +918,25 @@ function SourceFormDialog({
                       <Select
                         aria-label={`Tipo estrazione ${row.name || index + 1}`}
                         value={row.extractionMode}
-                        onChange={(e) => updateFieldRow(index, { extractionMode: e.target.value as ScrapeFieldExtractionMode })}
+                        onChange={(e) => {
+                          const extractionMode = e.target.value as ScrapeFieldExtractionMode;
+                          updateFieldRow(index, {
+                            extractionMode,
+                            ...(extractionMode === "items"
+                              ? {
+                                  multiple: true,
+                                  itemFields: row.itemFields.length
+                                    ? row.itemFields
+                                    : [{ name: "text", selector: ".text", attribute: "text" as const }],
+                                }
+                              : {}),
+                          });
+                        }}
                       >
                         <option value="value">Valore</option>
                         <option value="keyValue">Chiave + valore</option>
                         <option value="posterVideo">Poster + video</option>
+                        <option value="items">Elementi strutturati</option>
                       </Select>
                       <button
                         type="button"
@@ -870,6 +973,65 @@ function SourceFormDialog({
                         </Select>
                       </div>
                     )}
+                    {row.extractionMode === "items" && (
+                      <div className="mt-2 space-y-2 rounded border border-border p-2 lg:ml-2">
+                        <div className="flex items-center gap-2">
+                          <Input
+                            mono
+                            className="flex-1"
+                            placeholder="containerSelector (es. .review)"
+                            value={row.containerSelector}
+                            onChange={(e) => updateFieldRow(index, { containerSelector: e.target.value })}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => addItemField(index)}
+                            className="text-label-sm text-primary hover:underline whitespace-nowrap"
+                          >
+                            + Sotto-campo
+                          </button>
+                        </div>
+                        {row.itemFields.map((itemField, itemIndex) => (
+                          <div key={itemIndex} className="grid grid-cols-[1fr_2fr_0.8fr_auto] gap-2">
+                            <Input mono placeholder="nome" value={itemField.name} onChange={(e) => updateItemField(index, itemIndex, { name: e.target.value })} />
+                            <Input mono placeholder="selettore relativo" value={itemField.selector} onChange={(e) => updateItemField(index, itemIndex, { selector: e.target.value })} />
+                            <Select value={itemField.attribute} onChange={(e) => updateItemField(index, itemIndex, { attribute: e.target.value as "text" | "href" | "src" })}>
+                              <option value="text">text</option><option value="href">href</option><option value="src">src</option>
+                            </Select>
+                            <button type="button" onClick={() => removeItemField(index, itemIndex)} className="text-on-surface-variant hover:text-error" aria-label={`Rimuovi sotto-campo ${itemField.name || itemIndex + 1}`}>
+                              <Icon name="close" size={16} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="mt-2 rounded border border-border p-2 lg:ml-2">
+                      <label className="flex items-center gap-2 text-label-sm text-on-surface-variant">
+                        <input
+                          type="checkbox"
+                          aria-label={`Impagina ${row.name || index + 1}`}
+                          disabled={isScalarStandardField(row.name)}
+                          checked={row.paginationEnabled}
+                          onChange={(e) => updateFieldRow(index, {
+                            paginationEnabled: e.target.checked,
+                            ...(e.target.checked && row.extractionMode === "value" ? { multiple: true } : {}),
+                          })}
+                        />
+                        Campo impaginato
+                      </label>
+                      {row.paginationEnabled && (
+                        <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-[2fr_1fr_1fr]">
+                          <Input mono required aria-label={`Selettore paginazione ${row.name || index + 1}`} placeholder="selettore Next / Carica altri" value={row.paginationNextSelector} onChange={(e) => updateFieldRow(index, { paginationNextSelector: e.target.value })} />
+                          <Input type="number" min={1} max={50} value={row.paginationMaxPages} onChange={(e) => updateFieldRow(index, { paginationMaxPages: Number(e.target.value) })} aria-label={`Pagine massime ${row.name || index + 1}`} />
+                          <Input type="number" min={1} max={5000} value={row.paginationMaxItems} onChange={(e) => updateFieldRow(index, { paginationMaxItems: Number(e.target.value) })} aria-label={`Elementi massimi ${row.name || index + 1}`} />
+                        </div>
+                      )}
+                      {row.paginationEnabled && (
+                        <p className={`mt-1 text-xs ${fetchMode === "http" ? "text-error" : "text-on-surface-variant"}`}>
+                          Prima pagina inclusa nel limite. Richiede acquisizione JavaScript dinamica o discreta.
+                        </p>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -923,6 +1085,21 @@ function SourceFormDialog({
                         </div>
                         {testResult.sampleUrl && (
                           <p className="font-mono text-on-surface-variant truncate">Esempio: {testResult.sampleUrl}</p>
+                        )}
+                        {Object.entries(testResult.fieldPagination).length > 0 && (
+                          <div className="mt-2 space-y-1">
+                            <p className="font-medium text-on-surface">Impaginazione dei campi</p>
+                            {Object.entries(testResult.fieldPagination).map(([fieldName, diagnostic]) => (
+                              <div key={fieldName} className="flex flex-wrap gap-x-3 rounded border border-border px-2 py-1 font-mono text-on-surface-variant">
+                                <span>{fieldName}</span>
+                                <span>{diagnostic.itemsCollected} elementi</span>
+                                <span>{diagnostic.pagesVisited} pagine</span>
+                                <span>{diagnostic.paginationMode}</span>
+                                <span>{diagnostic.stopReason}</span>
+                                <span>{diagnostic.complete ? "completa" : "parziale"}</span>
+                              </div>
+                            ))}
+                          </div>
                         )}
                         {testResult.warnings.length > 0 && (
                           <div className="mt-2 rounded border border-warning/40 bg-warning/10 p-2 text-warning">

@@ -172,7 +172,19 @@ test("configuration test sends the unsaved pagination draft and shows diagnostic
     rateLimitSeconds: 2,
     fetchMode: "stealth",
     renderJs: true,
-    fields: { phone: { selector: ".phone", attribute: "text", multiple: false } },
+    fields: {
+      phone: { selector: ".phone", attribute: "text", multiple: false },
+      reviews: {
+        extractionMode: "items",
+        multiple: true,
+        containerSelector: ".review",
+        itemFields: {
+          author: { selector: ".author", attribute: "text" },
+          text: { selector: ".text", attribute: "text" },
+        },
+        pagination: { nextSelector: "button.more", maxPages: 10, maxItems: 1000 },
+      },
+    },
   };
   await page.route(`**/api/v1/sources/${enabledSource.id}`, (route) =>
     route.fulfill({
@@ -183,7 +195,7 @@ test("configuration test sends the unsaved pagination draft and shows diagnostic
       },
     }),
   );
-  let testBody: { scrapeConfig?: { maxPages?: number; nextPageSelector?: string } } = {};
+  let testBody: { scrapeConfig?: typeof savedConfig } = {};
   await page.route(`**/api/v1/sources/${enabledSource.id}/test-config`, async (route) => {
     testBody = route.request().postDataJSON();
     await route.fulfill({
@@ -198,6 +210,15 @@ test("configuration test sends the unsaved pagination draft and shows diagnostic
         paginationMode: "click",
         paginationStopReason: "max_pages",
         uniqueAdsFound: 80,
+        fieldPagination: {
+          reviews: {
+            pagesVisited: 3,
+            itemsCollected: 24,
+            paginationMode: "click",
+            stopReason: "end_of_pagination",
+            complete: true,
+          },
+        },
       },
     });
   });
@@ -207,7 +228,10 @@ test("configuration test sends the unsaved pagination draft and shows diagnostic
   await row.hover();
   await row.getByTitle("Modifica configurazione").click();
   const dialog = page.getByRole("dialog", { name: "Modifica fonte" });
-  await dialog.getByLabel("Pagine massime").fill("5");
+  await expect(dialog.getByLabel("Tipo estrazione reviews")).toHaveValue("items");
+  await expect(dialog.getByLabel("Impagina reviews")).toBeChecked();
+  await expect(dialog.getByLabel("Selettore paginazione reviews")).toHaveValue("button.more");
+  await dialog.getByLabel("Pagine massime", { exact: true }).fill("5");
   await dialog.getByLabel("Selettore pagina successiva (opzionale)").fill(
     'a.page-link[aria-label="Next"]',
   );
@@ -216,8 +240,15 @@ test("configuration test sends the unsaved pagination draft and shows diagnostic
   await expect(dialog.getByText("Pagine: 5/5")).toBeVisible();
   await expect(dialog.getByText("Annunci unici: 80")).toBeVisible();
   await expect(dialog.getByText("Modalità: click")).toBeVisible();
+  await expect(dialog.getByText("24 elementi")).toBeVisible();
+  await expect(dialog.getByText("completa")).toBeVisible();
   expect(testBody.scrapeConfig?.maxPages).toBe(5);
   expect(testBody.scrapeConfig?.nextPageSelector).toBe('a.page-link[aria-label="Next"]');
+  expect(testBody.scrapeConfig?.fields.reviews.pagination).toEqual({
+    nextSelector: "button.more",
+    maxPages: 10,
+    maxItems: 1000,
+  });
 });
 
 test("admin configures a fixed-delay schedule and sees the next execution", async ({ page }) => {

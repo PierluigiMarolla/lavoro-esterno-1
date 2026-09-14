@@ -63,7 +63,18 @@ export interface Source {
   automaticScrapingState: AutomaticScrapingState;
 }
 
-export type ScrapeFieldExtractionMode = "value" | "keyValue" | "posterVideo";
+export type ScrapeFieldExtractionMode = "value" | "keyValue" | "posterVideo" | "items";
+
+export interface ScrapeItemFieldConfig {
+  selector: string;
+  attribute: "text" | "href" | "src";
+}
+
+export interface ScrapeFieldPaginationConfig {
+  nextSelector: string;
+  maxPages: number;
+  maxItems: number;
+}
 
 export interface ScrapeFieldConfig {
   selector?: string | null;
@@ -79,6 +90,8 @@ export interface ScrapeFieldConfig {
   posterAttribute?: string;
   videoSelector?: string | null;
   videoAttribute?: string;
+  itemFields?: Record<string, ScrapeItemFieldConfig>;
+  pagination?: ScrapeFieldPaginationConfig | null;
 }
 
 export interface ScrapeConfig {
@@ -164,13 +177,23 @@ export interface TestConfigResult {
   paginationMode: "none" | "href" | "click";
   paginationStopReason: string;
   uniqueAdsFound: number;
+  fieldPagination: Record<string, FieldPaginationDiagnostic>;
+}
+
+export interface FieldPaginationDiagnostic {
+  pagesVisited: number;
+  itemsCollected: number;
+  paginationMode: "none" | "href" | "click";
+  stopReason: string;
+  complete: boolean;
 }
 
 export type ScrapeFailureCode =
   | "anti_bot_blocked"
   | "proxy_pool_exhausted"
   | "robots_disallowed"
-  | "fetch_failed";
+  | "fetch_failed"
+  | "field_pagination_incomplete";
 
 export type ProxyScheme = "http" | "https" | "socks4" | "socks5";
 

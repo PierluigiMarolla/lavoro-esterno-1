@@ -68,6 +68,9 @@ Le modalità browser vengono incluse nell'immagine backend: Chromium è usato
 normalmente, mentre l'opzione Sources “Chrome reale” usa Google Chrome tramite
 Patchright. Se un'immagine precedente segnala che `/opt/google/chrome/chrome`
 non esiste, ricostruire `api` e `worker-scraper` con `--build`.
+I campi di una pagina annuncio possono essere impaginati singolarmente in
+modalità Dynamic/Stealth per raccogliere caroselli, commenti e recensioni;
+sono supportate sia liste di valori sia elementi strutturati configurabili.
 
 Gli Admin possono trasferire le configurazioni tra installazioni dalla pagina
 Fonti: l'export produce JSON versionato e l'import mostra sempre un'anteprima
@@ -130,3 +133,8 @@ rimanente.
 Le fonti possono essere duplicate dalla UI Admin copiando tutta la
 configurazione ma non lo storico; la copia nasce disabilitata. Admin e Operator
 possono riabilitare dalla stessa tabella fonti disabilitate o in pausa.
+
+La paginazione dello scraper accetta anche lo stesso link Next ripetuto sopra e
+sotto il contenuto: gli `href` devono risolversi alla medesima destinazione.
+Controlli con destinazioni diverse o pulsanti JavaScript duplicati vengono
+segnalati come ambigui per evitare avanzamenti non deterministici.

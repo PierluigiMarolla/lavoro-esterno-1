@@ -143,6 +143,139 @@ def javascript_pagination_site_url() -> Iterator[str]:
         server.shutdown()
 
 
+@pytest.fixture
+def paginated_fields_site_url() -> Iterator[str]:
+    interactive = b"""<!doctype html><html><body>
+    <span class="phone">+39 333 111 1111</span>
+    <section id="carousel"><img class="slide" src="/one.jpg"></section>
+    <button class="carousel-next">Next image</button>
+    <section id="reviews">
+      <article class="review"><b class="author">Ada</b><p class="text">Prima</p></article>
+    </section>
+    <button class="reviews-more">More reviews</button>
+    <script>
+      const slides = ['/one.jpg', '/two.jpg', '/three.jpg'];
+      let slide = 0;
+      document.querySelector('.carousel-next').addEventListener('click', () => {
+        slide += 1;
+        document.querySelector('.slide').setAttribute('src', slides[slide]);
+        if (slide === slides.length - 1) document.querySelector('.carousel-next').remove();
+      });
+      const reviewPages = [
+        [['Ada', 'Prima']],
+        [['Ada', 'Prima'], ['Lin', 'Seconda']],
+        [['Ada', 'Prima'], ['Lin', 'Seconda'], ['Kim', 'Terza']]
+      ];
+      let reviewsPage = 0;
+      document.querySelector('.reviews-more').addEventListener('click', () => {
+        reviewsPage += 1;
+        document.querySelector('#reviews').innerHTML = reviewPages[reviewsPage]
+          .map(([author, text]) => `<article class="review"><b class="author">${author}</b>`
+            + `<p class="text">${text}</p></article>`).join('');
+        if (reviewsPage === reviewPages.length - 1) {
+          document.querySelector('.reviews-more').remove();
+        }
+      });
+    </script></body></html>"""
+    href_page_one = b"""<!doctype html><html><body>
+      <span class="phone">+39 333 111 1111</span>
+      <p class="comment">Uno</p><a class="comments-next" href="/comments-2.html">Next</a>
+    </body></html>"""
+    href_page_two = b"""<!doctype html><html><body>
+      <span class="phone">+39 333 111 1111</span>
+      <p class="comment">Due</p>
+    </body></html>"""
+    duplicate_listing_one = b"""<!doctype html><html><body>
+      <a class="next" style="display:none" href="?page=2#header">Next</a>
+      <a class="ad-link" href="/ad1.html">Ad 1</a>
+      <a class="next" href="?page=2#footer">Next</a>
+    </body></html>"""
+    duplicate_listing_two = b"""<!doctype html><html><body>
+      <a class="ad-link" href="/ad2.html">Ad 2</a>
+    </body></html>"""
+    duplicate_items_one = b"""<!doctype html><html><body>
+      <span class="phone">+39 333 111 1111</span>
+      <p class="comment">Prima</p>
+      <article class="review"><b class="author">Ada</b></article>
+      <a class="reviews-next" style="display:none"
+         href="/duplicate-items-2.html#header">Next</a>
+      <a class="reviews-next" href="/duplicate-items-2.html#footer">Next</a>
+    </body></html>"""
+    duplicate_items_two = b"""<!doctype html><html><body>
+      <span class="phone">+39 333 111 1111</span>
+      <p class="comment">Seconda</p>
+      <article class="review"><b class="author">Lin</b></article>
+    </body></html>"""
+    unchanged = b"""<!doctype html><html><body>
+      <span class="phone">+39 333 111 1111</span>
+      <p class="comment">Unico</p><button class="comments-next">Next</button>
+    </body></html>"""
+    unsafe_links = b"""<!doctype html><html><body>
+      <span class="phone">+39 333 111 1111</span><p class="comment">Unico</p>
+      <a class="external-next" href="https://example.com/elsewhere">Next</a>
+      <a class="blocked-next" href="/blocked">Blocked</a>
+    </body></html>"""
+    ambiguous = b"""<!doctype html><html><body>
+      <span class="phone">+39 333 111 1111</span><p class="comment">Unico</p>
+      <button class="comments-next">A</button><button class="comments-next">B</button>
+    </body></html>"""
+    repeated = b"""<!doctype html><html><body>
+      <span class="phone">+39 333 111 1111</span><p class="comment">Uno</p>
+      <button class="comments-next">Next</button>
+      <script>
+        let alternate = false;
+        document.querySelector('.comments-next').addEventListener('click', () => {
+          alternate = !alternate;
+          document.querySelector('.comment').textContent = alternate ? 'Due' : 'Uno';
+        });
+      </script>
+    </body></html>"""
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if self.path == "/robots.txt":
+                body = b"User-agent: *\nDisallow: /blocked\nAllow: /\n"
+            elif self.path == "/comments-1.html":
+                body = href_page_one
+            elif self.path == "/comments-2.html":
+                body = href_page_two
+            elif self.path == "/duplicated-listing.html":
+                body = duplicate_listing_one
+            elif self.path == "/duplicated-listing.html?page=2":
+                body = duplicate_listing_two
+            elif self.path == "/duplicate-items-1.html":
+                body = duplicate_items_one
+            elif self.path == "/duplicate-items-2.html":
+                body = duplicate_items_two
+            elif self.path == "/unchanged.html":
+                body = unchanged
+            elif self.path == "/unsafe-links.html":
+                body = unsafe_links
+            elif self.path == "/ambiguous.html":
+                body = ambiguous
+            elif self.path == "/repeated.html":
+                body = repeated
+            else:
+                body = interactive
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, message_format: str, *args: object) -> None:
+            return None
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address[:2]
+    try:
+        yield f"http://{host}:{port}"
+    finally:
+        server.shutdown()
+
+
 async def test_discover_follows_pagination_and_collects_all_ad_links(
     _chromium_ready: None, open_site_url: str
 ) -> None:
@@ -159,6 +292,30 @@ async def test_discover_follows_pagination_and_collects_all_ad_links(
     assert scraper.discovery_diagnostics.pages_visited == 2
     assert scraper.discovery_diagnostics.pagination_mode == "href"
     assert scraper.discovery_diagnostics.stop_reason == "end_of_pagination"
+
+
+async def test_browser_discover_accepts_hidden_and_visible_equivalent_next_links(
+    _chromium_ready: None, paginated_fields_site_url: str
+) -> None:
+    scraper = _scraper(
+        paginated_fields_site_url,
+        start_urls=[f"{paginated_fields_site_url}/duplicated-listing.html"],
+        next_page_selector="a.next",
+        max_pages=3,
+    )
+    try:
+        urls = await scraper.discover()
+    finally:
+        await scraper.aclose()
+
+    assert urls == [
+        f"{paginated_fields_site_url}/ad1.html",
+        f"{paginated_fields_site_url}/ad2.html",
+    ]
+    assert scraper.discovery_diagnostics.pages_visited == 2
+    assert scraper.discovery_diagnostics.pagination_mode == "href"
+    assert scraper.discovery_diagnostics.stop_reason == "end_of_pagination"
+    assert scraper.discovery_diagnostics.errors == []
 
 
 async def test_discover_clicks_javascript_next_under_overlay_and_deduplicates(
@@ -247,6 +404,281 @@ async def test_scrape_ad_extracts_configured_fields(
     assert raw["description"] == "This is a synthetic test fixture, not real content."
     assert raw["phone"] == "+39 333 111 1111"
     assert raw["images"] == ["/img1.jpg", "/img2.jpg"]
+
+
+async def test_field_pagination_collects_replaced_carousel_values(
+    _chromium_ready: None, paginated_fields_site_url: str
+) -> None:
+    scraper = _scraper(
+        paginated_fields_site_url,
+        fields={
+            "phone": {"selector": ".phone", "attribute": "text"},
+            "images": {
+                "selector": ".slide",
+                "attribute": "src",
+                "multiple": True,
+                "pagination": {
+                    "nextSelector": ".carousel-next",
+                    "maxPages": 10,
+                    "maxItems": 10,
+                },
+            },
+        },
+    )
+    try:
+        raw = await scraper.scrape_ad(f"{paginated_fields_site_url}/interactive.html")
+    finally:
+        await scraper.aclose()
+
+    assert raw["images"] == ["/one.jpg", "/two.jpg", "/three.jpg"]
+    diagnostic = scraper.field_pagination_diagnostics["images"]
+    assert diagnostic.pages_visited == 3
+    assert diagnostic.items_collected == 3
+    assert diagnostic.pagination_mode == "click"
+    assert diagnostic.stop_reason == "end_of_pagination"
+    assert diagnostic.complete is True
+
+
+async def test_field_pagination_collects_structured_load_more_items(
+    _chromium_ready: None, paginated_fields_site_url: str
+) -> None:
+    scraper = _scraper(
+        paginated_fields_site_url,
+        fields={
+            "phone": {"selector": ".phone", "attribute": "text"},
+            "reviews": {
+                "extractionMode": "items",
+                "multiple": True,
+                "containerSelector": ".review",
+                "itemFields": {
+                    "author": {"selector": ".author", "attribute": "text"},
+                    "text": {"selector": ".text", "attribute": "text"},
+                },
+                "pagination": {
+                    "nextSelector": ".reviews-more",
+                    "maxPages": 10,
+                    "maxItems": 10,
+                },
+            },
+        },
+    )
+    try:
+        raw = await scraper.scrape_ad(f"{paginated_fields_site_url}/interactive.html")
+    finally:
+        await scraper.aclose()
+
+    assert raw["reviews"] == [
+        {"author": "Ada", "text": "Prima"},
+        {"author": "Lin", "text": "Seconda"},
+        {"author": "Kim", "text": "Terza"},
+    ]
+    assert scraper.field_pagination_diagnostics["reviews"].complete is True
+
+
+async def test_field_pagination_stops_at_item_limit_and_reports_truncation(
+    _chromium_ready: None, paginated_fields_site_url: str
+) -> None:
+    scraper = _scraper(
+        paginated_fields_site_url,
+        fields={
+            "phone": {"selector": ".phone", "attribute": "text"},
+            "reviews": {
+                "extractionMode": "items",
+                "multiple": True,
+                "containerSelector": ".review",
+                "itemFields": {"author": {"selector": ".author"}},
+                "pagination": {
+                    "nextSelector": ".reviews-more",
+                    "maxPages": 10,
+                    "maxItems": 2,
+                },
+            },
+        },
+    )
+    try:
+        raw = await scraper.scrape_ad(f"{paginated_fields_site_url}/interactive.html")
+    finally:
+        await scraper.aclose()
+
+    assert raw["reviews"] == [{"author": "Ada"}, {"author": "Lin"}]
+    diagnostic = scraper.field_pagination_diagnostics["reviews"]
+    assert diagnostic.stop_reason == "max_items"
+    assert diagnostic.complete is False
+
+
+async def test_field_pagination_follows_same_origin_href(
+    _chromium_ready: None, paginated_fields_site_url: str
+) -> None:
+    scraper = _scraper(
+        paginated_fields_site_url,
+        fields={
+            "phone": {"selector": ".phone", "attribute": "text"},
+            "comments": {
+                "selector": ".comment",
+                "attribute": "text",
+                "multiple": True,
+                "pagination": {
+                    "nextSelector": ".comments-next",
+                    "maxPages": 10,
+                    "maxItems": 10,
+                },
+            },
+        },
+    )
+    try:
+        raw = await scraper.scrape_ad(f"{paginated_fields_site_url}/comments-1.html")
+    finally:
+        await scraper.aclose()
+
+    assert raw["comments"] == ["Uno", "Due"]
+    diagnostic = scraper.field_pagination_diagnostics["comments"]
+    assert diagnostic.pagination_mode == "href"
+    assert diagnostic.stop_reason == "end_of_pagination"
+    assert diagnostic.complete is True
+
+
+async def test_field_pagination_accepts_equivalent_duplicate_links(
+    _chromium_ready: None, paginated_fields_site_url: str
+) -> None:
+    scraper = _scraper(
+        paginated_fields_site_url,
+        fields={
+            "phone": {"selector": ".phone", "attribute": "text"},
+            "comments": {
+                "selector": ".comment",
+                "attribute": "text",
+                "multiple": True,
+                "pagination": {
+                    "nextSelector": ".reviews-next",
+                    "maxPages": 3,
+                    "maxItems": 10,
+                },
+            },
+            "reviews": {
+                "extractionMode": "items",
+                "multiple": True,
+                "containerSelector": ".review",
+                "itemFields": {"author": {"selector": ".author"}},
+                "pagination": {
+                    "nextSelector": ".reviews-next",
+                    "maxPages": 3,
+                    "maxItems": 10,
+                },
+            },
+        },
+    )
+    try:
+        raw = await scraper.scrape_ad(f"{paginated_fields_site_url}/duplicate-items-1.html")
+    finally:
+        await scraper.aclose()
+
+    assert raw["comments"] == ["Prima", "Seconda"]
+    assert raw["reviews"] == [{"author": "Ada"}, {"author": "Lin"}]
+    for field_name in ("comments", "reviews"):
+        diagnostic = scraper.field_pagination_diagnostics[field_name]
+        assert diagnostic.pages_visited == 2
+        assert diagnostic.pagination_mode == "href"
+        assert diagnostic.stop_reason == "end_of_pagination"
+        assert diagnostic.complete is True
+
+
+@pytest.mark.parametrize(
+    ("next_selector", "expected_reason"),
+    [
+        (".external-next", "cross_origin_blocked"),
+        (".blocked-next", "robots_disallowed"),
+    ],
+)
+async def test_field_pagination_keeps_partial_values_for_unsafe_links(
+    _chromium_ready: None,
+    paginated_fields_site_url: str,
+    next_selector: str,
+    expected_reason: str,
+) -> None:
+    scraper = _scraper(
+        paginated_fields_site_url,
+        fields={
+            "phone": {"selector": ".phone", "attribute": "text"},
+            "comments": {
+                "selector": ".comment",
+                "attribute": "text",
+                "multiple": True,
+                "pagination": {"nextSelector": next_selector, "maxPages": 3},
+            },
+        },
+    )
+    try:
+        raw = await scraper.scrape_ad(f"{paginated_fields_site_url}/unsafe-links.html")
+    finally:
+        await scraper.aclose()
+
+    assert raw["comments"] == ["Unico"]
+    assert scraper.field_pagination_diagnostics["comments"].stop_reason == expected_reason
+    assert scraper.field_pagination_warnings == [
+        f"Paginazione incompleta per il campo 'comments' ({expected_reason})."
+    ]
+
+
+async def test_field_pagination_keeps_partial_values_when_click_does_not_change(
+    _chromium_ready: None,
+    paginated_fields_site_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("app.scrapers.generic._PAGINATION_CHANGE_TIMEOUT_MS", 200)
+    scraper = _scraper(
+        paginated_fields_site_url,
+        fields={
+            "phone": {"selector": ".phone", "attribute": "text"},
+            "comments": {
+                "selector": ".comment",
+                "attribute": "text",
+                "multiple": True,
+                "pagination": {"nextSelector": ".comments-next", "maxPages": 3},
+            },
+        },
+    )
+    try:
+        raw = await scraper.scrape_ad(f"{paginated_fields_site_url}/unchanged.html")
+    finally:
+        await scraper.aclose()
+
+    assert raw["comments"] == ["Unico"]
+    assert scraper.field_pagination_diagnostics["comments"].stop_reason == "page_did_not_change"
+
+
+@pytest.mark.parametrize(
+    ("path", "expected_values", "expected_reason"),
+    [
+        ("ambiguous.html", ["Unico"], "ambiguous_next_control"),
+        ("repeated.html", ["Uno", "Due"], "repeated_content"),
+    ],
+)
+async def test_field_pagination_stops_on_ambiguous_or_repeated_content(
+    _chromium_ready: None,
+    paginated_fields_site_url: str,
+    path: str,
+    expected_values: list[str],
+    expected_reason: str,
+) -> None:
+    scraper = _scraper(
+        paginated_fields_site_url,
+        fields={
+            "phone": {"selector": ".phone", "attribute": "text"},
+            "comments": {
+                "selector": ".comment",
+                "attribute": "text",
+                "multiple": True,
+                "pagination": {"nextSelector": ".comments-next", "maxPages": 5},
+            },
+        },
+    )
+    try:
+        raw = await scraper.scrape_ad(f"{paginated_fields_site_url}/{path}")
+    finally:
+        await scraper.aclose()
+
+    assert raw["comments"] == expected_values
+    assert scraper.field_pagination_diagnostics["comments"].stop_reason == expected_reason
 
 
 async def test_browser_session_preserves_cookies_between_pages(

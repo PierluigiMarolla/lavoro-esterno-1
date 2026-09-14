@@ -21,6 +21,21 @@ def _validate_http_url(value: str) -> str:
     return value
 
 
+class ScrapeItemFieldConfig(CamelModel):
+    """Sotto-campo scalare estratto relativamente a un elemento strutturato."""
+
+    selector: str = Field(min_length=1, max_length=500)
+    attribute: Literal["text", "href", "src"] = "text"
+
+
+class ScrapeFieldPaginationConfig(CamelModel):
+    """Navigazione interna a un campo della pagina annuncio."""
+
+    next_selector: str = Field(min_length=1, max_length=500)
+    max_pages: int = Field(default=10, ge=1, le=50)
+    max_items: int = Field(default=1000, ge=1, le=5000)
+
+
 class ScrapeFieldConfig(CamelModel):
     """Un singolo campo da estrarre da una pagina annuncio: selettore CSS +
     dove prendere il valore (testo del nodo, o un suo attributo HTML come
@@ -29,7 +44,7 @@ class ScrapeFieldConfig(CamelModel):
     selector: str | None = Field(default=None, min_length=1)
     attribute: str = "text"
     multiple: bool = False
-    extraction_mode: Literal["value", "keyValue", "posterVideo"] = "value"
+    extraction_mode: Literal["value", "keyValue", "posterVideo", "items"] = "value"
     container_selector: str | None = Field(default=None, min_length=1)
     key_selector: str | None = Field(default=None, min_length=1)
     key_attribute: str = "text"
@@ -39,12 +54,18 @@ class ScrapeFieldConfig(CamelModel):
     poster_attribute: str = "src"
     video_selector: str | None = Field(default=None, min_length=1)
     video_attribute: str = "src"
+    item_fields: dict[str, ScrapeItemFieldConfig] = Field(default_factory=dict)
+    pagination: ScrapeFieldPaginationConfig | None = None
 
     @model_validator(mode="after")
     def validate_extraction_mode(self):
         if self.extraction_mode == "value":
             if not self.selector:
                 raise ValueError("selector e obbligatorio per extractionMode='value'.")
+            if self.item_fields:
+                raise ValueError("itemFields e consentito solo per extractionMode='items'.")
+            if self.pagination is not None and not self.multiple:
+                raise ValueError("Un campo value impaginato deve avere multiple=true.")
             return self
 
         if not self.container_selector:
@@ -52,12 +73,23 @@ class ScrapeFieldConfig(CamelModel):
                 f"containerSelector e obbligatorio per extractionMode='{self.extraction_mode}'."
             )
         if self.extraction_mode == "keyValue":
+            if self.item_fields:
+                raise ValueError("itemFields e consentito solo per extractionMode='items'.")
             if not self.key_selector or not self.value_selector:
                 raise ValueError(
                     "keySelector e valueSelector sono obbligatori per extractionMode='keyValue'."
                 )
             return self
 
+        if self.extraction_mode == "items":
+            if not self.item_fields:
+                raise ValueError("itemFields e obbligatorio per extractionMode='items'.")
+            if not self.multiple:
+                raise ValueError("Un campo items deve avere multiple=true.")
+            return self
+
+        if self.item_fields:
+            raise ValueError("itemFields e consentito solo per extractionMode='items'.")
         if not self.poster_selector or not self.video_selector:
             raise ValueError(
                 "posterSelector e videoSelector sono obbligatori per "
@@ -189,6 +221,27 @@ class ScrapeConfigInput(CamelModel):
                 "senza un numero di telefono estratto, un annuncio non può essere "
                 "collegato a nessun Record (vedi app/services/scrape_ingest.py)."
             )
+        for field_name, field_config in value.items():
+            if field_config.extraction_mode == "items" and field_name in {
+                "title",
+                "description",
+                "phone",
+                "images",
+                "videos",
+                "source_url",
+            }:
+                raise ValueError(
+                    f"Il campo standard '{field_name}' non puo usare extractionMode='items'."
+                )
+            if field_config.pagination is not None and field_name in {
+                "title",
+                "description",
+                "phone",
+                "source_url",
+            }:
+                raise ValueError(
+                    f"Il campo standard scalare '{field_name}' non puo essere impaginato."
+                )
         for field_name in ("images", "videos"):
             media_field = value.get(field_name)
             if media_field is None:
@@ -205,6 +258,16 @@ class ScrapeConfigInput(CamelModel):
                     f"Il campo media '{field_name}' deve usare l'attributo 'src' o 'href'."
                 )
         return value
+
+    @model_validator(mode="after")
+    def _require_browser_for_field_pagination(self):
+        if self.fetch_mode == "http" and any(
+            field.pagination is not None for field in self.fields.values()
+        ):
+            raise ValueError(
+                "La paginazione interna dei campi richiede fetchMode='dynamic' o 'stealth'."
+            )
+        return self
 
 
 class SourceCreate(CamelModel):
@@ -452,6 +515,7 @@ class ScrapeErrorRead(CamelModel):
         "proxy_pool_exhausted",
         "robots_disallowed",
         "fetch_failed",
+        "field_pagination_incomplete",
     ] | None = None
     created_at: datetime
 
@@ -496,6 +560,16 @@ class TestConfigInput(CamelModel):
     proxy_pool_id: uuid.UUID | None = None
 
 
+class FieldPaginationDiagnosticRead(CamelModel):
+    """Diagnostica sicura della navigazione interna di un singolo campo."""
+
+    pages_visited: int = 0
+    items_collected: int = 0
+    pagination_mode: Literal["none", "href", "click"] = "none"
+    stop_reason: str = "not_started"
+    complete: bool = False
+
+
 class TestConfigResult(CamelModel):
     """Esito di `POST /sources/{id}/test-config`: prova UN solo annuncio
     (non salvato su DB) per verificare che i selettori configurati
@@ -519,6 +593,7 @@ class TestConfigResult(CamelModel):
     pagination_mode: str = "none"
     pagination_stop_reason: str = "not_started"
     unique_ads_found: int = 0
+    field_pagination: dict[str, FieldPaginationDiagnosticRead] = Field(default_factory=dict)
 
 
 class SourcesSummaryRead(CamelModel):

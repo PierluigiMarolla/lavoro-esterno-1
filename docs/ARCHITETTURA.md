@@ -119,6 +119,13 @@ verificato dal vivo, è più preciso su questi punti (vedi PROGETTO.md § 4):
   usano il default del progetto e il browser usa quello generato da Scrapling.
   Dynamic e Stealth mantengono una sessione per run, riusando cookie e storage;
   la rotazione proxy ricrea la sessione per non mescolare identità di rete.
+  I campi delle pagine annuncio possono inoltre avere una paginazione isolata:
+  il motore visita con il browser gli stati successivi di caroselli o raccolte
+  “Carica altri”, deduplica liste semplici o oggetti strutturati e conserva
+  risultati parziali con diagnostica sicura quando incontra limiti o errori.
+  La risoluzione comune del Next accetta link duplicati in header/footer solo
+  quando tutti conducono alla stessa destinazione normalizzata; i controlli
+  JavaScript multipli o le destinazioni discordanti restano ambigui.
   È l'unico motore di scraping del progetto: non esistono più connettori
   Python per-sito precompilati (i 9 stub iniziali descritti nelle versioni
   precedenti di questo documento sono stati rimossi, insieme al

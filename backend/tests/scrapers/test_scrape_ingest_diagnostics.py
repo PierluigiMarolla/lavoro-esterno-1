@@ -18,6 +18,13 @@ def test_scrape_error_code_round_trip_and_legacy_compatibility() -> None:
         "Blocco Cloudflare.",
     )
     assert decode_scrape_error_message("Errore precedente.") == (None, "Errore precedente.")
+    partial = encode_scrape_error_message(
+        "field_pagination_incomplete", "Paginazione incompleta per il campo 'reviews'."
+    )
+    assert decode_scrape_error_message(partial) == (
+        "field_pagination_incomplete",
+        "Paginazione incompleta per il campo 'reviews'.",
+    )
 
 
 async def test_collect_ads_surfaces_empty_media_selector_and_keeps_ad(
@@ -84,4 +91,4 @@ async def test_collect_ads_surfaces_ambiguous_pagination_selector(
 
     assert len(result.ads) == 2
     assert result.discovery_diagnostics.stop_reason == "ambiguous_next_control"
-    assert any("esattamente un controllo Next" in error.message for error in result.errors)
+    assert any("controlli Next non equivalenti" in error.message for error in result.errors)

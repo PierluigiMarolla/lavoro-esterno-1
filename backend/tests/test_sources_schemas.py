@@ -15,6 +15,7 @@ from app.schemas.sources import (
     SourceExportRequest,
     SourceTransferDocument,
 )
+from app.schemas.sources import TestConfigResult as ConfigTestResult
 
 _VALID_FIELDS = {
     "phone": {"selector": ".phone", "attribute": "text"},
@@ -94,6 +95,144 @@ def test_scrape_config_accepts_poster_video_field() -> None:
     )
 
     assert config.fields["clips"].extraction_mode == "posterVideo"
+
+
+def test_scrape_config_accepts_structured_paginated_items() -> None:
+    config = ScrapeConfigInput.model_validate(
+        {
+            "startUrls": ["https://example.com/listing"],
+            "adLinkSelector": ".ad",
+            "fetchMode": "dynamic",
+            "fields": {
+                **_VALID_FIELDS,
+                "reviews": {
+                    "extractionMode": "items",
+                    "multiple": True,
+                    "containerSelector": ".review",
+                    "itemFields": {
+                        "author": {"selector": ".author", "attribute": "text"},
+                        "rating": {"selector": ".rating", "attribute": "text"},
+                    },
+                    "pagination": {"nextSelector": "button.more"},
+                },
+            },
+        }
+    )
+
+    reviews = config.fields["reviews"]
+    assert reviews.item_fields["author"].selector == ".author"
+    assert reviews.pagination is not None
+    assert reviews.pagination.max_pages == 10
+    assert reviews.pagination.max_items == 1000
+    assert config.model_dump(by_alias=True)["fields"]["reviews"]["pagination"][
+        "nextSelector"
+    ] == "button.more"
+
+
+def test_scrape_config_rejects_field_pagination_in_http_mode() -> None:
+    with pytest.raises(ValidationError, match="dynamic.*stealth"):
+        ScrapeConfigInput(
+            start_urls=["https://example.com/listing"],
+            ad_link_selector=".ad",
+            fields={
+                **_VALID_FIELDS,
+                "comments": {
+                    "selector": ".comment",
+                    "multiple": True,
+                    "pagination": {"nextSelector": "button.more"},
+                },
+            },
+        )
+
+
+def test_scrape_config_rejects_paginated_scalar_and_invalid_limits() -> None:
+    with pytest.raises(ValidationError, match="multiple=true"):
+        ScrapeConfigInput(
+            start_urls=["https://example.com/listing"],
+            ad_link_selector=".ad",
+            fetch_mode="dynamic",
+            fields={
+                **_VALID_FIELDS,
+                "comments": {
+                    "selector": ".comment",
+                    "pagination": {"nextSelector": "button.more"},
+                },
+            },
+        )
+    with pytest.raises(ValidationError):
+        ScrapeConfigInput(
+            start_urls=["https://example.com/listing"],
+            ad_link_selector=".ad",
+            fetch_mode="dynamic",
+            fields={
+                **_VALID_FIELDS,
+                "comments": {
+                    "selector": ".comment",
+                    "multiple": True,
+                    "pagination": {
+                        "nextSelector": "button.more",
+                        "maxPages": 51,
+                        "maxItems": 5001,
+                    },
+                },
+            },
+        )
+
+
+def test_scrape_config_rejects_items_for_standard_field() -> None:
+    with pytest.raises(ValidationError, match="campo standard 'phone'"):
+        ScrapeConfigInput(
+            start_urls=["https://example.com/listing"],
+            ad_link_selector=".ad",
+            fetch_mode="dynamic",
+            fields={
+                "phone": {
+                    "extractionMode": "items",
+                    "multiple": True,
+                    "containerSelector": ".phone",
+                    "itemFields": {"value": {"selector": ".value"}},
+                }
+            },
+        )
+
+
+def test_scrape_config_rejects_pagination_for_scalar_standard_field() -> None:
+    with pytest.raises(ValidationError, match="standard scalare 'phone'"):
+        ScrapeConfigInput(
+            start_urls=["https://example.com/listing"],
+            ad_link_selector=".ad",
+            fetch_mode="dynamic",
+            fields={
+                "phone": {
+                    "selector": ".phone",
+                    "multiple": True,
+                    "pagination": {"nextSelector": "button.more"},
+                }
+            },
+        )
+
+
+def test_test_config_result_serializes_field_pagination_diagnostics() -> None:
+    result = ConfigTestResult(
+        ad_urls_found=1,
+        field_pagination={
+            "reviews": {
+                "pages_visited": 3,
+                "items_collected": 24,
+                "pagination_mode": "click",
+                "stop_reason": "end_of_pagination",
+                "complete": True,
+            }
+        },
+    )
+
+    assert result.model_dump(by_alias=True)["fieldPagination"]["reviews"] == {
+        "pagesVisited": 3,
+        "itemsCollected": 24,
+        "paginationMode": "click",
+        "stopReason": "end_of_pagination",
+        "complete": True,
+    }
 
 
 def test_scrape_config_rejects_invalid_poster_video_attribute() -> None:
@@ -299,6 +438,48 @@ def test_source_transfer_document_round_trip_uses_versioned_camel_case_format() 
     assert serialized["sources"][0]["proxyPoolName"] == "Mexico"
     assert "enabled" not in serialized["sources"][0]
     assert "id" not in serialized["sources"][0]
+
+
+def test_source_transfer_preserves_paginated_structured_fields() -> None:
+    document = SourceTransferDocument.model_validate(
+        {
+            "format": "lavoro-esterno-sources",
+            "version": 1,
+            "exportedAt": "2026-09-14T12:00:00Z",
+            "sources": [
+                {
+                    "name": "Reviews",
+                    "slug": "reviews",
+                    "baseUrl": "https://example.com",
+                    "scrapeConfig": {
+                        "startUrls": ["https://example.com/list"],
+                        "adLinkSelector": "a.ad",
+                        "fetchMode": "dynamic",
+                        "fields": {
+                            "phone": {"selector": ".phone"},
+                            "reviews": {
+                                "extractionMode": "items",
+                                "multiple": True,
+                                "containerSelector": ".review",
+                                "itemFields": {"text": {"selector": ".text"}},
+                                "pagination": {"nextSelector": "button.more"},
+                            },
+                        },
+                    },
+                }
+            ],
+        }
+    )
+
+    reviews = document.model_dump(mode="json", by_alias=True)["sources"][0][
+        "scrapeConfig"
+    ]["fields"]["reviews"]
+    assert reviews["itemFields"]["text"]["selector"] == ".text"
+    assert reviews["pagination"] == {
+        "nextSelector": "button.more",
+        "maxPages": 10,
+        "maxItems": 1000,
+    }
 
 
 def test_source_transfer_document_rejects_duplicate_slugs_and_unknown_version() -> None:

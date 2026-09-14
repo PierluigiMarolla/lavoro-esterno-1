@@ -1881,3 +1881,74 @@ Verifiche statiche: Ruff superato, test mirati degli schema Sources `17
 passed`, `docker compose config --quiet` valido e `git diff --check` senza
 errori. Nessun volume Docker esistente è stato eliminato o ricreato durante
 il collaudo.
+
+# Sessione 22 — 14 settembre 2026: impaginazione interna dei campi
+
+Lo scraper generico supporta ora la navigazione per singolo campo nelle
+pagine annuncio, separata dalla paginazione degli elenchi. Una configurazione
+`fields.<nome>.pagination` indica `nextSelector`, `maxPages` (default 10,
+massimo 50) e `maxItems` (default 1000, massimo 5000). La funzione richiede
+`dynamic` o `stealth`, segue link della stessa origine nel rispetto di
+`robots.txt` oppure controlli JavaScript che aggiungono o sostituiscono il
+contenuto, applicando il rate limit a ogni transizione.
+
+Le liste semplici, i dizionari `keyValue` e le coppie `posterVideo` vengono
+uniti senza duplicati e mantenendo il primo valore incontrato. Il nuovo tipo
+`items` produce liste di oggetti: `containerSelector` identifica commenti o
+recensioni e `itemFields` ne estrae i sotto-campi scalari. I campi standard
+scalari (`phone`, `title`, `description`) non sono impaginabili; immagini e
+video sì. Ogni campo usa una pagina browser isolata nella sessione condivisa,
+evitando interferenze tra caroselli distinti.
+
+Timeout, contenuto ripetuto, controllo ambiguo, cross-origin, divieto robots e
+limiti conservano quanto già raccolto. Il run registra una diagnostica
+`field_pagination_incomplete`; la prova configurazione restituisce inoltre
+`fieldPagination` con modalità, pagine, elementi, motivo di arresto e stato
+di completezza. La modale Sources configura paginazione e sotto-campi e mostra
+queste informazioni. Il formato resta nel JSONB `scrape_config`: nessuna
+migrazione DB e piena compatibilità con le fonti precedenti; duplicazione e
+import/export conservano i nuovi valori.
+
+Verifica finale: Ruff verde; suite backend completa `268 passed`; fixture
+browser locali `18 passed` e collaudo nell'immagine backend `16 passed` senza
+skip prima dell'aggiunta degli ultimi due casi di regressione; lint frontend
+senza errori (i due warning Fast Refresh preesistenti); build Vite completata;
+E2E Sources `7 passed` sia sul server di sviluppo sia sul bundle Docker;
+OpenAPI pubblicato verificato; `docker compose config --quiet` e
+`git diff --check` validi. API e pagina `/sources` rispondono HTTP 200 e il
+worker scraper è connesso a Redis e `ready`.
+
+Nessun volume esistente è stato eliminato o ricreato. Lo stack era assente e
+Compose ha creato i volumi mancanti; PostgreSQL, Redis, API, worker scraper,
+frontend e nginx sono attivi. MinIO non è stato avviato perché il registry ha
+rifiutato il riferimento preesistente `minio/minio:latest` con “repository
+does not exist or may require docker login”; il problema è esterno alla
+funzione sviluppata e non è stato aggirato modificando l'infrastruttura.
+
+# Sessione 23 — 14 settembre 2026: controlli Next duplicati equivalenti
+
+La paginazione degli elenchi e quella isolata dei campi accettano ora più
+controlli Next quando ogni occorrenza possiede un `href` che, risolto rispetto
+alla pagina corrente e senza frammento, conduce alla stessa destinazione. In
+modalità browser viene scelto il primo controllo visibile e abilitato, quindi
+un duplicato responsive nascosto non blocca quello operativo. L'estrazione
+della pagina corrente continua ad avvenire prima dell'avanzamento.
+
+Destinazioni discordanti, selezioni miste link/pulsante e pulsanti JavaScript
+multipli continuano a produrre `ambiguous_next_control`; il messaggio spiega
+ora la distinzione tra duplicati equivalenti e ambiguità reale. Restano
+invariati same-origin, `robots.txt`, rate limit, rilevamento dei loop, limiti e
+contratti API. Nessuna migrazione o modifica al formato `scrape_config`.
+
+Verifica finale: Ruff superato; suite backend completa `272 passed`; suite
+congiunta del motore HTTP e Playwright `60 passed`; `docker compose config
+--quiet` valido. Le immagini API e worker scraper sono state ricostruite e i
+due container risultano attivi. La prova live sulla fonte configurata con
+`a.page-link[aria-label="Next"]` ha visitato tutte le 20 pagine configurate,
+trovato 441 annunci unici e terminato per `max_pages` senza errori né
+`ambiguous_next_control`.
+
+Il normale `docker compose up -d --build api worker-scraper` è stato bloccato
+dal riferimento preesistente `minio/minio:latest`, rifiutato dal registry; il
+collaudo è proseguito costruendo i soli due servizi e avviandoli con
+`--no-deps`. Nessun volume applicativo è stato eliminato o ricreato.

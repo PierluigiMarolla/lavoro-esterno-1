@@ -289,6 +289,10 @@ scrivere su DB -> scan reale).
 - [x] Rendere persistente la sessione browser Scrapling per ogni run, con
       riuso di cookie/storage, User-Agent browser automatico quando non
       configurato e diagnostica `anti_bot_blocked` dopo i tentativi limitati.
+- [x] Supportare l'**impaginazione interna dei campi** delle pagine annuncio:
+      caroselli e raccolte di commenti/recensioni seguono link o controlli
+      JavaScript per campo, con liste semplici o elementi strutturati,
+      deduplicazione, limiti e conservazione diagnostica dei risultati parziali.
 - [x] Dashboard/alert per **fonti che smettono di funzionare**:
       `consecutiveFailures` in `GET /sources` (run consecutivi falliti,
       dati già in `scrape_runs`), badge "Connector broken?" in UI quando

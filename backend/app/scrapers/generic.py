@@ -36,7 +36,7 @@ import time
 import unicodedata
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urldefrag, urljoin, urlparse
 
 import httpx
 from curl_cffi.requests import AsyncSession as CurlAsyncSession
@@ -51,6 +51,12 @@ _DEFAULT_MAX_ADS_PER_RUN = 50
 _REQUEST_TIMEOUT_SECONDS = 15.0
 _BROWSER_NAVIGATION_TIMEOUT_MS = 20_000
 _PAGINATION_CHANGE_TIMEOUT_MS = 15_000
+
+_AMBIGUOUS_NEXT_CONTROL_MESSAGE = (
+    "Il selettore di paginazione ha trovato controlli Next non equivalenti: "
+    "le corrispondenze multiple sono ammesse solo se tutti gli href portano "
+    "alla stessa destinazione."
+)
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +112,17 @@ class DiscoveryDiagnostics:
     errors: list[str] = field(default_factory=list)
 
 
+@dataclass
+class FieldPaginationDiagnostic:
+    """Risultato privo di contenuti sensibili della paginazione di un campo."""
+
+    pages_visited: int = 0
+    items_collected: int = 0
+    pagination_mode: str = "none"
+    stop_reason: str = "not_started"
+    complete: bool = False
+
+
 class GenericScraper(Scraper):
     """Connettore generico guidato da configurazione."""
 
@@ -149,6 +166,8 @@ class GenericScraper(Scraper):
         self._proxy_index = 0
         self.proxy_events: list[ProxyRuntimeEvent] = []
         self.discovery_diagnostics = DiscoveryDiagnostics()
+        self.field_pagination_diagnostics: dict[str, FieldPaginationDiagnostic] = {}
+        self.field_pagination_warnings: list[str] = []
 
     def _config_value(self, snake_case_key: str, camel_case_key: str, default: Any = None) -> Any:
         return self.config.get(snake_case_key, self.config.get(camel_case_key, default))
@@ -315,9 +334,7 @@ class GenericScraper(Scraper):
                 solve_cloudflare=bool(
                     self._config_value("solve_cloudflare", "solveCloudflare", False)
                 ),
-                block_webrtc=bool(
-                    self._config_value("block_webrtc", "blockWebrtc", False)
-                ),
+                block_webrtc=bool(self._config_value("block_webrtc", "blockWebrtc", False)),
                 hide_canvas=bool(self._config_value("hide_canvas", "hideCanvas", False)),
                 real_chrome=bool(self._config_value("real_chrome", "realChrome", False)),
                 block_ads=bool(self._config_value("block_ads", "blockAds", False)),
@@ -384,15 +401,14 @@ class GenericScraper(Scraper):
             str(key).lower(): str(value).lower() for key, value in headers.items()
         }
         cloudflare_header = (
-            "cloudflare" in normalized_headers.get("server", "")
-            or "cf-ray" in normalized_headers
+            "cloudflare" in normalized_headers.get("server", "") or "cf-ray" in normalized_headers
         )
         challenge_markers = sum(
             marker in html
             for marker in (
                 "/cdn-cgi/challenge-platform/",
                 "cf-chl-",
-                "id=\"challenge-form\"",
+                'id="challenge-form"',
             )
         )
         interstitial_title = any(
@@ -513,6 +529,35 @@ class GenericScraper(Scraper):
 
         return origin(first) == origin(second)
 
+    @staticmethod
+    def _equivalent_next_url(current_url: str, hrefs: list[Any], control_count: int) -> str | None:
+        """Restituisce la destinazione comune di uno o piu link Next.
+
+        Il frammento non identifica una nuova pagina HTTP e viene quindi escluso
+        dal confronto. Il numero di href deve coincidere con quello dei controlli:
+        una selezione mista link/pulsanti resta intenzionalmente ambigua.
+        """
+        if control_count < 1 or len(hrefs) != control_count:
+            return None
+        clean_hrefs = [
+            str(href).strip() for href in hrefs if href is not None and str(href).strip()
+        ]
+        if len(clean_hrefs) != control_count:
+            return None
+        destinations = {urldefrag(urljoin(current_url, href)).url for href in clean_hrefs}
+        if len(destinations) != 1:
+            return None
+        return destinations.pop()
+
+    @staticmethod
+    async def _first_available_control(controls: Any, control_count: int) -> Any | None:
+        """Seleziona il primo duplicato visibile e abilitato nell'ordine DOM."""
+        for index in range(control_count):
+            candidate = controls.nth(index)
+            if await candidate.is_visible() and await candidate.is_enabled():
+                return candidate
+        return None
+
     def _add_ad_urls(
         self, urls: list[str], seen_urls: set[str], page_url: str, hrefs: list[str], max_ads: int
     ) -> bool:
@@ -572,21 +617,18 @@ class GenericScraper(Scraper):
                             "Il selettore di paginazione non ha trovato il controllo Next."
                         )
                     break
-                if len(controls) != 1:
-                    self.discovery_diagnostics.stop_reason = "ambiguous_next_control"
-                    self.discovery_diagnostics.errors.append(
-                        "Il selettore di paginazione deve identificare esattamente un "
-                        "controllo Next."
-                    )
-                    break
                 next_hrefs = self._extract_all(page, next_page_selector, "href")
-                if not next_hrefs:
+                next_url = self._equivalent_next_url(page_url, next_hrefs, len(controls))
+                if len(controls) > 1 and next_url is None:
+                    self.discovery_diagnostics.stop_reason = "ambiguous_next_control"
+                    self.discovery_diagnostics.errors.append(_AMBIGUOUS_NEXT_CONTROL_MESSAGE)
+                    break
+                if next_url is None:
                     self.discovery_diagnostics.stop_reason = "click_requires_browser"
                     self.discovery_diagnostics.errors.append(
                         "Il controllo Next non ha href: usare il mode dynamic o stealth."
                     )
                     break
-                next_url = urljoin(page_url, next_hrefs[0])
                 if not self._same_origin(start_url, next_url):
                     self.discovery_diagnostics.stop_reason = "cross_origin_blocked"
                     self.discovery_diagnostics.errors.append(
@@ -669,27 +711,30 @@ class GenericScraper(Scraper):
                                 "Il selettore di paginazione non ha trovato il controllo Next."
                             )
                         break
-                    if control_count != 1:
+                    control_hrefs = await controls.evaluate_all(
+                        "(elements) => elements.map((element) => element.getAttribute('href'))"
+                    )
+                    equivalent_next_url = self._equivalent_next_url(
+                        current_url, control_hrefs, control_count
+                    )
+                    if control_count > 1 and equivalent_next_url is None:
                         self.discovery_diagnostics.stop_reason = "ambiguous_next_control"
-                        self.discovery_diagnostics.errors.append(
-                            "Il selettore di paginazione deve identificare esattamente un "
-                            "controllo Next."
-                        )
+                        self.discovery_diagnostics.errors.append(_AMBIGUOUS_NEXT_CONTROL_MESSAGE)
                         break
 
-                    control = controls.first
-                    if not await control.is_visible() or not await control.is_enabled():
+                    control = await self._first_available_control(controls, control_count)
+                    if control is None:
                         self.discovery_diagnostics.stop_reason = "next_control_unavailable"
                         self.discovery_diagnostics.errors.append(
                             "Il controllo Next non e visibile o abilitato."
                         )
                         break
-                    href = await control.get_attribute("href")
+                    href = equivalent_next_url or await control.get_attribute("href")
                     before_url = current_url
                     before_links = json.dumps(absolute_hrefs, separators=(",", ":"))
                     await asyncio.sleep(self.rate_limit_seconds)
                     if href:
-                        next_url = urljoin(current_url, href)
+                        next_url = urldefrag(urljoin(current_url, href)).url
                         if not self._same_origin(start_url, next_url):
                             self.discovery_diagnostics.stop_reason = "cross_origin_blocked"
                             self.discovery_diagnostics.errors.append(
@@ -779,7 +824,13 @@ class GenericScraper(Scraper):
 
         raw: dict[str, Any] = {"source_url": url}
         for field_name, spec in self._config_value("fields", "fields", {}).items():
-            raw[field_name] = self._extract_field(page, spec)
+            initial_value = self._extract_field(page, spec)
+            if self._field_option(spec, "pagination", "pagination") is None:
+                raw[field_name] = initial_value
+                continue
+            raw[field_name] = await self._extract_paginated_field(
+                url, field_name, spec, initial_value
+            )
         return raw
 
     def _extract_field(self, page: Any, spec: dict[str, Any]) -> Any:
@@ -788,6 +839,8 @@ class GenericScraper(Scraper):
             return self._extract_key_value_field(page, spec)
         if extraction_mode == "posterVideo":
             return self._extract_poster_video_field(page, spec)
+        if extraction_mode == "items":
+            return self._extract_items_field(page, spec)
 
         selector = spec["selector"]
         attribute = spec.get("attribute", "text")
@@ -796,6 +849,201 @@ class GenericScraper(Scraper):
         if multiple:
             return values
         return values[0] if values else None
+
+    def _extract_items_field(self, page: Any, spec: dict[str, Any]) -> list[dict[str, str]]:
+        """Estrae oggetti usando selettori relativi al rispettivo container."""
+        container_selector = self._field_option(spec, "container_selector", "containerSelector")
+        item_fields = self._field_option(spec, "item_fields", "itemFields", {})
+        items: list[dict[str, str]] = []
+        for container in page.css(container_selector):
+            item: dict[str, str] = {}
+            for name, item_spec in item_fields.items():
+                values = self._extract_all(
+                    container,
+                    self._field_option(item_spec, "selector", "selector"),
+                    self._field_option(item_spec, "attribute", "attribute", "text"),
+                )
+                if values:
+                    item[name] = values[0]
+            if item:
+                items.append(item)
+        return items
+
+    @staticmethod
+    def _value_fingerprint(value: Any) -> str:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    @classmethod
+    def _merge_paginated_value(
+        cls, aggregate: Any, value: Any, extraction_mode: str, max_items: int
+    ) -> tuple[Any, bool]:
+        """Unisce una pagina, preservando ordine e primo valore incontrato."""
+        if extraction_mode == "keyValue":
+            merged = dict(aggregate or {})
+            for key, item in (value or {}).items():
+                if key not in merged and len(merged) < max_items:
+                    merged[key] = item
+            return merged, len(merged) >= max_items
+
+        merged = list(aggregate or [])
+        fingerprints = {cls._value_fingerprint(item) for item in merged}
+        for item in value or []:
+            fingerprint = cls._value_fingerprint(item)
+            if fingerprint in fingerprints:
+                continue
+            if len(merged) >= max_items:
+                return merged, True
+            merged.append(item)
+            fingerprints.add(fingerprint)
+        return merged, len(merged) >= max_items
+
+    def _add_field_pagination_warning(self, field_name: str, reason: str) -> None:
+        self.field_pagination_warnings.append(
+            f"Paginazione incompleta per il campo '{field_name}' ({reason})."
+        )
+
+    async def _extract_paginated_field(
+        self, url: str, field_name: str, spec: dict[str, Any], initial_value: Any
+    ) -> Any:
+        """Raccoglie un campo su piu stati DOM in una pagina browser isolata."""
+        from scrapling.parser import Selector
+
+        from app.services.robots_check import is_allowed
+
+        pagination = self._field_option(spec, "pagination", "pagination", {})
+        next_selector = self._field_option(pagination, "next_selector", "nextSelector")
+        max_pages = int(self._field_option(pagination, "max_pages", "maxPages", 10))
+        max_items = int(self._field_option(pagination, "max_items", "maxItems", 1000))
+        extraction_mode = self._field_option(spec, "extraction_mode", "extractionMode", "value")
+        aggregate, limit_reached = self._merge_paginated_value(
+            {} if extraction_mode == "keyValue" else [],
+            initial_value,
+            extraction_mode,
+            max_items,
+        )
+        diagnostic = FieldPaginationDiagnostic(items_collected=len(aggregate))
+        self.field_pagination_diagnostics[field_name] = diagnostic
+
+        if limit_reached:
+            diagnostic.pages_visited = 1
+            diagnostic.stop_reason = "max_items"
+            self._add_field_pagination_warning(field_name, diagnostic.stop_reason)
+            return aggregate
+
+        async def paginate(browser_page: Any) -> None:
+            nonlocal aggregate
+
+            async def extract_current() -> Any:
+                document = Selector(await browser_page.content(), url=str(browser_page.url))
+                return self._extract_field(document, spec)
+
+            try:
+                current_value = await extract_current()
+                aggregate, reached = self._merge_paginated_value(
+                    aggregate, current_value, extraction_mode, max_items
+                )
+                diagnostic.pages_visited = 1
+                diagnostic.items_collected = len(aggregate)
+                state = self._value_fingerprint(current_value)
+                seen_states = {state}
+                if reached:
+                    diagnostic.stop_reason = "max_items"
+                    return
+
+                for _page_index in range(1, max_pages):
+                    controls = browser_page.locator(next_selector)
+                    count = await controls.count()
+                    if count == 0:
+                        diagnostic.stop_reason = "end_of_pagination"
+                        diagnostic.complete = True
+                        return
+                    control_hrefs = await controls.evaluate_all(
+                        "(elements) => elements.map((element) => element.getAttribute('href'))"
+                    )
+                    equivalent_next_url = self._equivalent_next_url(
+                        str(browser_page.url), control_hrefs, count
+                    )
+                    if count > 1 and equivalent_next_url is None:
+                        diagnostic.stop_reason = "ambiguous_next_control"
+                        return
+
+                    control = await self._first_available_control(controls, count)
+                    if control is None:
+                        diagnostic.stop_reason = "next_control_unavailable"
+                        diagnostic.complete = True
+                        return
+
+                    before_url = str(browser_page.url)
+                    before_state = state
+                    href = equivalent_next_url or await control.get_attribute("href")
+                    await asyncio.sleep(self.rate_limit_seconds)
+                    if href:
+                        next_url = urldefrag(urljoin(before_url, href)).url
+                        diagnostic.pagination_mode = "href"
+                        if not self._same_origin(url, next_url):
+                            diagnostic.stop_reason = "cross_origin_blocked"
+                            return
+                        if not is_allowed(self._robots_txt, next_url, self.user_agent):
+                            diagnostic.stop_reason = "robots_disallowed"
+                            return
+                        await browser_page.goto(
+                            next_url,
+                            wait_until="domcontentloaded",
+                            timeout=_BROWSER_NAVIGATION_TIMEOUT_MS,
+                        )
+                        current_value = await extract_current()
+                    else:
+                        diagnostic.pagination_mode = "click"
+                        await control.evaluate("(element) => element.click()")
+                        deadline = time.monotonic() + (_PAGINATION_CHANGE_TIMEOUT_MS / 1000)
+                        while True:
+                            current_value = await extract_current()
+                            state = self._value_fingerprint(current_value)
+                            if str(browser_page.url) != before_url or state != before_state:
+                                break
+                            if time.monotonic() >= deadline:
+                                diagnostic.stop_reason = "page_did_not_change"
+                                return
+                            await asyncio.sleep(0.2)
+
+                    state = self._value_fingerprint(current_value)
+                    diagnostic.pages_visited += 1
+                    if state in seen_states:
+                        diagnostic.stop_reason = "repeated_content"
+                        return
+                    seen_states.add(state)
+                    aggregate, reached = self._merge_paginated_value(
+                        aggregate, current_value, extraction_mode, max_items
+                    )
+                    diagnostic.items_collected = len(aggregate)
+                    if reached:
+                        diagnostic.stop_reason = "max_items"
+                        return
+
+                diagnostic.stop_reason = "max_pages"
+            except Exception:  # noqa: BLE001 - diagnostica senza URL o contenuto target
+                diagnostic.stop_reason = "pagination_failed"
+
+        async def fetch_with_action() -> None:
+            session = await self._ensure_browser_session()
+            kwargs = self._browser_request_kwargs()
+            kwargs["page_action"] = paginate
+            response = await session.fetch(url, **kwargs)
+            self._raise_for_status(response, url)
+
+        try:
+            await asyncio.sleep(self.rate_limit_seconds)
+            await self._with_proxy_rotation("field_pagination", fetch_with_action)
+        except Exception:  # noqa: BLE001 - il valore iniziale resta utilizzabile
+            if diagnostic.stop_reason == "not_started":
+                diagnostic.stop_reason = "pagination_failed"
+
+        diagnostic.items_collected = len(aggregate)
+        if diagnostic.stop_reason == "not_started":
+            diagnostic.stop_reason = "pagination_failed"
+        if not diagnostic.complete:
+            self._add_field_pagination_warning(field_name, diagnostic.stop_reason)
+        return aggregate
 
     @staticmethod
     def _field_option(spec: dict[str, Any], snake: str, camel: str, default: Any = None) -> Any:
@@ -809,15 +1057,11 @@ class GenericScraper(Scraper):
         return {"age": "eta", "eta": "eta"}.get(normalized, normalized)
 
     def _extract_key_value_field(self, page: Any, spec: dict[str, Any]) -> dict[str, str]:
-        container_selector = self._field_option(
-            spec, "container_selector", "containerSelector"
-        )
+        container_selector = self._field_option(spec, "container_selector", "containerSelector")
         key_selector = self._field_option(spec, "key_selector", "keySelector")
         value_selector = self._field_option(spec, "value_selector", "valueSelector")
         key_attribute = self._field_option(spec, "key_attribute", "keyAttribute", "text")
-        value_attribute = self._field_option(
-            spec, "value_attribute", "valueAttribute", "text"
-        )
+        value_attribute = self._field_option(spec, "value_attribute", "valueAttribute", "text")
         pairs: dict[str, str] = {}
         for container in page.css(container_selector):
             keys = self._extract_all(container, key_selector, key_attribute)
@@ -829,17 +1073,11 @@ class GenericScraper(Scraper):
                 pairs[key] = values[0]
         return pairs
 
-    def _extract_poster_video_field(
-        self, page: Any, spec: dict[str, Any]
-    ) -> list[dict[str, str]]:
-        container_selector = self._field_option(
-            spec, "container_selector", "containerSelector"
-        )
+    def _extract_poster_video_field(self, page: Any, spec: dict[str, Any]) -> list[dict[str, str]]:
+        container_selector = self._field_option(spec, "container_selector", "containerSelector")
         poster_selector = self._field_option(spec, "poster_selector", "posterSelector")
         video_selector = self._field_option(spec, "video_selector", "videoSelector")
-        poster_attribute = self._field_option(
-            spec, "poster_attribute", "posterAttribute", "src"
-        )
+        poster_attribute = self._field_option(spec, "poster_attribute", "posterAttribute", "src")
         video_attribute = self._field_option(spec, "video_attribute", "videoAttribute", "src")
         pairs: list[dict[str, str]] = []
         for container in page.css(container_selector):

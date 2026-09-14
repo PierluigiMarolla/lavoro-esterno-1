@@ -197,8 +197,20 @@ progetto non lo fa per te).
    annuncio non può essere collegato a nessun Record.
    Ogni nome non standard, per esempio `tags`, `city` o `price`, viene salvato
    automaticamente in `advertisements.custom_fields`. Usare `multiple: true`
-   quando il campo deve produrre una lista. Non serve registrare preventivamente
-   il nome: chiavi arbitrarie come `paperino` e `pippo` sono valide e vengono
+   per liste semplici. Per caroselli, commenti o recensioni distribuiti su più
+   stati della pagina, abilitare la paginazione sul singolo campo indicando il
+   selettore del controllo Next/Carica altri, il massimo di pagine (10 di
+   default, 50 massimo) e di elementi (1000 di default, 5000 massimo). Questa
+   funzione richiede `dynamic` o `stealth`; segue link same-origin o esegue un
+   click JavaScript, applicando il rate limit tra le transizioni. La prima
+   visualizzazione conta come pagina 1.
+   Per commenti e recensioni strutturati usare il tipo `items`: il
+   `containerSelector` identifica ogni elemento e gli `itemFields` estraggono
+   valori scalari relativi come autore, data, voto e testo. Risultati ripetuti
+   vengono deduplicati preservando l'ordine; in caso di arresto anomalo il run
+   conserva i dati parziali e registra `field_pagination_incomplete`.
+   Non serve registrare preventivamente il nome: chiavi arbitrarie come
+   `paperino` e `pippo` sono valide e vengono
    preservate esattamente. L'Overview aggrega i valori valorizzati di tutte le
    fonti indicandone la provenienza; la tab Occurrences consente di ispezionare
    lo snapshot originale di ciascuna fonte.
@@ -211,11 +223,16 @@ progetto non lo fa per te).
    richiesta reale, ma è utile saperlo prima).
 3. Usare "Testa configurazione" (`POST /sources/{id}/test-config`, richiede
    la fonte già salvata) per provare la bozza corrente su annunci reali senza
-   scriverla nel database e senza usare MinIO. Per la paginazione il selettore
-   deve individuare un solo controllo Next: per esempio
-   `a.page-link[aria-label="Next"]`, non il generico `a.page-link`. Il risultato
+   scriverla nel database e senza usare MinIO. Per la paginazione usare un
+   selettore specifico, per esempio `a.page-link[aria-label="Next"]`, non il
+   generico `a.page-link`. Sono ammessi più Next in header/footer quando tutti
+   gli `href` risolti portano alla stessa pagina; link con destinazioni diverse,
+   selezioni miste link/pulsante e pulsanti JavaScript multipli producono
+   `ambiguous_next_control`. Il risultato
    mostra pagine visitate, URL annunci unici, modalità `href`/`click` e motivo
-   di arresto. I blocchi anti-bot sono distinti dagli errori dei selettori e
+   di arresto per l'elenco; `fieldPagination` mostra separatamente pagine,
+   elementi, modalità e completezza di ogni campo impaginato. I blocchi
+   anti-bot sono distinti dagli errori dei selettori e
    includono azioni operative consigliate.
 4. Solo quando l'estrazione di prova è corretta, lanciare uno scan reale
    (`POST /sources/{id}/scan` o il bottone "Avvia scansione" in UI, visibile solo

@@ -261,6 +261,42 @@ async def test_discover_follows_pagination_and_collects_all_ad_links(open_site_u
     assert urls[2].endswith("/ad3.html")  # dalla pagina 2, raggiunta via next_page_selector
 
 
+async def test_http_discover_accepts_duplicate_next_links_with_equivalent_targets(
+    open_site_url: str,
+) -> None:
+    scraper = _scraper(open_site_url, max_pages=3)
+    page_two_url = f"{open_site_url}/listing.html?page=2"
+    pages = {
+        f"{open_site_url}/listing.html": Selector(
+            '<a class="ad-link" href="/ad1.html">Ad 1</a>'
+            '<a class="next" href="?page=2#top">Next</a>'
+            f'<a class="next" href="{page_two_url}#bottom">Next</a>'
+        ),
+        page_two_url: Selector('<a class="ad-link" href="/ad2.html">Ad 2</a>'),
+    }
+
+    async def fake_fetch(url: str):
+        return pages[url]
+
+    scraper._fetch_page = fake_fetch  # type: ignore[method-assign]
+    urls = await scraper.discover()
+
+    assert urls == [f"{open_site_url}/ad1.html", f"{open_site_url}/ad2.html"]
+    assert scraper.discovery_diagnostics.pages_visited == 2
+    assert scraper.discovery_diagnostics.stop_reason == "end_of_pagination"
+    assert scraper.discovery_diagnostics.errors == []
+
+
+def test_equivalent_next_url_rejects_different_mixed_or_javascript_controls(
+    open_site_url: str,
+) -> None:
+    current_url = f"{open_site_url}/listing.html"
+
+    assert GenericScraper._equivalent_next_url(current_url, ["?page=2", "?page=3"], 2) is None
+    assert GenericScraper._equivalent_next_url(current_url, ["?page=2", None], 2) is None
+    assert GenericScraper._equivalent_next_url(current_url, [None, None], 2) is None
+
+
 async def test_discover_stops_at_max_pages(open_site_url: str) -> None:
     scraper = _scraper(open_site_url, max_pages=1)
     urls = await scraper.discover()
@@ -279,7 +315,9 @@ async def test_discover_rejects_ambiguous_next_selector(open_site_url: str) -> N
     assert len(urls) == 2
     assert scraper.discovery_diagnostics.stop_reason == "ambiguous_next_control"
     assert scraper.discovery_diagnostics.errors == [
-        "Il selettore di paginazione deve identificare esattamente un controllo Next."
+        "Il selettore di paginazione ha trovato controlli Next non equivalenti: "
+        "le corrispondenze multiple sono ammesse solo se tutti gli href portano "
+        "alla stessa destinazione."
     ]
 
 
@@ -447,6 +485,41 @@ def test_text_extraction_returns_one_complete_value_per_selected_element() -> No
         "Prima\nnota",
         "Seconda nota",
     ]
+
+
+def test_structured_items_extract_scalar_subfields_and_skip_empty_items() -> None:
+    page = Selector(
+        """
+        <article class="review"><b class="author">Ada</b><span class="rating">5</span></article>
+        <article class="review"><b class="author">Lin</b></article>
+        <article class="review"><span class="unused">vuoto</span></article>
+        """
+    )
+    scraper = _scraper("https://example.com")
+
+    assert scraper._extract_field(
+        page,
+        {
+            "extractionMode": "items",
+            "containerSelector": ".review",
+            "itemFields": {
+                "author": {"selector": ".author", "attribute": "text"},
+                "rating": {"selector": ".rating", "attribute": "text"},
+            },
+        },
+    ) == [{"author": "Ada", "rating": "5"}, {"author": "Lin"}]
+
+
+def test_paginated_merge_deduplicates_lists_and_keeps_first_key_value() -> None:
+    merged, reached = GenericScraper._merge_paginated_value(["a", "b"], ["b", "c", "d"], "value", 3)
+    assert merged == ["a", "b", "c"]
+    assert reached is True
+
+    pairs, reached = GenericScraper._merge_paginated_value(
+        {"city": "Roma"}, {"city": "Milano", "age": "30"}, "keyValue", 10
+    )
+    assert pairs == {"city": "Roma", "age": "30"}
+    assert reached is False
 
 
 @pytest.mark.parametrize(
