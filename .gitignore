@@ -20,6 +20,7 @@ backend/.audit-cache/
 
 # Docker / dati locali persistiti fuori dai volumi nominati
 *.log
+backups/
 
 # IDE
 .vscode/

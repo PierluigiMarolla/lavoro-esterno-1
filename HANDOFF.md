@@ -1991,3 +1991,65 @@ wait selector e campo XPath ha estratto correttamente `Example Domain`.
 Nessun volume applicativo è stato eliminato o ricreato; i servizi interessati
 sono stati avviati con `--no-deps` per non coinvolgere il riferimento MinIO
 preesistente non disponibile nel registry.
+
+# Sessione 25 — 16 settembre 2026: ripristino provisioning Grafana
+
+Grafana 13.2.1 poteva entrare in restart loop con `Datasource provisioning
+error: data source not found`. La causa era il volume `grafana-data`, creato
+quando Prometheus e Loki ricevevano UID automatici, diventati incompatibili
+con gli UID stabili `prometheus` e `loki` richiesti dalle dashboard e dagli
+alert attuali. Il provisioning dichiara ora `version: 1` per entrambi i
+datasource e `prune: true`; non usa `deleteDatasources`, che eliminerebbe e
+ricreerebbe inutilmente le sorgenti a ogni avvio. Compose verifica inoltre
+`/api/health` prima di considerare Grafana healthy.
+
+Lo script PowerShell `scripts/windows/Recover-Grafana.ps1` opera in sola
+diagnostica per impostazione predefinita. Il ripristino esplicito si esegue
+dalla root del progetto con:
+
+```powershell
+.\scripts\windows\Recover-Grafana.ps1 -Repair
+```
+
+Lo script accetta esclusivamente il volume montato su `/var/lib/grafana` con
+etichetta Compose `grafana-data`, arresta solo Grafana, salva un archivio in
+`backups/grafana`, verifica la presenza di `grafana.db` e solo dopo elimina e
+ricrea il volume. Usa `docker compose up -d --no-deps grafana`: PostgreSQL,
+MinIO, Prometheus, Loki e gli altri volumi non vengono toccati. Non usare
+`docker compose down -v` per questa procedura.
+
+Verifiche successive:
+
+```powershell
+docker compose ps grafana
+docker compose logs --tail 100 grafana
+Invoke-RestMethod http://localhost:3000/api/health
+```
+
+Il risultato deve essere `healthy`, il database deve essere `ok` e nei log
+non devono comparire errori di provisioning. Per provare l'idempotenza:
+
+```powershell
+docker compose restart grafana
+docker compose ps grafana
+```
+
+## Rollback del volume Grafana
+
+Se occorre ripristinare il database precedente, arrestare e rimuovere soltanto
+Grafana, eliminare il solo nuovo volume `grafana-data`, ricrearlo con Compose
+e decomprimere al suo interno l'archivio conservato in `backups/grafana` usando
+un container temporaneo `grafana/grafana:13.2.1` eseguito come root. Prima di
+avviare il vecchio database occorre ripristinare anche la configurazione di
+provisioning compatibile con i suoi UID legacy; in caso contrario il restart
+loop si ripresenterà. Il backup non va cancellato fino alla verifica completa
+di datasource, dashboard e alert.
+
+La sequenza di rollback deve quindi essere eseguita soltanto dopo avere
+ripristinato la precedente configurazione versionata: `docker compose stop
+grafana`, `docker compose rm -f grafana`, rimozione del solo volume verificato,
+`docker compose create --no-deps grafana`, estrazione dell'archivio nel nuovo
+volume montato su `/var/lib/grafana` e infine `docker compose start grafana`.
+Il nome del volume va sempre ricavato dal mount del container e la sua etichetta
+`com.docker.compose.volume` deve essere esattamente `grafana-data`; non usare
+nomi presunti, glob o comandi che coinvolgano tutti i volumi.
