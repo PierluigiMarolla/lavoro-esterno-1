@@ -212,7 +212,17 @@ export type ScrapeFailureCode =
   | "robots_disallowed"
   | "fetch_failed"
   | "field_pagination_incomplete"
-  | "content_sanitization_failed";
+  | "content_sanitization_failed"
+  | "content_sanitization_configuration"
+  | "content_sanitization_timeout"
+  | "content_sanitization_unavailable"
+  | "content_sanitization_http_error"
+  | "content_sanitization_invalid_response"
+  | "content_sanitization_incomplete_response"
+  | "content_sanitization_empty_output"
+  | "content_sanitization_invalid_changed"
+  | "content_sanitization_unchanged_mismatch"
+  | "content_sanitization_numbers_changed";
 
 export type ProxyScheme = "http" | "https" | "socks4" | "socks5";
 

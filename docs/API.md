@@ -106,6 +106,12 @@ blocco tutte le sessioni dell'utente.
 | POST | `/api/v1/sources/{source_id}/enable` | Riabilita una fonte disabilitata o in pausa (`enabled=true`, `status="healthy"`). Idempotente; riservato ad Admin/Operator. |
 | POST | `/api/v1/sources/{source_id}/scan` | Crea un run persistente `pending` e risponde `202`. Restituisce `409` se la fonte ha già un run pending/running; anche il completamento manuale riavvia il timer automatico. |
 
+Gli errori della pulizia Gemma distinguono configurazione, timeout,
+indisponibilità, stato HTTP, risposta non valida/incompleta, output vuoto,
+indicatore `changed` non valido, testo modificato ma dichiarato invariato e
+alterazione dei numeri. `errorMessage` spiega la causa e i tre tentativi senza
+includere prompt, testo dell'annuncio, risposta del modello o URL interni.
+
 ### Trasferimento configurazioni delle fonti
 
 Il formato `lavoro-esterno-sources` versione `1` contiene `name`, `slug`,

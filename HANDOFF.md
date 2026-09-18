@@ -2149,3 +2149,20 @@ cinque worker Celery rispondono `pong`. Il riavvio di Docker Desktop ha
 rigenerato su questa workstation un relay `wslrelay.exe` stale su `::1:80`:
 `127.0.0.1` funziona, mentre per ripristinare `localhost` occorre eseguire da
 PowerShell elevata `scripts/windows/Repair-Localhost.ps1 -Repair`.
+
+# Sessione 27 — 18 settembre 2026: diagnostica specifica della pulizia Gemma
+
+Il precedente errore unico `content_sanitization_failed — Pulizia del
+contenuto non riuscita` è stato suddiviso in cause operative precise:
+configurazione mancante/non Gemma, timeout, Ollama irraggiungibile, risposta
+HTTP (con status), JSON/schema non valido, campi mancanti, output vuoto,
+`changed` non booleano, testo modificato ma dichiarato invariato e numeri
+alterati. Ogni causa produce un `errorCode` stabile e un messaggio italiano
+che specifica anche l'esaurimento dei tre tentativi.
+
+Le eccezioni di trasporto e le risposte del modello vengono classificate ma
+mai copiate nella diagnostica, evitando di esporre URL, prompt o contenuti. Il
+job di bonifica storica aggrega inoltre `failures_by_reason` nel risultato e
+nell'audit. Verifica: Ruff superato e suite backend completa `292 passed`; i
+nuovi test coprono timeout sicuro, risposta incompleta e alterazione dei dati
+numerici.

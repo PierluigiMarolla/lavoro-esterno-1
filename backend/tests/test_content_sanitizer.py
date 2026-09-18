@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from app.services.content_sanitizer import ContentSanitizationError, sanitize_normalized
@@ -103,9 +104,47 @@ def test_changed_text_cannot_alter_numbers(monkeypatch) -> None:
         "app.services.content_sanitizer.httpx.post", lambda *a, **k: _Response(rows)
     )
 
-    with pytest.raises(ContentSanitizationError):
+    with pytest.raises(ContentSanitizationError) as caught:
         sanitize_normalized(
             _Session(),
             {"title": "Titolo 25", "description": "Pulita", "custom_fields": {}},
             {},
         )
+
+    assert caught.value.error_code == "content_sanitization_numbers_changed"
+    assert "dati numerici" in str(caught.value)
+    assert "Titolo 25" not in str(caught.value)
+
+
+def test_timeout_has_specific_safe_diagnostic(monkeypatch) -> None:
+    def timeout(*_args, **_kwargs):
+        raise httpx.ReadTimeout("https://internal-sensitive-target/path")
+
+    monkeypatch.setattr("app.services.content_sanitizer.httpx.post", timeout)
+
+    with pytest.raises(ContentSanitizationError) as caught:
+        sanitize_normalized(
+            _Session(),
+            {"title": "Titolo", "description": "Descrizione", "custom_fields": {}},
+            {},
+        )
+
+    assert caught.value.error_code == "content_sanitization_timeout"
+    assert "3 tentativi" in str(caught.value)
+    assert "internal-sensitive-target" not in str(caught.value)
+
+
+def test_incomplete_response_has_specific_diagnostic(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.content_sanitizer.httpx.post", lambda *a, **k: _Response([])
+    )
+
+    with pytest.raises(ContentSanitizationError) as caught:
+        sanitize_normalized(
+            _Session(),
+            {"title": "Titolo", "description": "Descrizione", "custom_fields": {}},
+            {},
+        )
+
+    assert caught.value.error_code == "content_sanitization_incomplete_response"
+    assert "tutti i campi richiesti" in str(caught.value)

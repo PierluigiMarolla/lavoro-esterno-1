@@ -441,3 +441,8 @@ Durante un test controllato verificare che il run riporti
 che i testi puliti restino invariati byte-per-byte e che un webhook produca
 una consegna sulla coda `webhooks`. Non usare `docker compose down -v`: il
 collaudo non richiede di eliminare o ricreare alcun volume.
+
+Se Gemma rifiuta un annuncio, consultare gli errori del run nella pagina
+Fonti. I codici `content_sanitization_*` separano problemi di configurazione,
+rete/timeout/HTTP e violazioni del contratto strutturato. Le diagnostiche sono
+deliberatamente sicure: non riportano mai il testo sottoposto al modello.

@@ -7,6 +7,7 @@ import json
 import logging
 import re
 import uuid
+from collections import Counter
 from dataclasses import replace
 from datetime import UTC, datetime
 
@@ -46,6 +47,7 @@ def sanitize_existing_advertisements() -> dict:
 
     session = SyncSessionLocal()
     processed = failed = 0
+    failures_by_reason: Counter[str] = Counter()
     try:
         rows = session.execute(
             select(Advertisement, Source)
@@ -61,8 +63,9 @@ def sanitize_existing_advertisements() -> dict:
             }
             try:
                 result = sanitize_normalized(session, normalized, source.scrape_config or {})
-            except ContentSanitizationError:
+            except ContentSanitizationError as exc:
                 failed += 1
+                failures_by_reason[exc.error_code] += 1
                 continue
             changed_fields = [
                 name
@@ -102,11 +105,20 @@ def sanitize_existing_advertisements() -> dict:
                 action="content_sanitization_backfill_completed",
                 entity_type="ingestion_settings",
                 entity_id="1",
-                details_json={"processed": processed, "failed": failed},
+                details_json={
+                    "processed": processed,
+                    "failed": failed,
+                    "failures_by_reason": dict(failures_by_reason),
+                },
             )
         )
         session.commit()
-        return {"status": "completed", "processed": processed, "failed": failed}
+        return {
+            "status": "completed",
+            "processed": processed,
+            "failed": failed,
+            "failures_by_reason": dict(failures_by_reason),
+        }
     finally:
         session.close()
 

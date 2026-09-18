@@ -22,10 +22,71 @@ linguaggio scurrile, pornografico o sessualmente esplicito riscrivilo con lingua
 preservando fatti, significato, numeri e nomi senza aggiungere informazioni. Se è pulito
 restituiscilo IDENTICO e changed=false. Restituisci esclusivamente JSON conforme allo schema."""
 _NUMERIC_TOKEN_RE = re.compile(r"\d+(?:[.,]\d+)?")
+_ERROR_DETAILS = {
+    "configuration": (
+        "content_sanitization_configuration",
+        "Gemma locale non è configurato, abilitato o associato a un modello Gemma.",
+    ),
+    "timeout": (
+        "content_sanitization_timeout",
+        "Gemma non ha risposto entro il tempo previsto dopo 3 tentativi.",
+    ),
+    "unavailable": (
+        "content_sanitization_unavailable",
+        "Ollama/Gemma non è raggiungibile dopo 3 tentativi.",
+    ),
+    "invalid_response": (
+        "content_sanitization_invalid_response",
+        "Gemma ha restituito JSON o struttura non validi dopo 3 tentativi.",
+    ),
+    "incomplete_response": (
+        "content_sanitization_incomplete_response",
+        "Gemma non ha restituito tutti i campi richiesti dopo 3 tentativi.",
+    ),
+    "empty_output": (
+        "content_sanitization_empty_output",
+        "Gemma ha restituito almeno un testo vuoto dopo 3 tentativi.",
+    ),
+    "invalid_changed": (
+        "content_sanitization_invalid_changed",
+        "Gemma ha restituito un indicatore di modifica non valido dopo 3 tentativi.",
+    ),
+    "unchanged_mismatch": (
+        "content_sanitization_unchanged_mismatch",
+        "Gemma ha modificato un testo dichiarandolo invariato; risultato rifiutato.",
+    ),
+    "numbers_changed": (
+        "content_sanitization_numbers_changed",
+        "Gemma ha alterato dati numerici del testo originale; risultato rifiutato.",
+    ),
+}
 
 
 class ContentSanitizationError(RuntimeError):
-    pass
+    """Safe, user-facing failure that never contains prompts or model output."""
+
+    def __init__(self, reason: str, *, http_status: int | None = None):
+        self.reason = reason
+        self.http_status = http_status
+        if reason == "http_error":
+            self.error_code = "content_sanitization_http_error"
+            suffix = " (modello o endpoint non disponibile)" if http_status == 404 else ""
+            message = f"Ollama/Gemma ha risposto HTTP {http_status}{suffix} dopo 3 tentativi."
+        else:
+            self.error_code, message = _ERROR_DETAILS.get(
+                reason,
+                (
+                    "content_sanitization_failed",
+                    "Pulizia Gemma non riuscita dopo 3 tentativi per un errore inatteso.",
+                ),
+            )
+        super().__init__(message)
+
+
+class _ResponseValidationError(ValueError):
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(reason)
 
 
 @dataclass
@@ -81,7 +142,7 @@ def sanitize_normalized(
         select(AIProviderConfig).where(AIProviderConfig.provider == "ollama")
     ).scalar_one_or_none()
     if provider is None or not provider.enabled or "gemma" not in provider.model_name.lower():
-        raise ContentSanitizationError("Gemma locale non configurato o non abilitato.")
+        raise ContentSanitizationError("configuration")
     config = runtime_config(provider)
     field_schema = {
         "type": "object",
@@ -115,6 +176,8 @@ def sanitize_normalized(
         ],
     }
     last_error: Exception | None = None
+    last_reason = "unexpected"
+    last_http_status: int | None = None
     for _attempt in range(3):
         try:
             response = httpx.post(
@@ -123,27 +186,33 @@ def sanitize_normalized(
                 timeout=settings.AI_PROVIDER_TIMEOUT_SECONDS,
             )
             response.raise_for_status()
-            rows = json.loads(response.json()["message"]["content"]).get("fields")
+            try:
+                model_payload = response.json()
+                decoded = json.loads(model_payload["message"]["content"])
+            except (json.JSONDecodeError, KeyError, TypeError) as exc:
+                raise _ResponseValidationError("invalid_response") from exc
+            rows = decoded.get("fields") if isinstance(decoded, dict) else None
             if (
                 not isinstance(rows, list)
                 or len(rows) != len(fields)
+                or any(not isinstance(row, dict) for row in rows)
                 or {row.get("path") for row in rows} != set(fields)
             ):
-                raise ValueError("Risposta Gemma incompleta.")
+                raise _ResponseValidationError("incomplete_response")
             cleaned = copy.deepcopy(normalized)
             changed: list[str] = []
             for row in rows:
                 path, value = row["path"], row["value"]
                 if not isinstance(value, str) or not value.strip():
-                    raise ValueError("Gemma ha restituito un testo vuoto.")
+                    raise _ResponseValidationError("empty_output")
                 if not isinstance(row.get("changed"), bool):
-                    raise ValueError("Indicatore changed non valido.")
+                    raise _ResponseValidationError("invalid_changed")
                 if not row["changed"] and value != fields[path]:
-                    raise ValueError("Gemma ha modificato un testo dichiarato invariato.")
+                    raise _ResponseValidationError("unchanged_mismatch")
                 if row["changed"] and _NUMERIC_TOKEN_RE.findall(value) != _NUMERIC_TOKEN_RE.findall(
                     fields[path]
                 ):
-                    raise ValueError("Gemma ha alterato dati numerici del testo originale.")
+                    raise _ResponseValidationError("numbers_changed")
                 _set_path(cleaned, path, value)
                 if row["changed"]:
                     changed.append(path)
@@ -152,6 +221,20 @@ def sanitize_normalized(
                 encrypt_json(original),
                 {"changed": changed, "model": config.model, "revision": provider.revision},
             )
-        except Exception as exc:
+        except _ResponseValidationError as exc:
+            last_reason = exc.reason
             last_error = exc
-    raise ContentSanitizationError("Pulizia Gemma non riuscita.") from last_error
+        except httpx.TimeoutException as exc:
+            last_reason = "timeout"
+            last_error = exc
+        except httpx.HTTPStatusError as exc:
+            last_reason = "http_error"
+            last_http_status = exc.response.status_code
+            last_error = exc
+        except httpx.RequestError as exc:
+            last_reason = "unavailable"
+            last_error = exc
+        except Exception as exc:
+            last_reason = "invalid_response"
+            last_error = exc
+    raise ContentSanitizationError(last_reason, http_status=last_http_status) from last_error

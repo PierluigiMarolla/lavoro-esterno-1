@@ -289,12 +289,12 @@ def run_scrape_source(self, source_id: str, run_id: str | None = None) -> dict:
                         sanitized = sanitize_normalized(
                             session, collected.normalized, source.scrape_config or {}
                         )
-                    except ContentSanitizationError:
+                    except ContentSanitizationError as exc:
                         sanitization_errors.append(
                             ScrapeErrorDetail(
                                 url=collected.normalized.get("source_url") or source.base_url,
-                                message="Pulizia del contenuto non riuscita.",
-                                code="content_sanitization_failed",
+                                message=str(exc),
+                                code=exc.error_code,
                             )
                         )
                         return False
