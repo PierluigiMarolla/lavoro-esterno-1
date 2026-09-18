@@ -48,6 +48,7 @@ from app.schemas.records import (
     RecordDetail,
     RecordHistoryEventRead,
     RecordMediaRead,
+    RecordOccurrenceDetailRead,
     RecordOccurrenceRead,
     RecordOverviewRead,
     RecordSearchRequest,
@@ -457,6 +458,7 @@ async def get_record_occurrences(
             revision=ad.revision,
             last_changed_at=ad.last_changed_at,
             has_updates=ad.revision > 1,
+            listing_page_number=ad.listing_page_number,
         )
         for ad, source_name, source_slug in rows
     ]
@@ -561,6 +563,89 @@ async def get_record_media(
             )
         )
     return results
+
+
+@router.get(
+    "/{record_id}/occurrences/{advertisement_id}",
+    response_model=RecordOccurrenceDetailRead,
+)
+async def get_occurrence_detail(
+    record_id: uuid.UUID,
+    advertisement_id: uuid.UUID,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> RecordOccurrenceDetailRead:
+    """Riepilogo completo e lazy di una singola occorrenza."""
+    record = await _get_record_or_404(db, record_id)
+    row = (
+        await db.execute(
+            select(Advertisement, Source)
+            .join(Source, Source.id == Advertisement.source_id)
+            .where(
+                Advertisement.id == advertisement_id,
+                Advertisement.record_id == record_id,
+            )
+        )
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(404, "Occorrenza non trovata.")
+    advertisement, source = row
+    phone, visibility = _phone_for_user(record.phone_encrypted, user)
+    response.headers["Cache-Control"] = "no-store"
+    media_rows = (
+        (
+            await db.execute(
+                select(Media)
+                .where(
+                    Media.advertisement_id == advertisement.id,
+                    Media.is_current.is_(True),
+                )
+                .order_by(Media.created_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    media = [
+        RecordMediaRead(
+            id=item.id,
+            url=_media_object_url(item, variant="display"),
+            thumbnail_url=_media_object_url(item, variant="thumbnail"),
+            type="video" if item.mime_type.startswith("video/") else "image",
+            sensitivity="safe" if item.classification == "safe" else "explicit",
+            source_name=source.name,
+            added_at=item.created_at,
+            classification=item.classification,
+            classification_confidence=item.classification_confidence,
+            safety_signals=item.safety_signals or {},
+            review_status=item.review_status,
+            processing_status=item.processing_status,
+            display_url=_media_object_url(item, variant="display"),
+            original_url=_media_object_url(item, variant="original"),
+        )
+        for item in media_rows
+    ]
+    return RecordOccurrenceDetailRead(
+        id=advertisement.id,
+        source_name=source.name,
+        source_code=source.slug,
+        country_code=source.country_code,
+        title=advertisement.title or "(Senza titolo)",
+        description=advertisement.description or "",
+        url=advertisement.source_url,
+        phone=phone,
+        phone_visibility=visibility,
+        listing_page_number=advertisement.listing_page_number,
+        status=advertisement.status,
+        match_confidence=round(advertisement.confidence * 100, 1),
+        first_seen_at=advertisement.first_seen_at,
+        last_seen_at=advertisement.last_seen_at,
+        scraped_at=advertisement.scraped_at,
+        last_changed_at=advertisement.last_changed_at,
+        custom_fields=advertisement.custom_fields or {},
+        media=media,
+    )
 
 
 def _audit_detail(row: AuditLog) -> str:

@@ -5,6 +5,7 @@ import type {
   RecordHistoryEvent,
   RecordMedia,
   RecordOccurrence,
+  RecordOccurrenceDetail,
   RecordOverview,
   RecordSearchFilters,
   RecordSearchResponse,
@@ -34,6 +35,10 @@ export function fetchRecordOverview(id: string): Promise<RecordOverview> {
 
 export function fetchRecordOccurrences(id: string): Promise<RecordOccurrence[]> {
   return apiRequest<RecordOccurrence[]>(`/records/${id}/occurrences`);
+}
+
+export function fetchOccurrenceDetail(recordId: string, advertisementId: string): Promise<RecordOccurrenceDetail> {
+  return apiRequest<RecordOccurrenceDetail>(`/records/${recordId}/occurrences/${advertisementId}`);
 }
 
 export function fetchRecordMedia(id: string): Promise<RecordMedia[]> {

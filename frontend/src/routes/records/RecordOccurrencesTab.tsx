@@ -1,6 +1,6 @@
 import { Fragment, useState } from "react";
 import { useParams } from "react-router-dom";
-import { useOccurrenceVersions, useRecordOccurrences } from "@/hooks/useRecords";
+import { useOccurrenceDetail, useOccurrenceVersions, useRecordOccurrences } from "@/hooks/useRecords";
 import Icon from "@/components/ui/Icon";
 import ProgressBar from "@/components/ui/ProgressBar";
 import { EmptyRow, ErrorRow, LoadingRow, Table, TBody, Td, Th, THead, Tr } from "@/components/ui/Table";
@@ -24,9 +24,35 @@ function OccurrenceDetails({
   customFields: CustomFieldsMap;
 }) {
   const versions = useOccurrenceVersions(recordId, occurrenceId);
+  const detail = useOccurrenceDetail(recordId, occurrenceId);
   return (
     <div className="space-y-5">
-      {Object.keys(customFields).length > 0 && <CustomFields fields={customFields} compact />}
+      {detail.isLoading && <p className="text-body-sm text-on-surface-variant">Caricamento riepilogo…</p>}
+      {detail.data && (
+        <div className="grid gap-4 md:grid-cols-2">
+          <section className="rounded border border-border bg-surface-container-lowest p-4">
+            <h4 className="font-semibold text-on-surface">{detail.data.title}</h4>
+            <p className="mt-2 whitespace-pre-wrap text-body-sm text-on-surface-variant">{detail.data.description || "Nessuna descrizione"}</p>
+          </section>
+          <section className="rounded border border-border bg-surface-container-lowest p-4 text-body-sm">
+            <div><strong>Telefono:</strong> {detail.data.phone}</div>
+            <div><strong>Paese:</strong> {detail.data.countryCode ?? "N/D"}</div>
+            <div><strong>Pagina listing:</strong> {detail.data.listingPageNumber ?? "Sconosciuta"}</div>
+            <div><strong>Stato:</strong> {detail.data.status}</div>
+            <div><strong>Prima acquisizione:</strong> {formatDateTime(detail.data.firstSeenAt)}</div>
+            <div><strong>Ultimo rilevamento:</strong> {formatDateTime(detail.data.lastSeenAt)}</div>
+          </section>
+          {detail.data.media.length > 0 && (
+            <section className="md:col-span-2">
+              <h4 className="mb-2 font-semibold">Media ({detail.data.media.length})</h4>
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                {detail.data.media.map((item) => <img key={item.id} src={item.thumbnailUrl} alt="" className="h-32 w-full rounded object-cover" />)}
+              </div>
+            </section>
+          )}
+        </div>
+      )}
+      {Object.keys(detail.data?.customFields ?? customFields).length > 0 && <CustomFields fields={detail.data?.customFields ?? customFields} compact />}
       <div>
         <h4 className="mb-2 text-label-md font-semibold text-on-surface">Cronologia versioni</h4>
         {versions.isLoading && <p className="text-body-sm text-on-surface-variant">Caricamento versioni…</p>}

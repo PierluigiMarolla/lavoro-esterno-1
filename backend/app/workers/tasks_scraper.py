@@ -191,7 +191,12 @@ def run_scrape_source(self, source_id: str, run_id: str | None = None) -> dict:
         apply_proxy_event,
         reserve_proxy_candidates,
     )
-    from app.services.scrape_ingest import collect_ads, persist_collected_ads
+    from app.services.scrape_ingest import (
+        CollectionResult,
+        ScrapeErrorDetail,
+        collect_ads,
+        persist_collected_ads,
+    )
 
     source_uuid = uuid.UUID(source_id)
     session = SyncSessionLocal()
@@ -231,6 +236,8 @@ def run_scrape_source(self, source_id: str, run_id: str | None = None) -> dict:
         session.commit()
 
         outcome: dict = {}
+        collection = None
+        webhook_delivery_ids: list[str] = []
         try:
             if not source.enabled:
                 raise RuntimeError("source_disabled")
@@ -242,8 +249,105 @@ def run_scrape_source(self, source_id: str, run_id: str | None = None) -> dict:
                     if source.proxy_pool_id
                     else []
                 )
-                collection = asyncio.run(collect_ads(source, proxy_candidates))
-                outcome = persist_collected_ads(session, source, collection, run.id)
+                from app.models.integrations import IngestionSettings
+                from app.services.content_sanitizer import (
+                    ContentSanitizationError,
+                    sanitize_normalized,
+                )
+
+                ingestion = session.get(IngestionSettings, 1)
+                batch_size = ingestion.publish_batch_size if ingestion else 50
+                pending_batch = []
+                published_ads = []
+                sanitization_errors = []
+                persistence_errors = []
+                aggregate = {
+                    "items_new": 0,
+                    "items_updated": 0,
+                    "items_unchanged": 0,
+                    "media_ids": [],
+                }
+
+                def publish_pending_batch() -> None:
+                    if not pending_batch:
+                        return
+                    partial = persist_collected_ads(
+                        session,
+                        source,
+                        CollectionResult(ads=list(pending_batch)),
+                        run.id,
+                        batch_size=batch_size,
+                    )
+                    for key in ("items_new", "items_updated", "items_unchanged"):
+                        aggregate[key] += partial[key]
+                    aggregate["media_ids"].extend(partial["media_ids"])
+                    persistence_errors.extend(partial["errors"])
+                    pending_batch.clear()
+
+                def sanitize_and_stage(collected) -> bool:
+                    try:
+                        sanitized = sanitize_normalized(
+                            session, collected.normalized, source.scrape_config or {}
+                        )
+                    except ContentSanitizationError:
+                        sanitization_errors.append(
+                            ScrapeErrorDetail(
+                                url=collected.normalized.get("source_url") or source.base_url,
+                                message="Pulizia del contenuto non riuscita.",
+                                code="content_sanitization_failed",
+                            )
+                        )
+                        return False
+                    collected.normalized = sanitized.normalized
+                    collected.original_content_encrypted = sanitized.original_encrypted
+                    collected.sanitization_metadata = sanitized.metadata
+                    pending_batch.append(collected)
+                    published_ads.append(collected)
+                    if len(pending_batch) >= batch_size:
+                        publish_pending_batch()
+                    return True
+
+                try:
+                    collection = asyncio.run(
+                        collect_ads(source, proxy_candidates, on_ad=sanitize_and_stage)
+                    )
+                    # A run with fewer ads than the configured threshold still
+                    # publishes its final partial batch.
+                    publish_pending_batch()
+                except Exception:
+                    # Full batches may already be committed. Keep their safe,
+                    # sanitized items available to the final failed-run webhook.
+                    collection = CollectionResult(
+                        ads=published_ads,
+                        errors=list(sanitization_errors) + list(persistence_errors),
+                    )
+                    outcome = {
+                        **aggregate,
+                        "items_found": len(collection.ads) + len(collection.errors),
+                        "errors": collection.errors,
+                        "errors_count": len(collection.errors),
+                        "pages_visited": 0,
+                        "pagination_mode": None,
+                        "pagination_stop_reason": "unexpected_error",
+                        "proxy_events": [],
+                    }
+                    raise
+
+                all_errors = (
+                    list(collection.errors)
+                    + sanitization_errors
+                    + persistence_errors
+                )
+                outcome = {
+                    **aggregate,
+                    "items_found": len(collection.ads) + len(all_errors),
+                    "errors": all_errors,
+                    "errors_count": len(all_errors),
+                    "pages_visited": collection.discovery_diagnostics.pages_visited,
+                    "pagination_mode": collection.discovery_diagnostics.pagination_mode,
+                    "pagination_stop_reason": collection.discovery_diagnostics.stop_reason,
+                    "proxy_events": collection.proxy_events,
+                }
             except ProxyPoolUnavailableError:
                 run.status = "failed"
                 run.errors_count += 1
@@ -385,6 +489,12 @@ def run_scrape_source(self, source_id: str, run_id: str | None = None) -> dict:
             )
         elif source.enabled:
             source.status = "healthy"
+        try:
+            from app.services.webhook_outbox import enqueue_run_webhooks
+
+            webhook_delivery_ids = enqueue_run_webhooks(session, source, run, collection, outcome)
+        except Exception:
+            logger.exception("Impossibile creare l'outbox webhook per il run %s.", run.id)
         session.commit()
 
         if source.scrape_config:
@@ -392,6 +502,11 @@ def run_scrape_source(self, source_id: str, run_id: str | None = None) -> dict:
 
             for media_id in outcome.get("media_ids", []):
                 process_media.delay(media_id)
+        if webhook_delivery_ids:
+            from app.workers.tasks_webhooks import deliver_webhook
+
+            for delivery_id in webhook_delivery_ids:
+                deliver_webhook.delay(delivery_id)
         return {"status": run.status, "run_id": str(run.id)}
     finally:
         session.close()

@@ -13,7 +13,7 @@ import zipfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 
 from app.config import settings
 from app.models.advertisement import Advertisement
@@ -29,6 +29,7 @@ from app.workers.tasks_scraper import SyncSessionLocal
 
 
 def _csv_bytes(rows: list[dict], fieldnames: list[str]) -> bytes:
+    """Compatibility helper for small payload tests; production uses _RowSpool."""
     output = io.StringIO(newline="")
     writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
     writer.writeheader()
@@ -42,6 +43,85 @@ def _csv_bytes(rows: list[dict], fieldnames: list[str]) -> bytes:
         for row in rows
     )
     return output.getvalue().encode("utf-8-sig")
+
+
+class _RowSpool:
+    """Write JSON and CSV incrementally so large exports stay bounded-memory."""
+
+    def __init__(self, prefix: str, fieldnames: list[str], *, collect_ids: bool = False):
+        json_fd, self.json_path = tempfile.mkstemp(prefix=prefix, suffix=".json")
+        csv_fd, self.csv_path = tempfile.mkstemp(prefix=prefix, suffix=".csv")
+        os.close(json_fd)
+        os.close(csv_fd)
+        self._json_file = open(self.json_path, "w", encoding="utf-8", newline="")
+        self._csv_file = open(self.csv_path, "w", encoding="utf-8-sig", newline="")
+        self._csv_writer = csv.DictWriter(
+            self._csv_file, fieldnames=fieldnames, extrasaction="ignore"
+        )
+        self._csv_writer.writeheader()
+        self._json_file.write("[")
+        self.count = 0
+        self.ids: list[str] = [] if collect_ids else []
+        self._collect_ids = collect_ids
+        self._closed = False
+
+    def append(self, row: dict) -> None:
+        if self.count:
+            self._json_file.write(",")
+        self._json_file.write("\n")
+        json.dump(row, self._json_file, ensure_ascii=False, separators=(",", ":"))
+        self._csv_writer.writerow(
+            {
+                key: json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                if isinstance(value, (dict, list))
+                else value
+                for key, value in row.items()
+            }
+        )
+        if self._collect_ids:
+            self.ids.append(str(row["id"]))
+        self.count += 1
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._json_file.write("\n]\n")
+        self._json_file.close()
+        self._csv_file.close()
+        self._closed = True
+
+    def cleanup(self) -> None:
+        self.close()
+        Path(self.json_path).unlink(missing_ok=True)
+        Path(self.csv_path).unlink(missing_ok=True)
+
+
+def _iter_export_record_ids(session, job_id: uuid.UUID, chunk_size: int = 500):
+    """Keyset-page a frozen export scope without loading every UUID at once."""
+    last_id = None
+    while True:
+        statement = select(ExportJobRecord.record_id).where(
+            ExportJobRecord.export_job_id == job_id
+        )
+        if last_id is not None:
+            statement = statement.where(ExportJobRecord.record_id > last_id)
+        rows = list(
+            session.execute(
+                statement.order_by(ExportJobRecord.record_id).limit(chunk_size)
+            ).scalars()
+        )
+        if not rows:
+            return
+        yield from rows
+        last_id = rows[-1]
+
+
+def _file_sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _safe_error(exc: Exception) -> str:
@@ -67,6 +147,7 @@ def generate_export(job_id: str) -> dict:
         return {"status": existing.status if existing else "missing", "idempotent": True}
 
     archive_path: str | None = None
+    row_spools: list[_RowSpool] = []
     try:
         job = session.get(ExportJob, job_uuid)
         requester = session.get(User, job.requested_by_user_id)
@@ -76,18 +157,40 @@ def generate_export(job_id: str) -> dict:
         if job.include_clear_phone and not can_clear:
             raise PermissionError("Il permesso di esportare telefoni in chiaro è stato revocato.")
 
-        record_ids = list(
-            session.execute(
-                select(ExportJobRecord.record_id)
-                .where(ExportJobRecord.export_job_id == job.id)
-                .order_by(ExportJobRecord.record_id)
-            ).scalars()
+        record_count = session.scalar(
+            select(func.count())
+            .select_from(ExportJobRecord)
+            .where(ExportJobRecord.export_job_id == job.id)
         )
-        if not record_ids or len(record_ids) > settings.EXPORT_MAX_RECORDS:
-            raise ValueError("Scope export vuoto o oltre il limite configurato.")
+        if not record_count:
+            raise ValueError("Scope export vuoto.")
 
-        records_rows: list[dict] = []
-        advertisement_rows: list[dict] = []
+        record_fields = ["id", "phone", "canonical_ad_id", "created_at", "updated_at"]
+        ad_fields = [
+            "id",
+            "record_id",
+            "source_id",
+            "source_name",
+            "source_url",
+            "listing_page_number",
+            "title",
+            "description",
+            "status",
+            "confidence",
+            "first_seen_at",
+            "last_seen_at",
+            "scraped_at",
+            "custom_fields",
+        ]
+        export_scope = (job.manifest_json or {}).get("scope") or "selected"
+        # The selected scope is capped at 1,000 IDs. Large filtered/full
+        # scopes keep their identifiers in records.json instead of duplicating
+        # an unbounded list inside the in-memory manifest.
+        records_rows = _RowSpool(
+            "export-records-", record_fields, collect_ids=export_scope == "selected"
+        )
+        advertisement_rows = _RowSpool("export-ads-", ad_fields)
+        row_spools.extend((records_rows, advertisement_rows))
         media_manifest: list[dict] = []
         excluded_media: list[dict] = []
         file_manifest: list[dict] = []
@@ -98,7 +201,9 @@ def generate_export(job_id: str) -> dict:
         with zipfile.ZipFile(
             archive_path, "w", compression=zipfile.ZIP_DEFLATED, allowZip64=True
         ) as archive:
-            for index, record_id in enumerate(record_ids, start=1):
+            for index, record_id in enumerate(
+                _iter_export_record_ids(session, job.id), start=1
+            ):
                 record = session.get(Record, record_id)
                 if record is None:
                     continue
@@ -128,6 +233,7 @@ def generate_export(job_id: str) -> dict:
                             "source_id": str(source.id),
                             "source_name": source.name,
                             "source_url": ad.source_url,
+                            "listing_page_number": ad.listing_page_number,
                             "title": ad.title,
                             "description": ad.description,
                             "custom_fields": ad.custom_fields or {},
@@ -204,45 +310,30 @@ def generate_export(job_id: str) -> dict:
                             excluded_media.append(
                                 {"id": str(media.id), "reason": "display_variant_unavailable"}
                             )
-                job.progress_percent = min(90, 5 + int(index / len(record_ids) * 80))
+                job.progress_percent = min(90, 5 + int(index / record_count * 80))
                 session.commit()
 
-            records_json = json.dumps(records_rows, ensure_ascii=False, indent=2).encode()
-            ads_json = json.dumps(advertisement_rows, ensure_ascii=False, indent=2).encode()
-            record_fields = ["id", "phone", "canonical_ad_id", "created_at", "updated_at"]
-            ad_fields = [
-                "id",
-                "record_id",
-                "source_id",
-                "source_name",
-                "source_url",
-                "title",
-                "description",
-                "status",
-                "confidence",
-                "first_seen_at",
-                "last_seen_at",
-                "scraped_at",
-                "custom_fields",
-            ]
+            records_rows.close()
+            advertisement_rows.close()
             payloads = {
-                "records.json": records_json,
-                "records.csv": _csv_bytes(records_rows, record_fields),
-                "advertisements.json": ads_json,
-                "advertisements.csv": _csv_bytes(advertisement_rows, ad_fields),
+                "records.json": records_rows.json_path,
+                "records.csv": records_rows.csv_path,
+                "advertisements.json": advertisement_rows.json_path,
+                "advertisements.csv": advertisement_rows.csv_path,
             }
-            for name, payload in payloads.items():
-                if bytes_added + len(payload) > settings.EXPORT_MAX_UNCOMPRESSED_BYTES:
+            for name, path in payloads.items():
+                size = os.path.getsize(path)
+                if bytes_added + size > settings.EXPORT_MAX_UNCOMPRESSED_BYTES:
                     raise ValueError(
                         "Dimensione massima dell'export superata durante la generazione."
                     )
-                archive.writestr(name, payload)
-                bytes_added += len(payload)
+                archive.write(path, name)
+                bytes_added += size
                 file_manifest.append(
                     {
                         "path": name,
-                        "size": len(payload),
-                        "sha256": hashlib.sha256(payload).hexdigest(),
+                        "size": size,
+                        "sha256": _file_sha256(path),
                     }
                 )
 
@@ -253,9 +344,10 @@ def generate_export(job_id: str) -> dict:
                 "generated_at": datetime.now(UTC).isoformat(),
                 "phone_visibility": "clear" if job.include_clear_phone else "masked",
                 "filters": (job.manifest_json or {}).get("filters"),
-                "records": [row["id"] for row in records_rows],
-                "record_count": len(records_rows),
-                "advertisement_count": len(advertisement_rows),
+                "records": records_rows.ids,
+                "records_complete": export_scope == "selected",
+                "record_count": records_rows.count,
+                "advertisement_count": advertisement_rows.count,
                 "media": media_manifest,
                 "excluded_media": excluded_media,
                 "files": file_manifest,
@@ -283,7 +375,7 @@ def generate_export(job_id: str) -> dict:
         job.estimated_uncompressed_bytes = bytes_added
         job.manifest_json = manifest
         session.commit()
-        return {"status": "ready", "record_count": len(records_rows), "bytes": bytes_added}
+        return {"status": "ready", "record_count": records_rows.count, "bytes": bytes_added}
     except Exception as exc:
         session.rollback()
         job = session.get(ExportJob, job_uuid)
@@ -309,4 +401,6 @@ def generate_export(job_id: str) -> dict:
     finally:
         if archive_path:
             Path(archive_path).unlink(missing_ok=True)
+        for spool in row_spools:
+            spool.cleanup()
         session.close()

@@ -26,6 +26,8 @@ celery_app = Celery(
         "app.workers.tasks_privacy",
         "app.workers.tasks_maintenance",
         "app.workers.tasks_operations",
+        "app.workers.tasks_webhooks",
+        "app.workers.tasks_proxy_feeds",
     ],
 )
 
@@ -54,6 +56,8 @@ celery_app.conf.update(
         # worker-scraper: `-Q scraping,maintenance`).
         "app.workers.tasks_maintenance.*": {"queue": "maintenance"},
         "app.workers.tasks_operations.*": {"queue": "maintenance"},
+        "app.workers.tasks_webhooks.*": {"queue": "webhooks"},
+        "app.workers.tasks_proxy_feeds.*": {"queue": "maintenance"},
     },
 )
 
@@ -61,6 +65,10 @@ celery_app.conf.update(
 celery_app.conf.beat_schedule = {
     "dispatch-due-source-scrapes": {
         "task": "app.workers.tasks_scraper.dispatch_due_source_scrapes",
+        "schedule": 60.0,
+    },
+    "dispatch-due-proxy-feeds": {
+        "task": "app.workers.tasks_proxy_feeds.dispatch_due_proxy_feeds",
         "schedule": 60.0,
     },
     "cleanup-expired-data-nightly": {

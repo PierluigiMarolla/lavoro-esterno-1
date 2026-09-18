@@ -225,8 +225,9 @@ async def test_export_contains_portable_fields_only_and_audits() -> None:
     assert set(exported) == {
         "name",
         "slug",
-        "baseUrl",
-        "priority",
+            "baseUrl",
+            "countryCode",
+            "priority",
         "scrapeConfig",
         "proxyPoolName",
         "watermarkRemoval",

@@ -415,3 +415,22 @@ descrizione, un campo custom o il set media, il run incrementa `itemsUpdated`
 e crea una riga in `advertisement_versions`. Il timer automatico resta
 fixed-delay: il prossimo intervallo decorre dalla conclusione anche quando il
 contenuto non cambia.
+
+## Collaudo della pipeline evoluta
+
+La tab Admin **Acquisizione** configura batch (1–500) e avvia la bonifica
+riprendibile dei record storici. Le tab **Webhook** e **Proxy** espongono CRUD,
+abilitazione e operazioni manuali; segreti HMAC e valori degli header non sono
+mai restituiti dall'API. Per verificare i worker senza modificare i dati:
+
+```bash
+docker compose exec api celery -A app.workers.celery_app inspect ping
+docker compose exec api alembic current
+docker compose config --quiet
+```
+
+Durante un test controllato verificare che il run riporti
+`listingPageNumber`, che l'ultimo batch sotto soglia sia visibile nei Record,
+che i testi puliti restino invariati byte-per-byte e che un webhook produca
+una consegna sulla coda `webhooks`. Non usare `docker compose down -v`: il
+collaudo non richiede di eliminare o ricreare alcun volume.

@@ -172,6 +172,7 @@ class RecordOccurrenceRead(CamelModel):
     revision: int = 1
     last_changed_at: datetime
     has_updates: bool = False
+    listing_page_number: int | None = None
 
 
 class AdvertisementVersionRead(CamelModel):
@@ -202,6 +203,27 @@ class RecordMediaRead(CamelModel):
     processing_status: str
     display_url: str
     original_url: str
+
+
+class RecordOccurrenceDetailRead(CamelModel):
+    id: uuid.UUID
+    source_name: str
+    source_code: str
+    country_code: str | None = None
+    title: str
+    description: str
+    url: str
+    phone: str
+    phone_visibility: str
+    listing_page_number: int | None = None
+    status: str
+    match_confidence: float
+    first_seen_at: datetime
+    last_seen_at: datetime
+    scraped_at: datetime
+    last_changed_at: datetime
+    custom_fields: dict[str, CustomFieldValue] = Field(default_factory=dict)
+    media: list[RecordMediaRead] = Field(default_factory=list)
 
 
 class RecordHistoryEventRead(CamelModel):

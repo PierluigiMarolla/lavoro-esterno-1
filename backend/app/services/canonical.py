@@ -1,7 +1,7 @@
 """Selezione dell'annuncio "canonico" per un Record.
 
-Regola deterministica (in quest'ordine): priorità della fonte
-(`high > medium > low`), completezza dei campi, recenza dello scraping e ID
+Regola deterministica (in quest'ordine): pagina di listing più bassa,
+priorità della fonte (`high > medium > low`), completezza, recenza e ID
 dell'annuncio. Sono eleggibili soltanto annunci attivi e nessuno slug riceve
 un trattamento speciale.
 
@@ -57,6 +57,7 @@ class CandidateAdvertisement:
     description: str | None = None
     source_url: str | None = None
     extra_non_empty_fields: int = 0
+    listing_page_number: int | None = None
     """Conteggio aggiuntivo di campi "informativi" non vuoti oltre a
     title/description/source_url (es. prezzo, città, età dichiarata...),
     fornito dal chiamante per non dover conoscere qui l'intero schema
@@ -80,6 +81,7 @@ def _non_empty_field_count(ad: CandidateAdvertisement) -> int:
 def _tie_break_key(ad: CandidateAdvertisement) -> tuple:
     """Chiave decrescente usata con ``max()`` per la scelta canonica."""
     return (
+        -(ad.listing_page_number if ad.listing_page_number is not None else 2**31 - 1),
         int(ad.source.priority),
         _non_empty_field_count(ad),
         ad.scraped_at,
@@ -107,9 +109,9 @@ def resolve_canonical(
 
     chosen = max(active_ads, key=_tie_break_key)
     reason = (
-        "Selezionato applicando priorità fonte, completezza, recenza e ID "
+        "Selezionato applicando pagina listing, priorità fonte, completezza, recenza e ID "
         f"deterministico (fonte='{chosen.source.slug}', priorità={chosen.source.priority.name}, "
-        f"scraped_at={chosen.scraped_at.isoformat()})."
+        f"pagina={chosen.listing_page_number}, scraped_at={chosen.scraped_at.isoformat()})."
     )
     return CanonicalResolution(chosen=chosen, reason=reason)
 

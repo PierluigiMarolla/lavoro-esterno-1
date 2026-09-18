@@ -42,6 +42,26 @@ def test_scrape_config_accepts_valid_input() -> None:
     assert config.rate_limit_seconds == 2.0  # default
     assert config.fetch_mode == "http"
     assert config.fields["phone"].extraction_mode == "value"
+    assert config.max_pages_enabled is True
+    assert config.max_ads_per_run_enabled is True
+
+
+def test_new_limit_flags_accept_disabled_unbounded_mode() -> None:
+    config = ScrapeConfigInput.model_validate(
+        {
+            "startUrls": ["https://example.com/listing"],
+            "adLinkSelector": ".ad",
+            "fields": _VALID_FIELDS,
+            "maxPagesEnabled": False,
+            "maxAdsPerRunEnabled": False,
+        }
+    )
+
+    assert config.max_pages_enabled is False
+    assert config.max_ads_per_run_enabled is False
+    dumped = config.model_dump(by_alias=True)
+    assert dumped["maxPagesEnabled"] is False
+    assert dumped["maxAdsPerRunEnabled"] is False
 
 
 def test_scrape_config_accepts_key_value_field() -> None:

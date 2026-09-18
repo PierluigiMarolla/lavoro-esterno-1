@@ -30,6 +30,7 @@ import ErrorState from "@/components/ui/ErrorState";
 import SourceImportDialog from "@/components/sources/SourceImportDialog";
 import { describeError } from "@/lib/errors";
 import { formatDateTime } from "@/lib/format";
+import { COUNTRIES } from "@/lib/countries";
 import type {
   ScrapeConfig,
   ScrapeFetchMode,
@@ -221,11 +222,13 @@ interface FieldRow {
   videoSelector: string;
   videoSelectorType: ScrapeSelectorType;
   videoAttribute: string;
+  sanitizeWithAi: boolean;
   itemFields: Array<{
     name: string;
     selector: string;
     selectorType: ScrapeSelectorType;
     attribute: "text" | "href" | "src";
+    sanitizeWithAi: boolean;
   }>;
   paginationEnabled: boolean;
   paginationNextSelector: string;
@@ -255,6 +258,7 @@ const emptyFieldRow = (name = ""): FieldRow => ({
   videoSelector: "",
   videoSelectorType: "css",
   videoAttribute: "src",
+  sanitizeWithAi: false,
   itemFields: [],
   paginationEnabled: false,
   paginationNextSelector: "",
@@ -284,6 +288,7 @@ function fieldsToRows(fields: Record<string, ScrapeFieldConfig>): FieldRow[] {
       selector: config.selector,
       selectorType: config.selectorType ?? "css",
       attribute: config.attribute,
+      sanitizeWithAi: config.sanitizeWithAi ?? false,
     })),
     paginationEnabled: field.pagination != null,
     paginationNextSelector: field.pagination?.nextSelector ?? "",
@@ -315,6 +320,7 @@ function rowsToFields(rows: FieldRow[]): Record<string, ScrapeFieldConfig> {
         multiple: row.multiple,
         extractionMode: "value",
         pagination,
+        sanitizeWithAi: row.sanitizeWithAi,
       };
     } else if (row.extractionMode === "keyValue" && row.containerSelector.trim()) {
       fields[name] = {
@@ -330,6 +336,7 @@ function rowsToFields(rows: FieldRow[]): Record<string, ScrapeFieldConfig> {
         valueSelectorType: row.valueSelectorType,
         valueAttribute: row.valueAttribute,
         pagination,
+        sanitizeWithAi: row.sanitizeWithAi,
       };
     } else if (row.extractionMode === "posterVideo" && row.containerSelector.trim()) {
       fields[name] = {
@@ -345,6 +352,7 @@ function rowsToFields(rows: FieldRow[]): Record<string, ScrapeFieldConfig> {
         videoSelectorType: row.videoSelectorType,
         videoAttribute: row.videoAttribute,
         pagination,
+        sanitizeWithAi: row.sanitizeWithAi,
       };
     } else if (row.extractionMode === "items" && row.containerSelector.trim()) {
       fields[name] = {
@@ -358,10 +366,11 @@ function rowsToFields(rows: FieldRow[]): Record<string, ScrapeFieldConfig> {
             .filter((item) => item.name.trim() && item.selector.trim())
             .map((item) => [
               item.name.trim(),
-              { selector: item.selector.trim(), selectorType: item.selectorType, attribute: item.attribute },
+              { selector: item.selector.trim(), selectorType: item.selectorType, attribute: item.attribute, sanitizeWithAi: item.sanitizeWithAi },
             ]),
         ),
         pagination,
+        sanitizeWithAi: row.sanitizeWithAi,
       };
     }
   }
@@ -417,6 +426,7 @@ function SourceFormDialog({
   const detail = useSource(editingSource?.id ?? "", isEdit && open);
   const createSource = useCreateSource();
   const updateSource = useUpdateSource();
+  const updateSchedule = useUpdateSourceSchedule();
   const testConfig = useTestSourceConfig();
   const proxyPools = useProxyPools(open);
 
@@ -424,6 +434,7 @@ function SourceFormDialog({
   const [slug, setSlug] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [priority, setPriority] = useState<SourcePriority>("medium");
+  const [countryCode, setCountryCode] = useState("");
   const [startUrlsText, setStartUrlsText] = useState("");
   const [adLinkSelector, setAdLinkSelector] = useState("");
   const [adLinkSelectorType, setAdLinkSelectorType] = useState<ScrapeSelectorType>("css");
@@ -431,6 +442,11 @@ function SourceFormDialog({
   const [nextPageSelectorType, setNextPageSelectorType] = useState<ScrapeSelectorType>("css");
   const [maxPages, setMaxPages] = useState(3);
   const [maxAdsPerRun, setMaxAdsPerRun] = useState(50);
+  const [maxPagesEnabled, setMaxPagesEnabled] = useState(false);
+  const [maxAdsPerRunEnabled, setMaxAdsPerRunEnabled] = useState(false);
+  const [scheduleEnabled, setScheduleEnabled] = useState(false);
+  const [scheduleIntervalValue, setScheduleIntervalValue] = useState(1);
+  const [scheduleIntervalUnit, setScheduleIntervalUnit] = useState<ScrapeIntervalUnit>("hours");
   const [rateLimitSeconds, setRateLimitSeconds] = useState(2);
   const [fetchMode, setFetchMode] = useState<ScrapeFetchMode>("http");
   const [userAgent, setUserAgent] = useState("");
@@ -459,6 +475,7 @@ function SourceFormDialog({
       setSlug("");
       setBaseUrl("");
       setPriority("medium");
+      setCountryCode("");
       setStartUrlsText("");
       setAdLinkSelector("");
       setAdLinkSelectorType("css");
@@ -466,6 +483,11 @@ function SourceFormDialog({
       setNextPageSelectorType("css");
       setMaxPages(3);
       setMaxAdsPerRun(50);
+      setMaxPagesEnabled(false);
+      setMaxAdsPerRunEnabled(false);
+      setScheduleEnabled(false);
+      setScheduleIntervalValue(1);
+      setScheduleIntervalUnit("hours");
       setRateLimitSeconds(2);
       setFetchMode("http");
       setUserAgent("");
@@ -492,6 +514,11 @@ function SourceFormDialog({
     setName(detail.data.name);
     setBaseUrl(""); // base_url isn't part of Source (list shape); left blank unless re-typed
     setPriority(detail.data.priority);
+    setCountryCode(detail.data.countryCode ?? "");
+    const scheduleParts = intervalParts(detail.data.scrapeIntervalMinutes);
+    setScheduleEnabled(detail.data.automaticScrapingEnabled);
+    setScheduleIntervalValue(scheduleParts.value);
+    setScheduleIntervalUnit(scheduleParts.unit);
     setProxyPoolId(detail.data.proxyPoolId ?? "");
     const cfg = detail.data.scrapeConfig;
     const watermark = detail.data.watermarkRemoval;
@@ -506,6 +533,8 @@ function SourceFormDialog({
       setNextPageSelectorType(cfg.nextPageSelectorType ?? "css");
       setMaxPages(cfg.maxPages);
       setMaxAdsPerRun(cfg.maxAdsPerRun);
+      setMaxPagesEnabled(cfg.maxPagesEnabled ?? true);
+      setMaxAdsPerRunEnabled(cfg.maxAdsPerRunEnabled ?? true);
       setRateLimitSeconds(cfg.rateLimitSeconds);
       setFetchMode(cfg.fetchMode ?? (cfg.renderJs ? "dynamic" : "http"));
       setUserAgent(cfg.userAgent ?? "");
@@ -526,6 +555,8 @@ function SourceFormDialog({
       setNextPageSelectorType("css");
       setMaxPages(3);
       setMaxAdsPerRun(50);
+      setMaxPagesEnabled(false);
+      setMaxAdsPerRunEnabled(false);
       setRateLimitSeconds(2);
       setFetchMode("http");
       setUserAgent("");
@@ -554,7 +585,7 @@ function SourceFormDialog({
               ...row,
               itemFields: [
                 ...row.itemFields,
-                { name: "", selector: "", selectorType: "css", attribute: "text" },
+                { name: "", selector: "", selectorType: "css", attribute: "text", sanitizeWithAi: false },
               ],
             }
           : row,
@@ -618,6 +649,8 @@ function SourceFormDialog({
       nextPageSelectorType,
       maxPages,
       maxAdsPerRun,
+      maxPagesEnabled,
+      maxAdsPerRunEnabled,
       rateLimitSeconds,
       fetchMode,
       renderJs: fetchMode !== "http",
@@ -646,27 +679,49 @@ function SourceFormDialog({
         regions: watermarkEnabled ? [watermarkRegion] : [],
       };
       if (isEdit && editingSource) {
-        await updateSource.mutateAsync({
+        const saved = await updateSource.mutateAsync({
           id: editingSource.id,
           input: {
             name,
             priority,
+            countryCode: countryCode || null,
             scrapeConfig,
             watermarkRemoval,
             proxyPoolId: proxyPoolId || null,
             ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}),
           },
         });
+        await updateSchedule.mutateAsync({
+          id: saved.id,
+          input: {
+            enabled: scheduleEnabled,
+            intervalValue: scheduleIntervalValue,
+            intervalUnit: scheduleIntervalUnit,
+            revision: saved.scheduleRevision,
+          },
+        });
       } else {
-        await createSource.mutateAsync({
+        const saved = await createSource.mutateAsync({
           name,
           slug,
           baseUrl,
           priority,
+          countryCode: countryCode || null,
           scrapeConfig,
           watermarkRemoval,
           proxyPoolId: proxyPoolId || null,
         });
+        if (scheduleEnabled) {
+          await updateSchedule.mutateAsync({
+            id: saved.id,
+            input: {
+              enabled: true,
+              intervalValue: scheduleIntervalValue,
+              intervalUnit: scheduleIntervalUnit,
+              revision: saved.scheduleRevision,
+            },
+          });
+        }
       }
       onClose();
     } catch (err) {
@@ -724,17 +779,28 @@ function SourceFormDialog({
     }
   }
 
-  const isSaving = createSource.isPending || updateSource.isPending;
+  const isSaving = createSource.isPending || updateSource.isPending || updateSchedule.isPending;
+  const scheduleMinutes = scheduleIntervalValue * { minutes: 1, hours: 60, days: 1440 }[scheduleIntervalUnit];
+  const scheduleValid = scheduleMinutes >= 15 && scheduleMinutes <= 43200;
 
   return (
     <Dialog open={open} onClose={onClose} title={isEdit ? "Modifica fonte" : "Aggiungi fonte"} size="xl">
       <form onSubmit={handleSubmit} className="flex flex-col gap-4 max-h-[65vh] overflow-y-auto pr-1">
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <div>
             <label htmlFor="source-name" className="text-label-sm text-on-surface-variant block mb-1">
               Nome
             </label>
             <Input id="source-name" required value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div>
+            <label htmlFor="source-country" className="text-label-sm text-on-surface-variant block mb-1">
+              Paese
+            </label>
+            <Select id="source-country" className="w-full" value={countryCode} onChange={(event) => setCountryCode(event.target.value)}>
+              <option value="">Non specificato</option>
+              {COUNTRIES.map((country) => <option key={country.code} value={country.code}>{country.flag} {country.name}</option>)}
+            </Select>
           </div>
           <div>
             <label htmlFor="source-priority" className="text-label-sm text-on-surface-variant block mb-1">
@@ -860,8 +926,13 @@ function SourceFormDialog({
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
-              <div>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-label-sm text-on-surface-variant">
+                  <input type="checkbox" checked={maxPagesEnabled} onChange={(event) => setMaxPagesEnabled(event.target.checked)} />
+                  Limita il numero di pagine
+                </label>
+                {maxPagesEnabled && <div>
                 <label
                   htmlFor="source-max-pages"
                   className="text-label-sm text-on-surface-variant block mb-1"
@@ -876,8 +947,14 @@ function SourceFormDialog({
                   value={maxPages}
                   onChange={(e) => setMaxPages(Number(e.target.value))}
                 />
+                </div>}
               </div>
-              <div>
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-label-sm text-on-surface-variant">
+                  <input type="checkbox" checked={maxAdsPerRunEnabled} onChange={(event) => setMaxAdsPerRunEnabled(event.target.checked)} />
+                  Limita il numero di annunci
+                </label>
+                {maxAdsPerRunEnabled && <div>
                 <label htmlFor="source-max-ads" className="text-label-sm text-on-surface-variant block mb-1">
                   Annunci massimi per esecuzione
                 </label>
@@ -889,6 +966,7 @@ function SourceFormDialog({
                   value={maxAdsPerRun}
                   onChange={(e) => setMaxAdsPerRun(Number(e.target.value))}
                 />
+                </div>}
               </div>
               <div>
                 <label
@@ -1116,6 +1194,7 @@ function SourceFormDialog({
                                           selector: ".text",
                                           selectorType: "css" as const,
                                           attribute: "text" as const,
+                                          sanitizeWithAi: false,
                                         },
                                       ],
                                 }
@@ -1137,6 +1216,15 @@ function SourceFormDialog({
                         <Icon name="close" size={16} />
                       </button>
                     </div>
+                    <label className="mt-2 flex items-center gap-2 text-label-sm text-on-surface-variant lg:ml-2">
+                      <input
+                        type="checkbox"
+                        checked={row.name === "title" || row.name === "description" || row.sanitizeWithAi}
+                        disabled={row.name === "title" || row.name === "description"}
+                        onChange={(event) => updateFieldRow(index, { sanitizeWithAi: event.target.checked })}
+                      />
+                      Pulizia Gemma {row.name === "title" || row.name === "description" ? "(obbligatoria)" : ""}
+                    </label>
                     {row.extractionMode === "keyValue" && (
                       <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-[1.4fr_1.4fr_0.7fr_1.4fr_0.7fr] lg:pl-2">
                         <div className="flex gap-2">
@@ -1291,7 +1379,7 @@ function SourceFormDialog({
                           </button>
                         </div>
                         {row.itemFields.map((itemField, itemIndex) => (
-                          <div key={itemIndex} className="grid grid-cols-[1fr_2.5fr_0.8fr_auto] gap-2">
+                          <div key={itemIndex} className="grid grid-cols-[1fr_2.5fr_0.8fr_auto_auto] gap-2">
                             <Input
                               mono
                               placeholder="nome"
@@ -1331,6 +1419,9 @@ function SourceFormDialog({
                               <option value="href">href</option>
                               <option value="src">src</option>
                             </Select>
+                            <label className="flex items-center gap-1 text-label-sm text-on-surface-variant">
+                              <input type="checkbox" checked={itemField.sanitizeWithAi} onChange={(event) => updateItemField(index, itemIndex, { sanitizeWithAi: event.target.checked })} /> AI
+                            </label>
                             <button
                               type="button"
                               onClick={() => removeItemField(index, itemIndex)}
@@ -1530,6 +1621,26 @@ function SourceFormDialog({
         </div>
 
         <fieldset className="border border-border rounded-lg p-3 space-y-3">
+          <legend className="px-1 text-label-sm text-on-surface">Pianificazione acquisizione</legend>
+          <label className="flex items-center gap-2 text-body-md text-on-surface-variant">
+            <input type="checkbox" checked={scheduleEnabled} onChange={(event) => setScheduleEnabled(event.target.checked)} />
+            Abilita acquisizione automatica fixed-delay
+          </label>
+          {scheduleEnabled && (
+            <div className="grid grid-cols-2 gap-3">
+              <Input type="number" min={1} value={scheduleIntervalValue} onChange={(event) => setScheduleIntervalValue(Number(event.target.value))} />
+              <Select value={scheduleIntervalUnit} onChange={(event) => setScheduleIntervalUnit(event.target.value as ScrapeIntervalUnit)}>
+                <option value="minutes">Minuti</option>
+                <option value="hours">Ore</option>
+                <option value="days">Giorni</option>
+              </Select>
+            </div>
+          )}
+          {scheduleEnabled && !scheduleValid && <p className="text-label-sm text-error">L’intervallo deve essere tra 15 minuti e 30 giorni.</p>}
+          <p className="text-label-sm text-on-surface-variant">Il timer riparte dalla conclusione di ogni scansione, inclusa quella manuale.</p>
+        </fieldset>
+
+        <fieldset className="border border-border rounded-lg p-3 space-y-3">
           <legend className="px-1 text-label-sm text-on-surface">Rimozione filigrana autorizzata</legend>
           <label className="flex items-center gap-2 text-body-md text-on-surface-variant">
             <input
@@ -1574,7 +1685,7 @@ function SourceFormDialog({
           <Button type="button" variant="secondary" onClick={onClose}>
             Annulla
           </Button>
-          <Button type="submit" disabled={isSaving}>
+          <Button type="submit" disabled={isSaving || (scheduleEnabled && !scheduleValid)}>
             {isSaving ? "Salvataggio…" : isEdit ? "Salva modifiche" : "Aggiungi fonte"}
           </Button>
         </div>
@@ -1719,130 +1830,6 @@ function intervalParts(minutes: number | null): { value: number; unit: ScrapeInt
   return { value: minutes, unit: "minutes" };
 }
 
-function SourceScheduleDialog({ source, onClose }: { source: Source | null; onClose: () => void }) {
-  const updateSchedule = useUpdateSourceSchedule();
-  const [enabled, setEnabled] = useState(false);
-  const [intervalValue, setIntervalValue] = useState(1);
-  const [intervalUnit, setIntervalUnit] = useState<ScrapeIntervalUnit>("hours");
-
-  useEffect(() => {
-    if (!source) return;
-    const parts = intervalParts(source.scrapeIntervalMinutes);
-    setEnabled(source.automaticScrapingEnabled);
-    setIntervalValue(parts.value);
-    setIntervalUnit(parts.unit);
-    updateSchedule.reset();
-  }, [source]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const normalizedMinutes = intervalValue * { minutes: 1, hours: 60, days: 1440 }[intervalUnit];
-  const intervalValid = normalizedMinutes >= 15 && normalizedMinutes <= 43200;
-  const canEnable = Boolean(source?.enabled && source.hasScrapeConfig);
-
-  async function handleSubmit(event: FormEvent) {
-    event.preventDefault();
-    if (!source || !intervalValid) return;
-    try {
-      await updateSchedule.mutateAsync({
-        id: source.id,
-        input: {
-          enabled,
-          intervalValue,
-          intervalUnit,
-          revision: source.scheduleRevision,
-        },
-      });
-      onClose();
-    } catch {
-      // The safe API error remains visible in the dialog.
-    }
-  }
-
-  return (
-    <Dialog open={source !== null} onClose={onClose} title="Pianificazione acquisizione automatica">
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-        <p className="text-body-md text-on-surface-variant">
-          L’intervallo parte soltanto al termine di una scansione. Anche una scansione manuale riavvia il
-          timer, impedendo due esecuzioni contemporanee.
-        </p>
-        <label className="flex items-center gap-3 text-body-md text-on-surface">
-          <input
-            type="checkbox"
-            checked={enabled}
-            disabled={!canEnable}
-            onChange={(event) => setEnabled(event.target.checked)}
-            className="h-4 w-4 accent-primary"
-          />
-          Abilita acquisizione automatica
-        </label>
-        {!canEnable && (
-          <p className="text-label-sm text-warning">
-            Abilita la fonte e salva una configurazione di acquisizione prima di attivare la pianificazione.
-          </p>
-        )}
-        {source?.proxyPoolStatus === "unavailable" && (
-          <p className="text-label-sm text-warning">
-            Il pool proxy selezionato non ha endpoint disponibili; le scansioni pianificate verranno bloccate
-            senza connessione diretta.
-          </p>
-        )}
-        <div className="grid grid-cols-[1fr_1fr] gap-3">
-          <div>
-            <label
-              htmlFor="schedule-interval-value"
-              className="text-label-sm text-on-surface-variant block mb-1"
-            >
-              Intervallo
-            </label>
-            <Input
-              id="schedule-interval-value"
-              type="number"
-              min={1}
-              value={intervalValue}
-              onChange={(event) => setIntervalValue(Number(event.target.value))}
-              required
-            />
-          </div>
-          <div>
-            <label
-              htmlFor="schedule-interval-unit"
-              className="text-label-sm text-on-surface-variant block mb-1"
-            >
-              Unità
-            </label>
-            <Select
-              id="schedule-interval-unit"
-              value={intervalUnit}
-              onChange={(event) => setIntervalUnit(event.target.value as ScrapeIntervalUnit)}
-            >
-              <option value="minutes">Minuti</option>
-              <option value="hours">Ore</option>
-              <option value="days">Giorni</option>
-            </Select>
-          </div>
-        </div>
-        {!intervalValid && (
-          <p className="text-label-sm text-error">
-            L’intervallo deve essere compreso tra 15 minuti e 30 giorni.
-          </p>
-        )}
-        {updateSchedule.isError && (
-          <p role="alert" className="text-body-md text-error">
-            {describeError(updateSchedule.error).description}
-          </p>
-        )}
-        <div className="flex justify-end gap-2">
-          <Button type="button" variant="secondary" onClick={onClose}>
-            Annulla
-          </Button>
-          <Button type="submit" disabled={!intervalValid || updateSchedule.isPending}>
-            {updateSchedule.isPending ? "Salvataggio…" : "Salva pianificazione"}
-          </Button>
-        </div>
-      </form>
-    </Dialog>
-  );
-}
-
 export default function SourcesPage() {
   const { user } = useAuth();
   const canManageSources = user?.role !== "viewer";
@@ -1861,7 +1848,6 @@ export default function SourcesPage() {
   const [formSource, setFormSource] = useState<Source | null | "new">(null);
   const [deleteTarget, setDeleteTarget] = useState<Source | null>(null);
   const [duplicateTarget, setDuplicateTarget] = useState<Source | null>(null);
-  const [scheduleTarget, setScheduleTarget] = useState<Source | null>(null);
   const [robotsResultBySource, setRobotsResultBySource] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -2201,16 +2187,6 @@ export default function SourcesPage() {
                         )}
                         {isAdmin && (
                           <button
-                            onClick={() => setScheduleTarget(source)}
-                            title="Pianificazione automatica"
-                            aria-label={`Pianifica ${source.name}`}
-                            className="p-1.5 text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded transition-colors"
-                          >
-                            <Icon name="schedule" size={16} />
-                          </button>
-                        )}
-                        {isAdmin && (
-                          <button
                             onClick={() => setDuplicateTarget(source)}
                             title="Duplica"
                             aria-label={`Duplica ${source.name}`}
@@ -2280,7 +2256,6 @@ export default function SourcesPage() {
         sources={sources.data ?? []}
         onClose={() => setDuplicateTarget(null)}
       />
-      <SourceScheduleDialog source={scheduleTarget} onClose={() => setScheduleTarget(null)} />
       <SourceImportDialog open={importOpen} onClose={() => setImportOpen(false)} />
     </div>
   );

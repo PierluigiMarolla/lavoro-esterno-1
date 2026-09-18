@@ -29,6 +29,7 @@ class ScrapeItemFieldConfig(CamelModel):
     selector: str = Field(min_length=1, max_length=500)
     selector_type: SelectorType = "css"
     attribute: Literal["text", "href", "src"] = "text"
+    sanitize_with_ai: bool = False
 
 
 class ScrapeFieldPaginationConfig(CamelModel):
@@ -66,6 +67,7 @@ class ScrapeFieldConfig(CamelModel):
     video_attribute: str = "src"
     item_fields: dict[str, ScrapeItemFieldConfig] = Field(default_factory=dict)
     pagination: ScrapeFieldPaginationConfig | None = None
+    sanitize_with_ai: bool = False
 
     @model_validator(mode="after")
     def validate_extraction_mode(self):
@@ -162,6 +164,10 @@ class ScrapeConfigInput(CamelModel):
     next_page_selector_type: SelectorType = "css"
     max_pages: int = Field(default=3, ge=1, le=20)
     max_ads_per_run: int = Field(default=50, ge=1, le=500)
+    # Default True preserva le configurazioni legacy. La UI delle nuove fonti
+    # invia esplicitamente False per eseguire la paginazione fino alla fine.
+    max_pages_enabled: bool = True
+    max_ads_per_run_enabled: bool = True
     # Minimo 1s: rate limiting non disattivabile da configurazione (vedi
     # PROGETTO.md § 4) — un operatore può rallentare ulteriormente una
     # fonte sensibile, non può azzerare la pausa tra le richieste.
@@ -291,6 +297,7 @@ class SourceCreate(CamelModel):
     slug: str = Field(min_length=1, max_length=100, pattern=r"^[a-z0-9_]+$")
     base_url: str
     priority: str = "medium"
+    country_code: str | None = Field(default=None, pattern=r"^[A-Z]{2}$")
     scrape_config: ScrapeConfigInput | None = None
     proxy_pool_id: uuid.UUID | None = None
     watermark_removal: WatermarkRemovalConfig = Field(default_factory=WatermarkRemovalConfig)
@@ -309,6 +316,7 @@ class SourceUpdate(CamelModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     base_url: str | None = None
     priority: str | None = None
+    country_code: str | None = Field(default=None, pattern=r"^[A-Z]{2}$")
     scrape_config: ScrapeConfigInput | None = None
     proxy_pool_id: uuid.UUID | None = None
     watermark_removal: WatermarkRemovalConfig | None = None
@@ -356,6 +364,7 @@ class SourceTransferItem(CamelModel):
     slug: str = Field(min_length=1, max_length=100, pattern=r"^[a-z0-9_]+$")
     base_url: str
     priority: Literal["high", "medium", "low"] = "medium"
+    country_code: str | None = Field(default=None, pattern=r"^[A-Z]{2}$")
     scrape_config: ScrapeConfigInput | None = None
     proxy_pool_name: str | None = Field(default=None, min_length=1, max_length=120)
     watermark_removal: WatermarkRemovalConfig = Field(default_factory=WatermarkRemovalConfig)
@@ -453,6 +462,7 @@ class SourceRead(CamelModel):
     # non viene introdotto un vero campo geografico per fonte (vedi
     # PROGETTO.md). Non blocca la UI, che lo mostra solo come etichetta.
     country: str = "N/D"
+    country_code: str | None = None
     status: str
     # Separato dallo stato di salute: una fonte healthy/degraded puo essere
     # volontariamente in pausa e quindi non abilitata allo scraping.
@@ -529,6 +539,7 @@ class ScrapeErrorRead(CamelModel):
             "robots_disallowed",
             "fetch_failed",
             "field_pagination_incomplete",
+            "content_sanitization_failed",
         ]
         | None
     ) = None

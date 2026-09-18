@@ -74,6 +74,7 @@ blocco tutte le sessioni dell'utente.
 | POST | `/api/v1/records/search` | Legacy: lookup esatto di un record dato un numero di telefono completo (hash di lookup). Non usato dal frontend attuale, mantenuto per compatibilità. |
 | GET | `/api/v1/records/{record_id}` | Overview di un record per la UI: titolo/descrizione, `tags` aggregati e `customFieldGroups` di tutte le occorrenze con provenienza. `customFields` conserva lo snapshot canonico per compatibilita. |
 | GET | `/api/v1/records/{record_id}/occurrences` | Tutti gli annunci (`advertisement`) collegati al record, con flag `isCanonical` e i rispettivi `customFields`. |
+| GET | `/api/v1/records/{record_id}/occurrences/{advertisement_id}` | Riepilogo completo di una singola occorrenza: testi ripuliti, fonte/Paese, pagina listing, URL, campi custom, media e metadati. |
 | GET | `/api/v1/records/{record_id}/occurrences/{advertisement_id}/versions` | Snapshot immutabili dell'occorrenza, ordinati per revisione e limitati al record richiesto. |
 | GET | `/api/v1/records/{record_id}/media` | Media associati agli annunci del record, con classificazione (media non ancora classificato è trattato come "explicit" per default fail-safe). |
 | GET | `/api/v1/records/{record_id}/history` | Storico unificato: unione di `canonical_history`, `media_classification_history` e `audit_log` filtrati per il record, ordinati per data. |
@@ -279,7 +280,7 @@ devono essere presentati dalla UI come sensibili.
 
 | Metodo | Path | Scopo |
 |---|---|---|
-| POST | `/api/v1/exports` | Crea un job asincrono con esattamente uno tra `recordIds` non vuoto e filtri tipizzati. Risponde `202`; massimo 1.000 record/2 GB. |
+| POST | `/api/v1/exports` | Crea un job asincrono con scope `selected`, `filters` o `all`. Il limite di 1.000 ID vale solo per `selected`; filtri e archivio completo sono congelati atomicamente nel DB e prodotti con memoria limitata. Limite finale 2 GB. Le richieste legacy con soli `recordIds` o `filters` restano compatibili. |
 | GET | `/api/v1/exports` | Storico dei job di esportazione (i più recenti), con richiedente, avanzamento e numero di record. L'URL firmato è emesso solo dall'endpoint di download. Riservato ad Admin/Operator. |
 | POST | `/api/v1/exports/{job_id}/retry` | Reimposta un job `failed` a `pending`. |
 | GET | `/api/v1/exports/{job_id}/download` | Emette un URL MinIO firmato e auditato per un pacchetto `ready`; risponde `409` se non pronto e `410` se scaduto. |
@@ -350,11 +351,24 @@ richiedono 2FA. Le risposte indicano solo `credentialConfigured`, mai le
 credenziali. Lo storico run aggiunge `proxyAttemptsCount`,
 `proxyRotationsCount` e `proxyStopReason`.
 
+I feed remoti usano `GET/POST /admin/proxy-feeds`, `PUT/DELETE
+/admin/proxy-feeds/{id}` e `POST /admin/proxy-feeds/{id}/sync`. Gli header
+sono accettati in scrittura ma la lettura restituisce soltanto `headerNames`.
+
+## Acquisizione e webhook
+
+`GET/PATCH /admin/ingestion-settings` legge o aggiorna il batch globale;
+`POST /admin/ingestion-settings/sanitize-existing` avvia il job riprendibile
+di bonifica Gemma. Le destinazioni si gestiscono con `GET/POST
+/admin/webhook-endpoints` e `PUT/DELETE /admin/webhook-endpoints/{id}`. Il
+segreto è write-only: la risposta espone solo `secretConfigured`; in modifica
+`clearSecret=true` lo rimuove esplicitamente.
+
 ## Export e privacy (settembre 2026)
 
-- Gli export richiedono uno scope esplicito. `recordIds` e `filters` sono
-  mutuamente esclusivi; i filtri supportati sono telefono esatto, fonte,
-  stato e intervallo date. L'elenco risolto viene congelato in
+- Gli export usano scope `selected`, `filters` o `all`; le richieste legacy
+  senza scope vengono inferite da `recordIds` o `filters`. I filtri supportati
+  sono telefono esatto, fonte, stato e intervallo date. L'elenco risolto viene congelato in
   `export_job_records` prima dell'accodamento.
 - `GET /exports` mostra tutti i job agli Admin e solo i propri agli
   Operator. `GET /exports/{id}/download` è l'unico endpoint che emette un

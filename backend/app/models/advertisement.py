@@ -7,7 +7,17 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
-from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -48,6 +58,11 @@ class Advertisement(UUIDPKMixin, Base):
     source_url: Mapped[str] = mapped_column(Text, nullable=False)
     title: Mapped[str | None] = mapped_column(Text, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    listing_page_number: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    original_content_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    sanitization_metadata: Mapped[dict] = mapped_column(
+        JSONB, default=dict, server_default=sa.text("'{}'::jsonb"), nullable=False
+    )
     custom_fields: Mapped[dict] = mapped_column(
         JSONB, default=dict, server_default=sa.text("'{}'::jsonb"), nullable=False
     )

@@ -7,6 +7,7 @@ export const useProxyPools = (enabled = true) =>
   useQuery({ queryKey: [...key, "pools"], queryFn: api.fetchProxyPools, enabled });
 export const useProxyEndpoints = () =>
   useQuery({ queryKey: [...key, "endpoints"], queryFn: api.fetchProxies });
+export const useProxyFeeds = () => useQuery({ queryKey: [...key, "feeds"], queryFn: api.fetchProxyFeeds });
 
 function useInvalidate() {
   const client = useQueryClient();
@@ -48,8 +49,26 @@ export function useDeleteProxy() {
 export function useTestProxy() {
   const invalidate = useInvalidate();
   return useMutation({
-    mutationFn: ({ id, sourceId }: { id: string; sourceId: string }) =>
-      api.testProxy(id, sourceId),
+    mutationFn: ({ id, sourceId }: { id: string; sourceId: string }) => api.testProxy(id, sourceId),
     onSuccess: invalidate,
   });
+}
+export function useCreateProxyFeed() {
+  const invalidate = useInvalidate();
+  return useMutation({ mutationFn: api.createProxyFeed, onSuccess: invalidate });
+}
+export function useUpdateProxyFeed() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: ({ id, input }: { id: string; input: api.ProxyFeedInput }) => api.updateProxyFeed(id, input),
+    onSuccess: invalidate,
+  });
+}
+export function useDeleteProxyFeed() {
+  const invalidate = useInvalidate();
+  return useMutation({ mutationFn: api.deleteProxyFeed, onSuccess: invalidate });
+}
+export function useSyncProxyFeed() {
+  const invalidate = useInvalidate();
+  return useMutation({ mutationFn: api.syncProxyFeed, onSuccess: invalidate });
 }

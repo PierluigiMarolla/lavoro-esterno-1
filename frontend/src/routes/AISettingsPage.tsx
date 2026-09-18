@@ -1,6 +1,5 @@
 /** Configurazione Admin dei provider AI, dei limiti e del provider attivo. */
 import { useEffect, useState } from "react";
-import { NavLink } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import {
   useAIProviderModels, useAISettings, useTestAIProvider,
@@ -11,6 +10,7 @@ import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import ErrorState from "@/components/ui/ErrorState";
 import Icon from "@/components/ui/Icon";
+import SettingsTabs from "@/components/settings/SettingsTabs";
 
 export default function AISettingsPage() {
   const { user } = useAuth();
@@ -41,10 +41,7 @@ export default function AISettingsPage() {
     <div className="flex flex-col gap-6">
       <div>
         <h2 className="text-headline-md text-on-surface">Impostazioni</h2>
-        <div className="flex gap-4 mt-3 mb-4 border-b border-border">
-          <NavLink to="/settings/ai" className="pb-2 border-b-2 border-primary text-primary">AI</NavLink>
-          <NavLink to="/settings/proxies" className="pb-2 text-on-surface-variant">Rotazione proxy</NavLink>
-        </div>
+        <SettingsTabs />
         <p className="text-body-md text-on-surface-variant mt-1">
           Configura il modello globale dei riepiloghi. Le API key sono cifrate e non vengono mai mostrate.
         </p>

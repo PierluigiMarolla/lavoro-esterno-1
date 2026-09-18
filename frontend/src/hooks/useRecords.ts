@@ -24,6 +24,14 @@ export function useRecordOccurrences(id: string) {
   return useQuery({ queryKey: ["records", id, "occurrences"], queryFn: () => recordsApi.fetchRecordOccurrences(id), enabled: Boolean(id) });
 }
 
+export function useOccurrenceDetail(recordId: string, advertisementId: string, enabled = true) {
+  return useQuery({
+    queryKey: ["records", recordId, "occurrences", advertisementId, "detail"],
+    queryFn: () => recordsApi.fetchOccurrenceDetail(recordId, advertisementId),
+    enabled: enabled && Boolean(recordId && advertisementId),
+  });
+}
+
 export function useRecordMedia(id: string) {
   return useQuery({ queryKey: ["records", id, "media"], queryFn: () => recordsApi.fetchRecordMedia(id), enabled: Boolean(id) });
 }

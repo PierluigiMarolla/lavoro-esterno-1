@@ -118,3 +118,20 @@ def test_tie_break_prefers_higher_source_priority_when_fields_equal() -> None:
     resolution = resolve_canonical([ad_low, ad_high])
 
     assert resolution.chosen.id == ad_high.id
+
+
+def test_lower_listing_page_precedes_source_priority() -> None:
+    low_source = _source("low-page", SourcePriority.low)
+    high_source = _source("high-late", SourcePriority.high)
+    early = _ad(low_source, minutes_ago=100, listing_page_number=2)
+    late = _ad(high_source, minutes_ago=1, listing_page_number=5)
+
+    assert resolve_canonical([late, early]).chosen.id == early.id
+
+
+def test_known_listing_page_precedes_unknown_page() -> None:
+    source = _source("source")
+    known = _ad(source, minutes_ago=100, listing_page_number=20)
+    unknown = _ad(source, minutes_ago=1, listing_page_number=None)
+
+    assert resolve_canonical([unknown, known]).chosen.id == known.id

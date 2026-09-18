@@ -16,13 +16,22 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
-from app.models.proxies import ProxyEndpoint, ProxyPool, ProxyPoolMember, ScrapeRunProxyAttempt
+from app.models.proxies import (
+    ProxyEndpoint,
+    ProxyFeed,
+    ProxyPool,
+    ProxyPoolMember,
+    ScrapeRunProxyAttempt,
+)
 from app.models.sources import Source
 from app.models.users import User
 from app.schemas.proxies import (
     ProxyEndpointCreate,
     ProxyEndpointRead,
     ProxyEndpointUpdate,
+    ProxyFeedInput,
+    ProxyFeedRead,
+    ProxyFeedSyncRead,
     ProxyPoolCreate,
     ProxyPoolRead,
     ProxyPoolUpdate,
@@ -31,10 +40,139 @@ from app.schemas.proxies import (
 )
 from app.security.deps import require_admin_with_2fa, require_role
 from app.services.audit import log_action
+from app.services.integration_crypto import encrypt_json
 from app.services.proxy_credentials import decrypt_proxy_credentials, encrypt_proxy_credentials
 from app.services.proxy_rotation import ProxyRuntimeConfig, proxy_host_is_allowed
 
 router = APIRouter()
+
+
+def _feed_read(row: ProxyFeed) -> ProxyFeedRead:
+    return ProxyFeedRead(
+        id=row.id,
+        name=row.name,
+        url=row.url,
+        scheme=row.scheme,
+        pool_id=row.pool_id,
+        enabled=row.enabled,
+        sync_interval_minutes=row.sync_interval_minutes,
+        header_names=row.header_names or [],
+        last_synced_at=row.last_synced_at,
+        next_sync_at=row.next_sync_at,
+        last_sync_status=row.last_sync_status,
+        last_sync_message=row.last_sync_message,
+        last_imported_count=row.last_imported_count,
+    )
+
+
+async def _apply_feed(row: ProxyFeed, payload: ProxyFeedInput, db: AsyncSession) -> None:
+    if await db.get(ProxyPool, payload.pool_id) is None:
+        raise HTTPException(422, "Pool proxy non trovato.")
+    row.name = payload.name.strip()
+    row.url = payload.url
+    row.scheme = payload.scheme
+    row.pool_id = payload.pool_id
+    row.enabled = payload.enabled
+    row.sync_interval_minutes = payload.sync_interval_minutes
+    if payload.headers:
+        row.headers_encrypted = encrypt_json({item.key: item.value for item in payload.headers})
+        row.header_names = [item.key for item in payload.headers]
+
+
+@router.get("/proxy-feeds", response_model=list[ProxyFeedRead])
+async def list_proxy_feeds(
+    db: AsyncSession = Depends(get_db), _admin: User = Depends(require_role("admin"))
+):
+    rows = (await db.execute(select(ProxyFeed).order_by(ProxyFeed.name))).scalars().all()
+    return [_feed_read(row) for row in rows]
+
+
+@router.post("/proxy-feeds", response_model=ProxyFeedRead, status_code=201)
+async def create_proxy_feed(
+    payload: ProxyFeedInput,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin_with_2fa),
+):
+    row = ProxyFeed()
+    await _apply_feed(row, payload, db)
+    row.next_sync_at = datetime.now(UTC) if row.enabled else None
+    db.add(row)
+    await log_action(
+        db,
+        user_id=admin.id,
+        action="create_proxy_feed",
+        entity_type="proxy_feed",
+        details={"header_names": row.header_names},
+    )
+    await db.commit()
+    await db.refresh(row)
+    return _feed_read(row)
+
+
+@router.put("/proxy-feeds/{feed_id}", response_model=ProxyFeedRead)
+async def update_proxy_feed(
+    feed_id: uuid.UUID,
+    payload: ProxyFeedInput,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin_with_2fa),
+):
+    row = await db.get(ProxyFeed, feed_id)
+    if row is None:
+        raise HTTPException(404, "Feed proxy non trovato.")
+    await _apply_feed(row, payload, db)
+    row.next_sync_at = datetime.now(UTC) if row.enabled else None
+    await log_action(
+        db,
+        user_id=admin.id,
+        action="update_proxy_feed",
+        entity_type="proxy_feed",
+        entity_id=str(row.id),
+        details={"header_names": row.header_names},
+    )
+    await db.commit()
+    await db.refresh(row)
+    return _feed_read(row)
+
+
+@router.delete("/proxy-feeds/{feed_id}", status_code=204)
+async def delete_proxy_feed(
+    feed_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin_with_2fa),
+):
+    row = await db.get(ProxyFeed, feed_id)
+    if row is None:
+        raise HTTPException(404, "Feed proxy non trovato.")
+    await db.execute(
+        delete(ProxyPoolMember).where(
+            ProxyPoolMember.proxy_id.in_(
+                select(ProxyEndpoint.id).where(ProxyEndpoint.managed_by_feed_id == feed_id)
+            )
+        )
+    )
+    await log_action(
+        db,
+        user_id=admin.id,
+        action="delete_proxy_feed",
+        entity_type="proxy_feed",
+        entity_id=str(row.id),
+    )
+    await db.delete(row)
+    await db.commit()
+
+
+@router.post("/proxy-feeds/{feed_id}/sync", response_model=ProxyFeedSyncRead, status_code=202)
+async def sync_proxy_feed(
+    feed_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require_admin_with_2fa),
+):
+    if await db.get(ProxyFeed, feed_id) is None:
+        raise HTTPException(404, "Feed proxy non trovato.")
+    from app.workers.tasks_proxy_feeds import sync_proxy_feed_task
+
+    task = sync_proxy_feed_task.delay(str(feed_id))
+    return ProxyFeedSyncRead(task_id=task.id)
 
 
 def _endpoint_read(row: ProxyEndpoint) -> ProxyEndpointRead:

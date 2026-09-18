@@ -24,6 +24,7 @@ import hashlib
 import json
 import logging
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -71,6 +72,7 @@ _SCRAPE_ERROR_CODES = {
     "robots_disallowed",
     "fetch_failed",
     "field_pagination_incomplete",
+    "content_sanitization_failed",
 }
 
 
@@ -128,6 +130,10 @@ class CollectedAd:
     normalized: dict
     media_bytes: list[bytes] = field(default_factory=list)
     media_download_complete: bool = True
+    listing_page_number: int | None = None
+    original_content_encrypted: bytes | None = None
+    sanitization_metadata: dict = field(default_factory=dict)
+    persistence_outcome: str = "pending"
 
 
 @dataclass
@@ -150,7 +156,9 @@ class CollectionResult:
 
 
 async def collect_ads(
-    source: Source, proxy_candidates: list[ProxyRuntimeConfig] | None = None
+    source: Source,
+    proxy_candidates: list[ProxyRuntimeConfig] | None = None,
+    on_ad: Callable[[CollectedAd], bool] | None = None,
 ) -> CollectionResult:
     """Fase 1: esegue davvero `discover -> scrape_ad -> normalize ->
     download_media` per la fonte, senza toccare il database.
@@ -176,11 +184,7 @@ async def collect_ads(
             )
             return CollectionResult(
                 ads=[],
-                errors=[
-                    ScrapeErrorDetail(
-                        url=exc.url, message=str(exc), code="robots_disallowed"
-                    )
-                ],
+                errors=[ScrapeErrorDetail(url=exc.url, message=str(exc), code="robots_disallowed")],
                 discovery_diagnostics=scraper.discovery_diagnostics,
                 proxy_events=scraper.proxy_events,
             )
@@ -212,9 +216,7 @@ async def collect_ads(
             except (RobotsDisallowedError, httpx.HTTPError, PageFetchError) as exc:
                 logger.info("Annuncio saltato (%s): %s", url, exc)
                 errors.append(
-                    ScrapeErrorDetail(
-                        url=url, message=str(exc), code=scrape_error_code(exc)
-                    )
+                    ScrapeErrorDetail(url=url, message=str(exc), code=scrape_error_code(exc))
                 )
                 continue
 
@@ -224,9 +226,7 @@ async def collect_ads(
                     message=message,
                     code="field_pagination_incomplete",
                 )
-                for message in scraper.field_pagination_warnings[
-                    pagination_warning_offset:
-                ]
+                for message in scraper.field_pagination_warnings[pagination_warning_offset:]
             )
 
             normalized = scraper.normalize(raw)
@@ -265,13 +265,18 @@ async def collect_ads(
             if media_issues:
                 errors.append(ScrapeErrorDetail(url=url, message=" ".join(media_issues)))
 
-            collected.append(
-                CollectedAd(
-                    normalized=normalized,
-                    media_bytes=media_bytes,
-                    media_download_complete=media_download_complete,
-                )
+            item = CollectedAd(
+                normalized=normalized,
+                media_bytes=media_bytes,
+                media_download_complete=media_download_complete,
+                listing_page_number=scraper.discovered_page_numbers.get(url),
             )
+            # The Celery orchestration uses this hook to sanitize and commit a
+            # full publication batch while the remaining detail pages are
+            # still being scraped. Tests and other callers keep the original
+            # collect-then-persist behavior when the hook is omitted.
+            if on_ad is None or on_ad(item):
+                collected.append(item)
 
         return CollectionResult(
             ads=collected,
@@ -440,6 +445,7 @@ def _save_version(
                 "title": advertisement.title,
                 "description": advertisement.description,
                 "customFields": advertisement.custom_fields or {},
+                "listingPageNumber": advertisement.listing_page_number,
                 "mediaHashes": current_media_hashes,
             },
         )
@@ -463,6 +469,7 @@ def recompute_canonical(session: Session, record: Record) -> bool:
             description=ad.description,
             source_url=ad.source_url,
             extra_non_empty_fields=non_empty_custom_field_count(ad.custom_fields),
+            listing_page_number=ad.listing_page_number,
         )
         for ad, src in rows
     ]
@@ -487,6 +494,7 @@ def persist_collected_ads(
     source: Source,
     result: CollectionResult,
     run_id: uuid.UUID | None = None,
+    batch_size: int = 50,
 ) -> dict:
     """Fase 2: scrive su DB gli annunci raccolti dalla fase 1 (dedup per
     telefono, upsert per URL, upload media, ricalcolo canonico). Nessuna
@@ -497,6 +505,7 @@ def persist_collected_ads(
     items_unchanged = 0
     persist_errors: list[ScrapeErrorDetail] = []
     media_ids: list[uuid.UUID] = []
+    pending_since_commit = 0
 
     for item in result.ads:
         phone_raw = item.normalized["phone_raw"]
@@ -504,6 +513,7 @@ def persist_collected_ads(
         try:
             phone_normalized = normalize_phone(phone_raw)
         except PhoneCryptoError as exc:
+            item.persistence_outcome = "rejected_invalid_phone"
             persist_errors.append(
                 ScrapeErrorDetail(url=source_url, message=f"Telefono non valido: {exc}")
             )
@@ -519,10 +529,14 @@ def persist_collected_ads(
             select(SuppressionEntry).where(SuppressionEntry.phone_lookup_hash == lookup_hash)
         ).scalar_one_or_none()
         if suppression is not None:
+            item.persistence_outcome = "suppressed"
             suppression.blocked_ingestions += 1
             suppression.last_blocked_at = datetime.now(UTC)
             session.add(suppression)
-            session.commit()
+            pending_since_commit += 1
+            if pending_since_commit >= batch_size:
+                session.commit()
+                pending_since_commit = 0
             continue
         record = _get_or_create_record(session, lookup_hash, phone_normalized)
 
@@ -545,6 +559,9 @@ def persist_collected_ads(
                 source_url=item.normalized["source_url"],
                 title=item.normalized.get("title"),
                 description=item.normalized.get("description"),
+                listing_page_number=item.listing_page_number,
+                original_content_encrypted=item.original_content_encrypted,
+                sanitization_metadata=item.sanitization_metadata,
                 custom_fields=item.normalized.get("custom_fields") or {},
                 content_hash=new_content_hash,
                 confidence=1.0,
@@ -558,6 +575,7 @@ def persist_collected_ads(
             session.add(advertisement)
             session.flush()
             items_new += 1
+            item.persistence_outcome = "created"
 
         previous_hashes = (
             session.execute(
@@ -585,15 +603,28 @@ def persist_collected_ads(
             _save_version(session, advertisement, run_id, ["initial"], media_result.current_hashes)
             recompute_canonical(session, record)
         else:
+            resolved_page_number = advertisement.listing_page_number
+            if item.listing_page_number is not None:
+                resolved_page_number = (
+                    item.listing_page_number
+                    if resolved_page_number is None
+                    else min(resolved_page_number, item.listing_page_number)
+                )
             changed = _changed_fields(
                 advertisement, item.normalized, new_media_hash != previous_media_hash
             )
+            if advertisement.listing_page_number != resolved_page_number:
+                changed.append("listingPageNumber")
             advertisement.last_seen_at = now
             if not changed:
                 items_unchanged += 1
+                item.persistence_outcome = "unchanged"
             else:
                 advertisement.title = item.normalized.get("title")
                 advertisement.description = item.normalized.get("description")
+                advertisement.listing_page_number = resolved_page_number
+                advertisement.original_content_encrypted = item.original_content_encrypted
+                advertisement.sanitization_metadata = item.sanitization_metadata
                 advertisement.custom_fields = item.normalized.get("custom_fields") or {}
                 advertisement.content_hash = new_content_hash
                 advertisement.media_set_hash = new_media_hash
@@ -602,8 +633,15 @@ def persist_collected_ads(
                 advertisement.revision += 1
                 record.content_revision += 1
                 items_updated += 1
+                item.persistence_outcome = "updated"
                 _save_version(session, advertisement, run_id, changed, media_result.current_hashes)
                 recompute_canonical(session, record)
+        pending_since_commit += 1
+        if pending_since_commit >= batch_size:
+            session.commit()
+            pending_since_commit = 0
+
+    if pending_since_commit:
         session.commit()
 
     all_errors = result.errors + persist_errors

@@ -29,6 +29,7 @@ export interface CreateSourceInput {
   name: string;
   slug: string;
   baseUrl: string;
+  countryCode?: string | null;
   priority: SourcePriority;
   scrapeConfig?: ScrapeConfig | null;
   watermarkRemoval?: WatermarkRemovalConfig;
@@ -38,6 +39,7 @@ export interface CreateSourceInput {
 export interface UpdateSourceInput {
   name?: string;
   baseUrl?: string;
+  countryCode?: string | null;
   priority?: SourcePriority;
   scrapeConfig?: ScrapeConfig | null;
   watermarkRemoval?: WatermarkRemovalConfig;

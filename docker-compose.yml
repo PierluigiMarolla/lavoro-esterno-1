@@ -99,7 +99,7 @@ services:
   # pubblicazione della porta 9001 in ambienti esposti pubblicamente.
   # ---------------------------------------------------------------------
   minio:
-    image: minio/minio:latest
+    image: quay.io/minio/minio:latest
     restart: unless-stopped
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
@@ -151,7 +151,7 @@ services:
   # ora, da adattare a un target S3-compatible remoto in produzione.
   # ---------------------------------------------------------------------
   backup-minio:
-    image: minio/mc:latest
+    image: quay.io/minio/mc:latest
     restart: unless-stopped
     entrypoint: ["/bin/sh", "/scripts/backup-minio.sh"]
     environment:
@@ -281,6 +281,23 @@ services:
       redis:
         condition: service_healthy
       minio:
+        condition: service_healthy
+    networks:
+      - lavoro-esterno-net
+
+  # Consegne webhook isolate: retry e destinazioni lente non bloccano scraping o export.
+  worker-webhooks:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["celery", "-A", "app.workers.celery_app", "worker", "-Q", "webhooks", "-n", "worker-webhooks@%h", "--loglevel=info", "--concurrency=2"]
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     networks:
       - lavoro-esterno-net
@@ -418,7 +435,7 @@ services:
     command:
       - --broker-url=${REDIS_URL:-redis://redis:6379/0}
       - --retry-interval=5
-      - --queues=scraping,maintenance,media,ai,exports
+      - --queues=scraping,maintenance,media,ai,exports,webhooks
       - --generic-hostname-task-sent-metric
     expose:
       - "9808"

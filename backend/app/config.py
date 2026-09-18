@@ -102,6 +102,10 @@ class Settings(BaseSettings):
         default="", description="Host proxy privati consentiti, separati da virgola."
     )
     PROXY_MAX_ATTEMPTS: int = Field(default=3, ge=1, le=10)
+    INTEGRATION_ENCRYPTION_KEY: str | None = Field(
+        default="MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+        description="Chiave AES-256 base64 per originali ripuliti, webhook e header dei feed.",
+    )
 
     # --- Scheduling scraper -----------------------------------------------
     SCRAPE_PENDING_RETRY_MINUTES: int = Field(default=2, ge=1, le=60)

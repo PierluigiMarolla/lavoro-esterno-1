@@ -409,3 +409,20 @@ ogni modifica materiale. Gli snapshot sono eliminati in cascata con
 l'annuncio, quindi retention e cancellazione GDPR non lasciano copie orfane.
 Gli originali MinIO non vengono sovrascritti: un media non più pubblicato è
 marcato non corrente e rimane storico fino alla retention.
+
+## 12. Pipeline evoluta e integrazioni
+
+- `sources.country_code` conserva il codice ISO 3166-1 opzionale.
+- `advertisements.listing_page_number` e lo snapshot delle versioni tracciano
+  la provenienza; `original_content_encrypted` e i metadata di sanitizzazione
+  conservano l'originale senza esporlo.
+- `ingestion_settings` è un singleton revisionato con dimensione del batch.
+- `proxy_feeds` conserva configurazione, stato e header cifrati; gli endpoint
+  importati fanno riferimento al feed senza perdere lo storico.
+- `webhook_endpoints` e la tabella di associazione fonti definiscono lo scope;
+  `scrape_run_payloads` e `webhook_deliveries` rendono consegne e retry
+  persistenti e idempotenti. Segreti e payload sono cifrati.
+
+La migrazione è additiva: i record storici mantengono Paese e pagina null e
+non viene inventato alcun originale. La bonifica Gemma parte esclusivamente da
+un job amministrativo esplicito.

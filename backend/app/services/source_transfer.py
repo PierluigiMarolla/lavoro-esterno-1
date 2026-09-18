@@ -69,14 +69,20 @@ async def preview_source_document(
 
     slugs = [item.slug for item in valid_items]
     pool_names = {item.proxy_pool_name for item in valid_items if item.proxy_pool_name}
-    existing_slugs = set(
-        (await db.execute(select(Source.slug).where(Source.slug.in_(slugs)))).scalars().all()
-    ) if slugs else set()
-    existing_pools = set(
-        (await db.execute(select(ProxyPool.name).where(ProxyPool.name.in_(pool_names))))
-        .scalars()
-        .all()
-    ) if pool_names else set()
+    existing_slugs = (
+        set((await db.execute(select(Source.slug).where(Source.slug.in_(slugs)))).scalars().all())
+        if slugs
+        else set()
+    )
+    existing_pools = (
+        set(
+            (await db.execute(select(ProxyPool.name).where(ProxyPool.name.in_(pool_names))))
+            .scalars()
+            .all()
+        )
+        if pool_names
+        else set()
+    )
 
     entries: list[SourceImportPreviewEntry] = []
     for index, raw_item in enumerate(raw_sources):

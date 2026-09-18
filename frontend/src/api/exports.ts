@@ -7,6 +7,7 @@ export function fetchExportJobs(): Promise<ExportJob[]> {
 
 export interface CreateExportInput {
   type: ExportType;
+  scope?: "selected" | "filters" | "all";
   recordIds?: string[];
   filters?: ExportFilters;
 }

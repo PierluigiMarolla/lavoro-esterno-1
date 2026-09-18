@@ -168,6 +168,8 @@ class GenericScraper(Scraper):
         self.discovery_diagnostics = DiscoveryDiagnostics()
         self.field_pagination_diagnostics: dict[str, FieldPaginationDiagnostic] = {}
         self.field_pagination_warnings: list[str] = []
+        # URL assoluto -> pagina di listing piu bassa in cui e stato visto.
+        self.discovered_page_numbers: dict[str, int] = {}
 
     def _config_value(self, snake_case_key: str, camel_case_key: str, default: Any = None) -> Any:
         return self.config.get(snake_case_key, self.config.get(camel_case_key, default))
@@ -506,10 +508,18 @@ class GenericScraper(Scraper):
         return "\n".join(lines)
 
     async def discover(self) -> list[str]:
-        max_pages = int(self._config_value("max_pages", "maxPages") or _DEFAULT_MAX_PAGES)
-        max_ads = int(
+        configured_max_pages = int(
+            self._config_value("max_pages", "maxPages") or _DEFAULT_MAX_PAGES
+        )
+        configured_max_ads = int(
             self._config_value("max_ads_per_run", "maxAdsPerRun") or _DEFAULT_MAX_ADS_PER_RUN
         )
+        pages_limited = bool(self._config_value("max_pages_enabled", "maxPagesEnabled", True))
+        ads_limited = bool(
+            self._config_value("max_ads_per_run_enabled", "maxAdsPerRunEnabled", True)
+        )
+        max_pages = configured_max_pages if pages_limited else 2**31 - 1
+        max_ads = configured_max_ads if ads_limited else 2**31 - 1
         ad_link_selector = self._config_value("ad_link_selector", "adLinkSelector")
         ad_link_selector_type = str(
             self._config_value("ad_link_selector_type", "adLinkSelectorType", "css")
@@ -519,8 +529,8 @@ class GenericScraper(Scraper):
             self._config_value("next_page_selector_type", "nextPageSelectorType", "css")
         )
 
-        self.discovery_diagnostics = DiscoveryDiagnostics(configured_max_pages=max_pages)
-        if next_page_selector and max_pages == 1:
+        self.discovery_diagnostics = DiscoveryDiagnostics(configured_max_pages=configured_max_pages)
+        if next_page_selector and pages_limited and max_pages == 1:
             self.discovery_diagnostics.warnings.append(
                 "Il selettore di paginazione e configurato, ma maxPages=1 limita lo scan "
                 "alla prima pagina."
@@ -586,10 +596,20 @@ class GenericScraper(Scraper):
         return None
 
     def _add_ad_urls(
-        self, urls: list[str], seen_urls: set[str], page_url: str, hrefs: list[str], max_ads: int
+        self,
+        urls: list[str],
+        seen_urls: set[str],
+        page_url: str,
+        hrefs: list[str],
+        max_ads: int,
+        page_number: int,
     ) -> bool:
         for href in hrefs:
             absolute = urljoin(page_url, href)
+            previous_page = self.discovered_page_numbers.get(absolute)
+            self.discovered_page_numbers[absolute] = (
+                page_number if previous_page is None else min(previous_page, page_number)
+            )
             if absolute in seen_urls:
                 continue
             seen_urls.add(absolute)
@@ -630,6 +650,7 @@ class GenericScraper(Scraper):
                     page_url,
                     self._extract_all(page, ad_link_selector, "href", ad_link_selector_type),
                     max_ads,
+                    page_index + 1,
                 ):
                     return urls
                 if not next_page_selector:
@@ -726,7 +747,12 @@ class GenericScraper(Scraper):
                     seen_pages.add(fingerprint)
                     self.discovery_diagnostics.pages_visited += 1
                     if self._add_ad_urls(
-                        urls, seen_urls, current_url, [str(href) for href in hrefs], max_ads
+                        urls,
+                        seen_urls,
+                        current_url,
+                        [str(href) for href in hrefs],
+                        max_ads,
+                        page_index + 1,
                     ):
                         stop_all = True
                         break

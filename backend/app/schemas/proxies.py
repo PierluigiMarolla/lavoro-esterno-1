@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from app.schemas.common import CamelModel
 
@@ -95,3 +95,49 @@ class ProxyTestRead(CamelModel):
     latency_ms: int
     status_category: str
     message: str
+
+
+class ProxyFeedHeader(CamelModel):
+    key: str = Field(min_length=1, max_length=100, pattern=r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
+    value: str = Field(min_length=1, max_length=2000)
+
+
+class ProxyFeedInput(CamelModel):
+    name: str = Field(min_length=1, max_length=120)
+    url: str = Field(min_length=1, max_length=2000)
+    scheme: ProxyScheme = "http"
+    pool_id: uuid.UUID
+    enabled: bool = True
+    sync_interval_minutes: int = Field(default=60, ge=15, le=1440)
+    headers: list[ProxyFeedHeader] = Field(default_factory=list, max_length=20)
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, value: str) -> str:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(value)
+        if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+            raise ValueError("Il feed deve usare HTTPS senza credenziali nell'URL.")
+        return value
+
+
+class ProxyFeedRead(CamelModel):
+    id: uuid.UUID
+    name: str
+    url: str
+    scheme: ProxyScheme
+    pool_id: uuid.UUID
+    enabled: bool
+    sync_interval_minutes: int
+    header_names: list[str]
+    last_synced_at: datetime | None
+    next_sync_at: datetime | None
+    last_sync_status: str | None
+    last_sync_message: str | None
+    last_imported_count: int
+
+
+class ProxyFeedSyncRead(CamelModel):
+    task_id: str
+    queued: bool = True

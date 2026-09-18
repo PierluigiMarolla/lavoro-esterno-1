@@ -54,6 +54,7 @@ def cleanup_expired_data() -> dict:
     from app.models.advertisement import Advertisement
     from app.models.audit_log import AuditLog
     from app.models.export_jobs import ExportJob
+    from app.models.integrations import ScrapeRunPayload, WebhookDelivery
     from app.models.media import Media
     from app.models.operations import NotificationEvent
     from app.models.record import Record
@@ -70,6 +71,7 @@ def cleanup_expired_data() -> dict:
         "deleted_records": 0,
         "deleted_exports": 0,
         "deleted_notifications": 0,
+        "deleted_webhook_payloads": 0,
     }
     try:
         if settings.MEDIA_RETENTION_DAYS > 0:
@@ -160,6 +162,16 @@ def cleanup_expired_data() -> dict:
             result["deleted_notifications"] = session.execute(
                 delete(NotificationEvent).where(NotificationEvent.created_at < cutoff)
             ).rowcount
+
+        # Webhook payloads contain the complete sanitized result of a run and
+        # therefore follow the same 90-day technical retention as scrape runs.
+        webhook_cutoff = now - timedelta(days=90)
+        session.execute(
+            delete(WebhookDelivery).where(WebhookDelivery.created_at < webhook_cutoff)
+        )
+        result["deleted_webhook_payloads"] = session.execute(
+            delete(ScrapeRunPayload).where(ScrapeRunPayload.created_at < webhook_cutoff)
+        ).rowcount
 
         expired = list(
             session.execute(

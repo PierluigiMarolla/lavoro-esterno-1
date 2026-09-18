@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import false, func, or_, select
+from sqlalchemy import false, func, insert, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -61,17 +61,10 @@ def _to_out(job: ExportJob, email: str) -> ExportJobOut:
     )
 
 
-async def _resolve_scope(
-    db: AsyncSession, record_ids: list[uuid.UUID] | None, filters: ExportFilters | None
-) -> list[uuid.UUID]:
-    if record_ids:
-        rows = (
-            (await db.execute(select(Record.id).where(Record.id.in_(record_ids)))).scalars().all()
-        )
-        if len(rows) != len(record_ids):
-            raise HTTPException(status_code=404, detail="Uno o più record non esistono.")
-        return list(rows)
-
+def _scope_select(scope: str, filters: ExportFilters | None):
+    """Build the frozen scope query without materializing every UUID in Python."""
+    if scope == "all":
+        return select(Record.id).order_by(Record.id)
     assert filters is not None
     canonical = aliased(Advertisement)
     stmt = select(Record.id).outerjoin(canonical, canonical.id == Record.canonical_ad_id)
@@ -117,7 +110,18 @@ async def _resolve_scope(
         )
     elif filters.status == "flagged":
         stmt = stmt.where(false())
-    return list((await db.execute(stmt.limit(settings.EXPORT_MAX_RECORDS + 1))).scalars().all())
+    return stmt.order_by(Record.id)
+
+
+async def _resolve_selected_scope(
+    db: AsyncSession, record_ids: list[uuid.UUID]
+) -> list[uuid.UUID]:
+    rows = (
+        (await db.execute(select(Record.id).where(Record.id.in_(record_ids)))).scalars().all()
+    )
+    if len(rows) != len(record_ids):
+        raise HTTPException(status_code=404, detail="Uno o più record non esistono.")
+    return list(rows)
 
 
 async def _estimate_media_bytes(db: AsyncSession, record_ids: list[uuid.UUID]) -> int:
@@ -143,12 +147,26 @@ async def create_export(
     user: User = Depends(require_role("admin", "operator")),
 ) -> ExportJobOut:
     """Congela lo scope autorizzato e accoda la creazione del pacchetto."""
-    ids = await _resolve_scope(db, payload.record_ids, payload.filters)
-    if not ids:
+    scope = payload.scope or "selected"
+    scope_statement = None
+    if payload.record_ids:
+        ids = await _resolve_selected_scope(db, payload.record_ids)
+        record_count = len(ids)
+    else:
+        ids = []
+        scope_statement = _scope_select(scope, payload.filters)
+        record_count = int(
+            await db.scalar(select(func.count()).select_from(scope_statement.subquery())) or 0
+        )
+    if not record_count:
         raise HTTPException(status_code=422, detail="Lo scope non contiene record.")
-    if len(ids) > settings.EXPORT_MAX_RECORDS:
+    if scope == "selected" and record_count > settings.EXPORT_MAX_RECORDS:
         raise HTTPException(status_code=413, detail="Limite massimo di record superato.")
-    estimated = 0 if payload.type == "text_only" else await _estimate_media_bytes(db, ids)
+    estimated = (
+        0
+        if payload.type == "text_only" or scope in {"filters", "all"}
+        else await _estimate_media_bytes(db, ids)
+    )
     if estimated > settings.EXPORT_MAX_UNCOMPRESSED_BYTES:
         raise HTTPException(status_code=413, detail="Dimensione massima dell'export superata.")
 
@@ -163,15 +181,27 @@ async def create_export(
         requested_at=now,
         expires_at=_expiry_from(now),
         manifest_json={
-            "filters": payload.filters.model_dump(mode="json") if payload.filters else None
+            "scope": scope,
+            "filters": payload.filters.model_dump(mode="json") if payload.filters else None,
         },
-        record_count=len(ids),
+        record_count=record_count,
         estimated_uncompressed_bytes=estimated,
         include_clear_phone=clear,
     )
     db.add(job)
     await db.flush()
-    db.add_all([ExportJobRecord(export_job_id=job.id, record_id=record_id) for record_id in ids])
+    if scope_statement is not None:
+        frozen_scope = scope_statement.subquery()
+        await db.execute(
+            insert(ExportJobRecord).from_select(
+                ["export_job_id", "record_id"],
+                select(literal(job.id), frozen_scope.c.id),
+            )
+        )
+    else:
+        db.add_all(
+            ExportJobRecord(export_job_id=job.id, record_id=record_id) for record_id in ids
+        )
     await log_action(
         db,
         user_id=user.id,
@@ -180,8 +210,9 @@ async def create_export(
         entity_id=str(job.id),
         details={
             "type": job.type,
-            "record_count": len(ids),
+            "record_count": record_count,
             "phone_visibility": "clear" if clear else "masked",
+            "scope": scope,
         },
     )
     await db.commit()

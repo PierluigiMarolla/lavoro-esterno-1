@@ -11,7 +11,7 @@ ricerca e l'esportazione controllata.
 
 Stack: React + Vite + TypeScript + Tailwind (frontend), FastAPI su
 Python 3.13 con SQLAlchemy 2/Alembic (backend), worker Celery dedicati
-per coda (`scraping`, `maintenance`, `media`, `ai`, `exports`) più uno scheduler (Celery Beat),
+per coda (`scraping`, `maintenance`, `media`, `ai`, `exports`, `webhooks`) più uno scheduler (Celery Beat),
 PostgreSQL 17, Redis, MinIO (storage media S3-compatible), Nginx come
 reverse proxy, Prometheus/Grafana/Loki per l'osservabilità.
 
@@ -73,6 +73,20 @@ modalità Dynamic/Stealth per raccogliere caroselli, commenti e recensioni;
 sono supportate sia liste di valori sia elementi strutturati configurabili.
 Ogni selettore dello scraper può usare CSS oppure XPath 1.0; il tipo si sceglie
 separatamente per link annunci, paginazione, attesa, campi e sotto-campi.
+
+La pipeline corrente pubblica gli annunci in batch configurabili dalla tab
+Admin **Acquisizione**, ripulisce con Gemma soltanto i testi che richiedono un
+intervento e conserva gli originali cifrati. Ogni annuncio registra la pagina
+di listing e la selezione canonica privilegia la pagina più bassa. I limiti
+globali di pagine e annunci sono opzionali: se non selezionati, lo scraper
+prosegue fino alla fine reale della paginazione o a una protezione di sicurezza.
+
+Le impostazioni Admin includono inoltre destinazioni webhook filtrabili per
+fonte, firmabili HMAC e con politica sul telefono, oltre a feed proxy HTTPS
+periodici con due header write-only. La pagina Record consente export singolo,
+della selezione, dei risultati filtrati o dell'intero archivio; le occorrenze
+espandibili mostrano il dettaglio completo. I media non vengono sfocati, ma
+mantengono sempre il badge di classificazione.
 
 Gli Admin possono trasferire le configurazioni tra installazioni dalla pagina
 Fonti: l'export produce JSON versionato e l'import mostra sempre un'anteprima

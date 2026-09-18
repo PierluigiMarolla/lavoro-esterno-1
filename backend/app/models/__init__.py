@@ -17,6 +17,13 @@ from app.models.audit_log import AuditLog
 from app.models.base import Base
 from app.models.canonical_history import CanonicalHistory
 from app.models.export_jobs import ExportJob, ExportJobRecord
+from app.models.integrations import (
+    IngestionSettings,
+    ScrapeRunPayload,
+    WebhookDelivery,
+    WebhookEndpoint,
+    WebhookEndpointSource,
+)
 from app.models.media import Media
 from app.models.media_classification_history import MediaClassificationHistory
 from app.models.operations import (
@@ -26,7 +33,13 @@ from app.models.operations import (
     SourcePriorityRecalculationJob,
 )
 from app.models.privacy import ErasureRequest, SuppressionEntry
-from app.models.proxies import ProxyEndpoint, ProxyPool, ProxyPoolMember, ScrapeRunProxyAttempt
+from app.models.proxies import (
+    ProxyEndpoint,
+    ProxyFeed,
+    ProxyPool,
+    ProxyPoolMember,
+    ScrapeRunProxyAttempt,
+)
 from app.models.record import Record
 from app.models.scrape_errors import ScrapeError
 from app.models.scrape_runs import ScrapeRun
@@ -57,10 +70,16 @@ __all__ = [
     "SummaryGenerationJob",
     "ExportJob",
     "ExportJobRecord",
+    "IngestionSettings",
+    "WebhookEndpoint",
+    "WebhookEndpointSource",
+    "ScrapeRunPayload",
+    "WebhookDelivery",
     "ErasureRequest",
     "SuppressionEntry",
     "ProxyPool",
     "ProxyEndpoint",
+    "ProxyFeed",
     "ProxyPoolMember",
     "ScrapeRunProxyAttempt",
     "AuditLog",

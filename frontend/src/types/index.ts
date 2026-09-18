@@ -40,6 +40,7 @@ export interface Source {
   code: string;
   name: string;
   country: string;
+  countryCode: string | null;
   status: SourceStatus;
   enabled: boolean;
   // Priorità reale della fonte (bug corretto: prima l'API non la
@@ -70,6 +71,7 @@ export interface ScrapeItemFieldConfig {
   selector: string;
   selectorType?: ScrapeSelectorType;
   attribute: "text" | "href" | "src";
+  sanitizeWithAi?: boolean;
 }
 
 export interface ScrapeFieldPaginationConfig {
@@ -101,6 +103,7 @@ export interface ScrapeFieldConfig {
   videoAttribute?: string;
   itemFields?: Record<string, ScrapeItemFieldConfig>;
   pagination?: ScrapeFieldPaginationConfig | null;
+  sanitizeWithAi?: boolean;
 }
 
 export interface ScrapeConfig {
@@ -111,6 +114,8 @@ export interface ScrapeConfig {
   nextPageSelectorType?: ScrapeSelectorType;
   maxPages: number;
   maxAdsPerRun: number;
+  maxPagesEnabled?: boolean;
+  maxAdsPerRunEnabled?: boolean;
   rateLimitSeconds: number;
   fetchMode?: ScrapeFetchMode;
   renderJs: boolean;
@@ -131,6 +136,7 @@ export interface SourceTransferItem {
   slug: string;
   baseUrl: string;
   priority: SourcePriority;
+  countryCode?: string | null;
   scrapeConfig: ScrapeConfig | null;
   proxyPoolName: string | null;
   watermarkRemoval: WatermarkRemovalConfig;
@@ -205,7 +211,8 @@ export type ScrapeFailureCode =
   | "proxy_pool_exhausted"
   | "robots_disallowed"
   | "fetch_failed"
-  | "field_pagination_incomplete";
+  | "field_pagination_incomplete"
+  | "content_sanitization_failed";
 
 export type ProxyScheme = "http" | "https" | "socks4" | "socks5";
 
@@ -239,6 +246,22 @@ export interface ProxyTestResult {
   latencyMs: number;
   statusCategory: string;
   message: string;
+}
+
+export interface ProxyFeed {
+  id: string;
+  name: string;
+  url: string;
+  scheme: ProxyScheme;
+  poolId: string;
+  enabled: boolean;
+  syncIntervalMinutes: number;
+  headerNames: string[];
+  lastSyncedAt: string | null;
+  nextSyncAt: string | null;
+  lastSyncStatus: string | null;
+  lastSyncMessage: string | null;
+  lastImportedCount: number;
 }
 
 export type ScrapingRunStatus = "queued" | "running" | "completed" | "failed" | "rate_limited";
@@ -372,6 +395,39 @@ export interface RecordOccurrence {
   revision: number;
   lastChangedAt: string;
   hasUpdates: boolean;
+  listingPageNumber: number | null;
+}
+
+export interface RecordOccurrenceDetail extends RecordOccurrence {
+  countryCode: string | null;
+  description: string;
+  phone: string;
+  phoneVisibility: "clear" | "masked";
+  status: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  media: RecordMedia[];
+}
+
+export interface IngestionSettings {
+  publishBatchSize: number;
+  revision: number;
+  sanitizationProvider: "ollama";
+  sanitizationModel: string;
+}
+
+export interface WebhookEndpoint {
+  id: string;
+  name: string;
+  url: string;
+  enabled: boolean;
+  allSources: boolean;
+  sourceIds: string[];
+  phonePolicy: "clear" | "masked" | "excluded";
+  secretConfigured: boolean;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface AdvertisementVersion {

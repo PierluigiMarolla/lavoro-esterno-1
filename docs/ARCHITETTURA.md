@@ -229,8 +229,9 @@ verificato dal vivo, è più preciso su questi punti (vedi PROGETTO.md § 4):
   `ai_provider_configs` conserva modello, stato, revisione e credenziale
   AES-256-GCM. Ogni job congela provider/modello/revisione; un cambio durante
   l'attesa fa fallire il job esplicitamente invece di cambiarne il modello.
-- **Priorità e canonici**: la priorità della fonte è il primo criterio, seguita
-  da completezza, recenza e ID. Ogni variazione crea un job sulla coda
+- **Pagina, priorità e canonici**: la pagina di listing più bassa è il primo
+  criterio; seguono priorità della fonte, completezza, recenza e ID. I dati
+  storici senza pagina vengono dopo quelli con pagina nota. Ogni variazione crea un job sulla coda
   `maintenance`; job duplicati o superati non applicano configurazioni stale.
 - **Console operativa**: notifiche persistenti e stato sistema sono esposti da
   endpoint autenticati. I controlli usano timeout brevi, una cache di 10
@@ -254,3 +255,23 @@ revisione immutabile, incrementa `Record.content_revision` e ricalcola il
 canonico. Download media parziali non possono far sparire media precedenti.
 I riepiloghi AI prodotti su revisioni precedenti vengono segnalati come
 obsoleti, senza generazione automatica.
+
+## Acquisizione, sanitizzazione e integrazioni
+
+Il worker scraper associa a ogni URL la pagina di listing, sanitizza con Gemma
+titolo, descrizione e soli campi `sanitizeWithAi`, quindi pubblica gli annunci
+in batch atomici della dimensione configurata mentre prosegue sulle pagine di
+dettaglio. Il resto finale viene sempre committato; retry e upsert sono idempotenti. Gli originali sono cifrati e non
+esposti da API, export o webhook.
+
+Alla conclusione di ogni run viene creato un payload webhook persistente. Un
+worker dedicato sulla coda `webhooks` consegna solo a URL HTTPS pubblici, con
+firma HMAC opzionale, redirect bloccati, politica telefono per destinazione e
+retry a 1/5/15/60/240 minuti. Payload e consegne hanno retention 90 giorni.
+
+I feed proxy remoti sono sincronizzati da Celery Beat e dal comando manuale:
+download massimo 5 MiB/50.000 righe, protezione SSRF prima e dopo DNS, header
+cifrati write-only e riconciliazione non distruttiva degli endpoint del pool.
+Gli export `filters` e `all` congelano lo scope con `INSERT … SELECT`; il
+worker percorre gli ID con keyset pagination e scrive JSON/CSV su spool su
+disco. Resta isolato e applica il limite complessivo di 2 GiB.

@@ -33,6 +33,84 @@ _URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
 _PHONE_RE = re.compile(r"(?<!\w)(?:\+?\d[\s().-]*){8,15}(?!\w)")
 
 
+@celery_app.task(name="app.workers.tasks_ai.sanitize_existing_advertisements")
+def sanitize_existing_advertisements() -> dict:
+    """Riprendibile: elabora solo annunci senza envelope originale."""
+    from app.models.media import Media
+    from app.services.content_sanitizer import ContentSanitizationError, sanitize_normalized
+    from app.services.scrape_ingest import (
+        _save_version,
+        advertisement_content_hash,
+        recompute_canonical,
+    )
+
+    session = SyncSessionLocal()
+    processed = failed = 0
+    try:
+        rows = session.execute(
+            select(Advertisement, Source)
+            .join(Source, Source.id == Advertisement.source_id)
+            .where(Advertisement.original_content_encrypted.is_(None))
+            .order_by(Advertisement.id)
+        ).all()
+        for advertisement, source in rows:
+            normalized = {
+                "title": advertisement.title,
+                "description": advertisement.description,
+                "custom_fields": advertisement.custom_fields or {},
+            }
+            try:
+                result = sanitize_normalized(session, normalized, source.scrape_config or {})
+            except ContentSanitizationError:
+                failed += 1
+                continue
+            changed_fields = [
+                name
+                for name in ("title", "description", "custom_fields")
+                if normalized[name] != result.normalized.get(name)
+            ]
+            advertisement.title = result.normalized.get("title")
+            advertisement.description = result.normalized.get("description")
+            advertisement.custom_fields = result.normalized.get("custom_fields") or {}
+            advertisement.original_content_encrypted = result.original_encrypted
+            advertisement.sanitization_metadata = result.metadata
+            if changed_fields:
+                advertisement.content_hash = advertisement_content_hash(result.normalized)
+                advertisement.last_changed_at = datetime.now(UTC)
+                advertisement.revision += 1
+                record = session.get(Record, advertisement.record_id)
+                record.content_revision += 1
+                media_hashes = list(
+                    session.execute(
+                        select(Media.sha256).where(
+                            Media.advertisement_id == advertisement.id,
+                            Media.is_current.is_(True),
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                _save_version(session, advertisement, None, changed_fields, media_hashes)
+                recompute_canonical(session, record)
+            processed += 1
+            if processed % 50 == 0:
+                session.commit()
+        session.commit()
+        session.add(
+            AuditLog(
+                user_id=None,
+                action="content_sanitization_backfill_completed",
+                entity_type="ingestion_settings",
+                entity_id="1",
+                details_json={"processed": processed, "failed": failed},
+            )
+        )
+        session.commit()
+        return {"status": "completed", "processed": processed, "failed": failed}
+    finally:
+        session.close()
+
+
 class AIDisabledError(RuntimeError):
     pass
 

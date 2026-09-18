@@ -60,14 +60,18 @@ export default function ExportsPage() {
       dateTo: params.get("dateTo") || undefined,
     };
   }, [params]);
+  const inboundScope = params.get("scope") as "selected" | "filters" | "all" | null;
 
   const typedIds = manualIds.split(/[\s,]+/).map((value) => value.trim()).filter(Boolean);
   const localFilters: ExportFilters | undefined = phone || source || status ? { phone: phone || undefined, source: source || undefined, status } : undefined;
   const recordIds = inboundIds.length ? inboundIds : typedIds.length ? typedIds : undefined;
   const filters = recordIds ? undefined : inboundFilters ?? localFilters;
-  const hasScope = Boolean(recordIds?.length || filters);
+  const scope = recordIds?.length ? "selected" : inboundScope === "all" ? "all" : filters ? "filters" : undefined;
+  const hasScope = Boolean(scope);
   const scopeLabel = recordIds?.length
     ? `${recordIds.length} ${recordIds.length === 1 ? "record selezionato" : "record selezionati"}`
+    : scope === "all"
+      ? "intero archivio"
     : filters
       ? "tutti i record corrispondenti ai filtri espliciti"
       : "nessun ambito selezionato";
@@ -115,7 +119,7 @@ export default function ExportsPage() {
               <h4 className="text-body-lg font-medium mb-2">{TYPE_LABEL[card.type]}</h4>
               <p className="text-body-md text-on-surface-variant mb-4">{card.description}</p>
               <button
-                onClick={() => createJob.mutate({ type: card.type, recordIds, filters })}
+                onClick={() => createJob.mutate({ type: card.type, scope, recordIds, filters })}
                 disabled={!hasScope || createJob.isPending}
                 className="bg-primary text-on-primary rounded px-4 py-2 text-label-sm w-full disabled:opacity-40"
               >

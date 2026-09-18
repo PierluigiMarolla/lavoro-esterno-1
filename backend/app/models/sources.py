@@ -26,6 +26,7 @@ class Source(UUIDPKMixin, TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     slug: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False)
     base_url: Mapped[str] = mapped_column(Text, nullable=False)
+    country_code: Mapped[str | None] = mapped_column(String(2), nullable=True, index=True)
 
     # Primo criterio nella selezione dell'annuncio canonico: vince la fonte
     # con priorità più alta, poi completezza, recenza e ID deterministico.

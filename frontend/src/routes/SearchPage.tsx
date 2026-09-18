@@ -94,7 +94,8 @@ export default function SearchPage() {
 
   const total = search.data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const filterExportParams = new URLSearchParams({ scope: "filters" });
+  const hasFilters = Boolean(phone || source || status || dateFrom || dateTo);
+  const filterExportParams = new URLSearchParams({ scope: hasFilters ? "filters" : "all" });
   if (phone) filterExportParams.set("phone", phone);
   if (source) filterExportParams.set("source", source);
   if (status) filterExportParams.set("status", status);
@@ -208,7 +209,7 @@ export default function SearchPage() {
             <div className="flex gap-2">
               {selectedIds.size > 0 && (
                 <Link
-                  to={`/exports?recordIds=${encodeURIComponent([...selectedIds].join(","))}`}
+                  to={`/exports?scope=selected&recordIds=${encodeURIComponent([...selectedIds].join(","))}`}
                   className="px-3 py-2 rounded bg-surface-container-high text-label-sm text-on-surface"
                 >
                   Esporta selezionati ({selectedIds.size})
@@ -218,7 +219,7 @@ export default function SearchPage() {
                 to={`/exports?${filterExportParams.toString()}`}
                 className="px-3 py-2 rounded bg-primary text-on-primary text-label-sm"
               >
-                Esporta tutti i risultati
+                {hasFilters ? "Esporta tutti i risultati" : "Esporta tutto l’archivio"}
               </Link>
             </div>
           )}
@@ -291,6 +292,13 @@ export default function SearchPage() {
                       <Badge tone={STATUS_TONE[record.status]}>{STATUS_LABEL[record.status]}</Badge>
                     </Td>
                     <Td className="text-center">
+                      <Link
+                        to={`/exports?scope=selected&recordIds=${record.id}`}
+                        className="mr-2 inline-flex p-1 rounded text-on-surface-variant hover:text-primary hover:bg-surface-container-high"
+                        title="Esporta questo record"
+                      >
+                        <Icon name="download" size={18} />
+                      </Link>
                       <Link
                         to={`/records/${record.id}`}
                         className="inline-flex p-1 rounded text-on-surface-variant hover:text-primary hover:bg-surface-container-high transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"

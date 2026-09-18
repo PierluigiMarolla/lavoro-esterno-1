@@ -1,5 +1,4 @@
 import { useParams } from "react-router-dom";
-import { useState } from "react";
 import { useRecordMedia, useReprocessMedia, useReviewMedia } from "@/hooks/useRecords";
 import { useAuth } from "@/context/AuthContext";
 import Icon from "@/components/ui/Icon";
@@ -7,9 +6,8 @@ import ErrorState from "@/components/ui/ErrorState";
 import type { RecordMedia } from "@/types";
 import { formatDate } from "@/lib/format";
 
-// Replicates desing/record_detail_media/code.html: a media gallery where
-// items flagged "explicit" are blurred behind a warning overlay until the
-// analyst explicitly opts in per item.
+// Media gallery: content is visible while classification remains explicit
+// through persistent badges and review controls.
 
 export default function RecordMediaTab() {
   const { id = "" } = useParams();
@@ -18,17 +16,6 @@ export default function RecordMediaTab() {
   const reprocess = useReprocessMedia(id);
   const { user } = useAuth();
   const canReview = user?.role === "admin" || user?.role === "operator";
-
-  // Per-item, component-local reveal state (not persisted, not global). The
-  // API already returns the media regardless of sensitivity — the blur is a
-  // client-side UX affordance to avoid surprising an analyst with explicit
-  // content on load, not an access-control boundary. Resetting on navigation
-  // away is the desired behavior, so plain useState is sufficient.
-  const [revealed, setRevealed] = useState<Set<string>>(new Set());
-
-  function reveal(itemId: string) {
-    setRevealed((prev) => new Set(prev).add(itemId));
-  }
 
   if (media.isLoading) {
     return (
@@ -54,8 +41,6 @@ export default function RecordMediaTab() {
           <MediaCard
             key={item.id}
             item={item}
-            isRevealed={revealed.has(item.id)}
-            onReveal={() => reveal(item.id)}
             canReview={canReview}
             onReview={(classification) => {
               const notes = window.prompt("Note di revisione (obbligatorie):");
@@ -71,43 +56,24 @@ export default function RecordMediaTab() {
 
 function MediaCard({
   item,
-  isRevealed,
-  onReveal,
   canReview,
   onReview,
   onReprocess,
 }: {
   item: RecordMedia;
-  isRevealed: boolean;
-  onReveal: () => void;
   canReview: boolean;
   onReview: (classification: "safe" | "explicit") => void;
   onReprocess: () => void;
 }) {
-  const isBlurred = item.sensitivity === "explicit" && !isRevealed;
-
   return (
     <div className="bg-surface-container-lowest border border-border rounded-lg overflow-hidden flex flex-col">
       <div className="relative h-48 bg-surface-container-low w-full overflow-hidden">
         <img
           src={item.thumbnailUrl}
           alt=""
-          className={isBlurred ? "w-full h-full object-cover blur-xl scale-110" : "w-full h-full object-cover"}
+          className="w-full h-full object-cover"
         />
-        {isBlurred && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-surface/40 backdrop-blur-sm p-4 text-center">
-            <Icon name="visibility_off" size={32} className="text-error mb-2" />
-            <span className="text-body-md font-semibold text-on-surface mb-1">Rilevato contenuto esplicito</span>
-            <button
-              type="button"
-              onClick={onReveal}
-              className="mt-2 px-3 py-1 bg-surface-container-lowest border border-border rounded text-label-sm text-on-surface hover:bg-surface-container-low transition-colors"
-            >
-              Mostra media
-            </button>
-          </div>
-        )}
-        <div className="absolute top-2 right-2 bg-surface-container-lowest/90 backdrop-blur-sm rounded-full px-2 py-1 flex items-center gap-1 border border-border/50">
+        <div className="absolute top-2 right-2 bg-surface-container-lowest/90 rounded-full px-2 py-1 flex items-center gap-1 border border-border/50">
           <Icon name={item.type === "video" ? "movie" : "image"} size={16} className="text-info" />
           <span className="text-label-sm text-on-surface">{item.type === "video" ? "VID" : "IMG"}</span>
         </div>

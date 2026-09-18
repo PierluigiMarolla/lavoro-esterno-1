@@ -674,3 +674,17 @@ Docker), e generare un `uv.lock`/`package-lock.json` reali eseguendo
 Gli identificatori tecnici, le route, i campi JSON, gli enum e lo schema dati
 restano in inglese per compatibilità. Rimangono invariati anche contenuti
 acquisiti, campi custom, marchi, provider e modelli AI.
+
+## 14. Evoluzione fonti, acquisizione e integrazioni
+
+- [x] Media sempre visibili senza blur, con badge di classificazione esplicito.
+- [x] Paese ISO 3166-1 opzionale per fonte, con bandiera Unicode e trasferimento completo.
+- [x] Pianificazione automatica integrata nella configurazione della fonte.
+- [x] Export record singolo, selezionato, filtrato e completo oltre 1.000 risultati.
+- [x] Sanitizzazione selettiva di titolo, descrizione e campi marcati tramite Gemma locale.
+- [x] Pubblicazione idempotente a batch configurabile con commit del resto finale.
+- [x] Webhook multipli per tutte o specifiche fonti, HMAC, retry e politiche telefono.
+- [x] Paginazione globale fino alla fine, con limiti opzionali attivati tramite checkbox.
+- [x] Feed proxy HTTPS periodici con header cifrati e riconciliazione del pool.
+- [x] Pagina listing persistita e usata come primo criterio della selezione canonica.
+- [x] Dettaglio completo e versioni disponibili nella tab Occorrenze.

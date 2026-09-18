@@ -31,14 +31,27 @@ class ExportFilters(CamelModel):
 
 class ExportJobCreate(CamelModel):
     type: ExportTypeLiteral
+    scope: Literal["selected", "filters", "all"] | None = None
     record_ids: list[uuid.UUID] | None = Field(default=None, max_length=1_000)
     filters: ExportFilters | None = None
 
     @model_validator(mode="after")
     def validate_scope(self) -> ExportJobCreate:
         has_ids = bool(self.record_ids)
-        if has_ids == (self.filters is not None):
-            raise ValueError("Specificare esattamente uno tra recordIds e filters.")
+        if self.scope is None:
+            self.scope = "selected" if has_ids else "filters" if self.filters is not None else None
+        if self.scope is None:
+            raise ValueError("Specificare scope, recordIds o filters.")
+        if self.scope == "selected" and not has_ids:
+            raise ValueError("recordIds è obbligatorio per scope='selected'.")
+        if self.scope == "selected" and self.filters is not None:
+            raise ValueError("filters non è consentito per scope='selected'.")
+        if self.scope == "filters" and self.filters is None:
+            raise ValueError("filters è obbligatorio per scope='filters'.")
+        if self.scope == "all" and (has_ids or self.filters is not None):
+            raise ValueError("scope='all' non accetta recordIds o filters.")
+        if self.scope != "selected" and has_ids:
+            raise ValueError("recordIds è consentito solo per scope='selected'.")
         if self.record_ids and len(set(self.record_ids)) != len(self.record_ids):
             raise ValueError("recordIds contiene duplicati.")
         return self

@@ -1992,6 +1992,7 @@ Nessun volume applicativo è stato eliminato o ricreato; i servizi interessati
 sono stati avviati con `--no-deps` per non coinvolgere il riferimento MinIO
 preesistente non disponibile nel registry.
 
+<<<<<<< HEAD
 # Sessione 25 — 16 settembre 2026: ripristino provisioning Grafana
 
 Grafana 13.2.1 poteva entrare in restart loop con `Datasource provisioning
@@ -2053,3 +2054,55 @@ volume montato su `/var/lib/grafana` e infine `docker compose start grafana`.
 Il nome del volume va sempre ricavato dal mount del container e la sua etichetta
 `com.docker.compose.volume` deve essere esattamente `grafana-data`; non usare
 nomi presunti, glob o comandi che coinvolgano tutti i volumi.
+=======
+# Sessione 25 — 17 settembre 2026: evoluzione completa della pipeline
+
+Sono state completate le undici richieste coordinate su fonti, scraping,
+contenuti e integrazioni. I media sono sempre visibili senza blur e mantengono
+il badge; le fonti hanno Paese ISO opzionale con bandiera, pianificazione
+integrata nella modale e limiti globali di pagine/annunci attivabili
+separatamente. In assenza dei limiti lo scraper continua fino alla fine reale
+della paginazione o a una protezione esistente.
+
+Ogni annuncio conserva `listingPageNumber`; il canonico privilegia pagina più
+bassa, priorità fonte, completezza, recenza e ID. La pubblicazione avviene in
+batch atomici configurabili (default 50) durante l'acquisizione delle pagine
+di dettaglio e committa sempre il resto finale. I batch già pubblicati restano
+validi anche se il run si interrompe successivamente.
+Gemma via Ollama valuta titolo, descrizione e campi `sanitizeWithAi`, conserva
+byte-per-byte i testi puliti, rifiuta output che alterano numeri o fatti e
+cifra gli originali. È disponibile un job Admin riprendibile per lo storico.
+
+La pagina Record offre export singolo, selezione, risultati filtrati e intero
+archivio; il limite di 1.000 vale solo per gli ID manuali e quello finale resta
+2 GiB. Gli scope grandi sono congelati con `INSERT … SELECT`, il worker legge
+gli ID con keyset pagination e produce JSON/CSV tramite spool su disco senza
+accumulare le righe in RAM. La tab Occorrenze carica su richiesta riepilogo completo, media e
+versioni. Le destinazioni webhook hanno CRUD, scope per fonte, politica
+telefono, segreto HMAC write-only, payload persistente cifrato e retry dopo
+1/5/15/60/240 minuti sulla coda dedicata. Redirect, credenziali URL e target
+DNS/IP privati sono bloccati; errori e risposte non persistono contenuti o URL.
+
+I feed proxy HTTPS hanno CRUD, sincronizzazione manuale/periodica, due header
+write-only cifrati, limite 5 MiB/50.000 righe e formato
+`host:porta:username:password`. Host/porta identificano l'endpoint: porte
+diverse sullo stesso IP restano distinte; gli endpoint scomparsi vengono
+disabilitati e rimossi dal pool senza cancellarne lo storico. È stata aggiunta
+la migrazione additiva `20260917090000_pipeline_integrations.py`; nessun dato
+storico viene inventato o sovrascritto.
+
+Sono stati aggiornati README, API, architettura, database, guida sviluppo e
+checklist. Il riferimento MinIO non disponibile su Docker Hub è stato
+corretto usando le immagini ufficiali Quay per server e client.
+
+Verifica finale: Ruff superato; suite backend completa `290 passed` (118
+warning di librerie, nessun fallimento); controllo i18n superato; lint
+frontend senza errori (2 warning Fast Refresh preesistenti); build Vite locale
+e Docker riuscite; `docker compose config --quiet` e `git diff --check`
+validi. La migrazione live è a `20260917090000 (head)`, API health risponde
+200 e i cinque worker Celery rispondono `pong`. Prometheus vede UP tutti gli
+otto target, Loki riceve log inclusi API e worker webhook, Grafana carica le
+tre dashboard provisionate. Frontend, API, scraper, scheduler e worker webhook
+sono stati ricostruiti e riavviati. Nessun volume applicativo è stato
+eliminato o ricreato.
+>>>>>>> 55905cf (New Update Fix)

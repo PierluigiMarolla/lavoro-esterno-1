@@ -236,6 +236,8 @@ async def _compute_source_read(db: AsyncSession, source: Source, since: datetime
         id=source.id,
         code=source.slug,
         name=source.name,
+        country_code=source.country_code,
+        country=source.country_code or "N/D",
         status=source.status,
         enabled=source.enabled,
         priority=source.priority,
@@ -320,6 +322,7 @@ async def export_sources(
                 slug=source.slug,
                 base_url=source.base_url,
                 priority=source.priority,
+                country_code=source.country_code,
                 scrape_config=source.scrape_config,
                 proxy_pool_name=pool_names.get(source.proxy_pool_id),
                 watermark_removal={
@@ -362,11 +365,7 @@ async def import_sources(
     items = payload.document.sources
     slugs = [item.slug for item in items]
     existing_sources = (
-        (
-            await db.execute(
-                select(Source).where(Source.slug.in_(slugs)).with_for_update()
-            )
-        )
+        (await db.execute(select(Source).where(Source.slug.in_(slugs)).with_for_update()))
         .scalars()
         .all()
     )
@@ -387,9 +386,7 @@ async def import_sources(
 
     pool_names = {item.proxy_pool_name for item in items if item.proxy_pool_name}
     pools = (
-        (await db.execute(select(ProxyPool).where(ProxyPool.name.in_(pool_names))))
-        .scalars()
-        .all()
+        (await db.execute(select(ProxyPool).where(ProxyPool.name.in_(pool_names)))).scalars().all()
         if pool_names
         else []
     )
@@ -420,6 +417,7 @@ async def import_sources(
                 slug=item.slug,
                 base_url=item.base_url,
                 priority=item.priority,
+                country_code=item.country_code,
                 status="offline",
                 enabled=False,
                 automatic_scraping_enabled=False,
@@ -446,6 +444,7 @@ async def import_sources(
             source.name = item.name
             source.base_url = item.base_url
             source.priority = item.priority
+            source.country_code = item.country_code
             source.scrape_config = scrape_config
             source.proxy_pool_id = pool.id if pool else None
             source.watermark_removal_enabled = watermark.enabled
@@ -516,6 +515,7 @@ async def create_source(
         slug=payload.slug,
         base_url=payload.base_url,
         priority=payload.priority,
+        country_code=payload.country_code,
         status="healthy",
         enabled=True,
         scrape_config=payload.scrape_config.model_dump() if payload.scrape_config else None,
@@ -577,6 +577,7 @@ async def duplicate_source(
         slug=payload.slug,
         base_url=original.base_url,
         priority=original.priority,
+        country_code=original.country_code,
         status="offline",
         enabled=False,
         # Copie esplicite evitano che modifiche in-memory ai JSON mutabili
@@ -620,6 +621,8 @@ def _to_minimal_source_read(source: Source) -> SourceRead:
         id=source.id,
         code=source.slug,
         name=source.name,
+        country_code=source.country_code,
+        country=source.country_code or "N/D",
         status=source.status,
         enabled=source.enabled,
         priority=source.priority,
