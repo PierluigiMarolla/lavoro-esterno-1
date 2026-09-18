@@ -106,6 +106,11 @@ blocco tutte le sessioni dell'utente.
 | POST | `/api/v1/sources/{source_id}/enable` | Riabilita una fonte disabilitata o in pausa (`enabled=true`, `status="healthy"`). Idempotente; riservato ad Admin/Operator. |
 | POST | `/api/v1/sources/{source_id}/scan` | Crea un run persistente `pending` e risponde `202`. Restituisce `409` se la fonte ha già un run pending/running; anche il completamento manuale riavvia il timer automatico. |
 
+`countryCode` è il codice ISO associato alla bandiera scelta nella UI. Durante
+l'ingestione determina il prefisso dei telefoni nazionali; un numero già
+internazionale con `+` o `00` conserva invece il proprio calling code. La
+forma persistita e usata per la deduplicazione è E.164.
+
 Gli errori della pulizia Gemma distinguono configurazione, timeout,
 indisponibilità, stato HTTP, risposta non valida/incompleta, output vuoto,
 indicatore `changed` non valido, testo modificato ma dichiarato invariato e

@@ -33,7 +33,9 @@ import hmac
 import os
 import re
 
+import phonenumbers
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from phonenumbers.phonenumberutil import NumberParseException
 
 from app.config import settings
 
@@ -45,13 +47,13 @@ class PhoneCryptoError(ValueError):
     """Errore di normalizzazione, cifratura o decifratura del numero di telefono."""
 
 
-def normalize_phone(raw: str) -> str:
-    """Normalizza un numero di telefono in formato E.164-like.
+def normalize_phone(raw: str, default_region: str | None = "IT") -> str:
+    """Validate and normalize a phone number to E.164.
 
-    Rimuove spazi, trattini, parentesi e altri separatori comuni; garantisce
-    il prefisso "+". Non fa validazione completa E.164 (serve solo a rendere
-    deterministico il confronto/hash tra rappresentazioni equivalenti dello
-    stesso numero, es. "+39 333 1234567" vs "0039-333-1234567").
+    An explicit international prefix (``+`` or ``00``) always wins and the
+    source country does not alter it. A national number instead requires a
+    region: ingestion passes ``Source.country_code`` while the ``IT`` default
+    preserves compatibility for older non-source callers.
     """
     if not raw or not raw.strip():
         raise PhoneCryptoError("Numero di telefono vuoto.")
@@ -64,16 +66,28 @@ def normalize_phone(raw: str) -> str:
 
     if cleaned.startswith("00"):
         cleaned = "+" + cleaned[2:]
-    elif not cleaned.startswith("+"):
-        # Nessun prefisso internazionale esplicito: assumiamo Italia (+39),
-        # dominio primario di questo sistema. In un contesto multi-paese reale
-        # andrebbe richiesto esplicitamente il country code al chiamante.
-        cleaned = "+39" + cleaned.lstrip("0") if not cleaned.startswith("39") else "+" + cleaned
+    explicit_international = cleaned.startswith("+")
+    region = None
+    if not explicit_international:
+        if default_region is None:
+            raise PhoneCryptoError(
+                "Numero privo di prefisso internazionale e Paese della fonte non configurato."
+            )
+        region = default_region.upper()
+        if region not in phonenumbers.SUPPORTED_REGIONS:
+            raise PhoneCryptoError("Paese della fonte non valido per la numerazione telefonica.")
 
-    if not re.fullmatch(r"\+\d{6,15}", cleaned):
-        raise PhoneCryptoError(f"Formato numero di telefono non valido: {raw!r}")
+    try:
+        parsed = phonenumbers.parse(cleaned, region)
+    except NumberParseException as exc:
+        raise PhoneCryptoError("Formato numero di telefono non valido.") from exc
 
-    return cleaned
+    # is_possible_number verifies country calling code and length/shape without
+    # rejecting valid-but-not-yet-assigned ranges as is_valid_number would.
+    if not phonenumbers.is_possible_number(parsed):
+        raise PhoneCryptoError("Lunghezza o formato del numero non validi per il Paese indicato.")
+
+    return phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
 
 
 def _encryption_key() -> bytes:

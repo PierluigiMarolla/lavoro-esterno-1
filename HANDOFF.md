@@ -2166,3 +2166,22 @@ job di bonifica storica aggrega inoltre `failures_by_reason` nel risultato e
 nell'audit. Verifica: Ruff superato e suite backend completa `292 passed`; i
 nuovi test coprono timeout sicuro, risposta incompleta e alterazione dei dati
 numerici.
+
+# Sessione 28 — 18 settembre 2026: prefissi telefonici dal Paese della fonte
+
+La normalizzazione dei telefoni usa ora `phonenumbers` e il codice ISO
+selezionato nella fonte. I numeri con prefisso internazionale esplicito `+` o
+`00` vengono validati e normalizzati in E.164 senza sostituirne il Paese; ai
+numeri nazionali viene aggiunto il calling code della fonte, ad esempio
+`3331234567` con `IT` diventa `+393331234567`. Se un numero è locale e la
+fonte non ha Paese, l'annuncio viene rifiutato invece di assumere `+39`.
+
+La forma E.164 resta l'input comune di cifratura e HMAC, perciò varianti locale
+e internazionale dello stesso numero deduplicano correttamente. Nessuna
+migrazione o modifica ai record esistenti. La UI spiega il comportamento sotto
+la select Paese; dipendenza e lock sono aggiornati a `phonenumbers 9.0.39`.
+
+Verifica: Ruff superato, suite backend completa `300 passed`, lint frontend
+senza errori (due warning Fast Refresh preesistenti) e build Vite riuscita.
+Docker Desktop era spento, quindi le immagini non sono state ricostruite e
+nessun volume è stato modificato.

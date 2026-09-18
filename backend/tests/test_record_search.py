@@ -21,8 +21,8 @@ def test_looks_like_full_phone_true_for_complete_italian_number() -> None:
 
 
 def test_looks_like_full_phone_false_for_short_fragment() -> None:
-    # Un frammento breve normalizza comunque (fallback +39 in normalize_phone)
-    # ma non ha abbastanza cifre per essere considerato un numero completo:
+    # Un frammento breve non è possibile nel piano telefonico italiano e non
+    # ha comunque abbastanza cifre per essere considerato un numero completo:
     # vedi la docstring di looks_like_full_phone per il perché questa
     # distinzione conta (ricerca per hash esatto vs. nessun filtro).
     assert looks_like_full_phone("333") is False

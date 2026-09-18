@@ -275,3 +275,9 @@ cifrati write-only e riconciliazione non distruttiva degli endpoint del pool.
 Gli export `filters` e `all` congelano lo scope con `INSERT … SELECT`; il
 worker percorre gli ID con keyset pagination e scrive JSON/CSV su spool su
 disco. Resta isolato e applica il limite complessivo di 2 GiB.
+
+La normalizzazione telefonica usa il piano internazionale tramite
+`phonenumbers`. Un numero con `+` o `00` viene soltanto validato e convertito
+in E.164; un numero nazionale eredita invece il calling code da
+`Source.country_code`. La forma E.164 alimenta cifratura e HMAC, quindi la
+versione locale e quella già prefissata convergono sullo stesso record.

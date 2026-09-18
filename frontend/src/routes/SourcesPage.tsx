@@ -366,7 +366,12 @@ function rowsToFields(rows: FieldRow[]): Record<string, ScrapeFieldConfig> {
             .filter((item) => item.name.trim() && item.selector.trim())
             .map((item) => [
               item.name.trim(),
-              { selector: item.selector.trim(), selectorType: item.selectorType, attribute: item.attribute, sanitizeWithAi: item.sanitizeWithAi },
+              {
+                selector: item.selector.trim(),
+                selectorType: item.selectorType,
+                attribute: item.attribute,
+                sanitizeWithAi: item.sanitizeWithAi,
+              },
             ]),
         ),
         pagination,
@@ -797,10 +802,22 @@ function SourceFormDialog({
             <label htmlFor="source-country" className="text-label-sm text-on-surface-variant block mb-1">
               Paese
             </label>
-            <Select id="source-country" className="w-full" value={countryCode} onChange={(event) => setCountryCode(event.target.value)}>
+            <Select
+              id="source-country"
+              className="w-full"
+              value={countryCode}
+              onChange={(event) => setCountryCode(event.target.value)}
+            >
               <option value="">Non specificato</option>
-              {COUNTRIES.map((country) => <option key={country.code} value={country.code}>{country.flag} {country.name}</option>)}
+              {COUNTRIES.map((country) => (
+                <option key={country.code} value={country.code}>
+                  {country.flag} {country.name}
+                </option>
+              ))}
             </Select>
+            <p className="mt-1 text-label-sm text-on-surface-variant">
+              Determina il prefisso dei numeri locali; i numeri con + o 00 conservano il proprio prefisso.
+            </p>
           </div>
           <div>
             <label htmlFor="source-priority" className="text-label-sm text-on-surface-variant block mb-1">
@@ -929,44 +946,59 @@ function SourceFormDialog({
             <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
               <div className="space-y-2">
                 <label className="flex items-center gap-2 text-label-sm text-on-surface-variant">
-                  <input type="checkbox" checked={maxPagesEnabled} onChange={(event) => setMaxPagesEnabled(event.target.checked)} />
+                  <input
+                    type="checkbox"
+                    checked={maxPagesEnabled}
+                    onChange={(event) => setMaxPagesEnabled(event.target.checked)}
+                  />
                   Limita il numero di pagine
                 </label>
-                {maxPagesEnabled && <div>
-                <label
-                  htmlFor="source-max-pages"
-                  className="text-label-sm text-on-surface-variant block mb-1"
-                >
-                  Pagine massime
-                </label>
-                <Input
-                  id="source-max-pages"
-                  type="number"
-                  min={1}
-                  max={20}
-                  value={maxPages}
-                  onChange={(e) => setMaxPages(Number(e.target.value))}
-                />
-                </div>}
+                {maxPagesEnabled && (
+                  <div>
+                    <label
+                      htmlFor="source-max-pages"
+                      className="text-label-sm text-on-surface-variant block mb-1"
+                    >
+                      Pagine massime
+                    </label>
+                    <Input
+                      id="source-max-pages"
+                      type="number"
+                      min={1}
+                      max={20}
+                      value={maxPages}
+                      onChange={(e) => setMaxPages(Number(e.target.value))}
+                    />
+                  </div>
+                )}
               </div>
               <div className="space-y-2">
                 <label className="flex items-center gap-2 text-label-sm text-on-surface-variant">
-                  <input type="checkbox" checked={maxAdsPerRunEnabled} onChange={(event) => setMaxAdsPerRunEnabled(event.target.checked)} />
+                  <input
+                    type="checkbox"
+                    checked={maxAdsPerRunEnabled}
+                    onChange={(event) => setMaxAdsPerRunEnabled(event.target.checked)}
+                  />
                   Limita il numero di annunci
                 </label>
-                {maxAdsPerRunEnabled && <div>
-                <label htmlFor="source-max-ads" className="text-label-sm text-on-surface-variant block mb-1">
-                  Annunci massimi per esecuzione
-                </label>
-                <Input
-                  id="source-max-ads"
-                  type="number"
-                  min={1}
-                  max={500}
-                  value={maxAdsPerRun}
-                  onChange={(e) => setMaxAdsPerRun(Number(e.target.value))}
-                />
-                </div>}
+                {maxAdsPerRunEnabled && (
+                  <div>
+                    <label
+                      htmlFor="source-max-ads"
+                      className="text-label-sm text-on-surface-variant block mb-1"
+                    >
+                      Annunci massimi per esecuzione
+                    </label>
+                    <Input
+                      id="source-max-ads"
+                      type="number"
+                      min={1}
+                      max={500}
+                      value={maxAdsPerRun}
+                      onChange={(e) => setMaxAdsPerRun(Number(e.target.value))}
+                    />
+                  </div>
+                )}
               </div>
               <div>
                 <label
@@ -1223,7 +1255,8 @@ function SourceFormDialog({
                         disabled={row.name === "title" || row.name === "description"}
                         onChange={(event) => updateFieldRow(index, { sanitizeWithAi: event.target.checked })}
                       />
-                      Pulizia Gemma {row.name === "title" || row.name === "description" ? "(obbligatoria)" : ""}
+                      Pulizia Gemma{" "}
+                      {row.name === "title" || row.name === "description" ? "(obbligatoria)" : ""}
                     </label>
                     {row.extractionMode === "keyValue" && (
                       <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-[1.4fr_1.4fr_0.7fr_1.4fr_0.7fr] lg:pl-2">
@@ -1420,7 +1453,14 @@ function SourceFormDialog({
                               <option value="src">src</option>
                             </Select>
                             <label className="flex items-center gap-1 text-label-sm text-on-surface-variant">
-                              <input type="checkbox" checked={itemField.sanitizeWithAi} onChange={(event) => updateItemField(index, itemIndex, { sanitizeWithAi: event.target.checked })} /> AI
+                              <input
+                                type="checkbox"
+                                checked={itemField.sanitizeWithAi}
+                                onChange={(event) =>
+                                  updateItemField(index, itemIndex, { sanitizeWithAi: event.target.checked })
+                                }
+                              />{" "}
+                              AI
                             </label>
                             <button
                               type="button"
@@ -1623,21 +1663,37 @@ function SourceFormDialog({
         <fieldset className="border border-border rounded-lg p-3 space-y-3">
           <legend className="px-1 text-label-sm text-on-surface">Pianificazione acquisizione</legend>
           <label className="flex items-center gap-2 text-body-md text-on-surface-variant">
-            <input type="checkbox" checked={scheduleEnabled} onChange={(event) => setScheduleEnabled(event.target.checked)} />
+            <input
+              type="checkbox"
+              checked={scheduleEnabled}
+              onChange={(event) => setScheduleEnabled(event.target.checked)}
+            />
             Abilita acquisizione automatica fixed-delay
           </label>
           {scheduleEnabled && (
             <div className="grid grid-cols-2 gap-3">
-              <Input type="number" min={1} value={scheduleIntervalValue} onChange={(event) => setScheduleIntervalValue(Number(event.target.value))} />
-              <Select value={scheduleIntervalUnit} onChange={(event) => setScheduleIntervalUnit(event.target.value as ScrapeIntervalUnit)}>
+              <Input
+                type="number"
+                min={1}
+                value={scheduleIntervalValue}
+                onChange={(event) => setScheduleIntervalValue(Number(event.target.value))}
+              />
+              <Select
+                value={scheduleIntervalUnit}
+                onChange={(event) => setScheduleIntervalUnit(event.target.value as ScrapeIntervalUnit)}
+              >
                 <option value="minutes">Minuti</option>
                 <option value="hours">Ore</option>
                 <option value="days">Giorni</option>
               </Select>
             </div>
           )}
-          {scheduleEnabled && !scheduleValid && <p className="text-label-sm text-error">L’intervallo deve essere tra 15 minuti e 30 giorni.</p>}
-          <p className="text-label-sm text-on-surface-variant">Il timer riparte dalla conclusione di ogni scansione, inclusa quella manuale.</p>
+          {scheduleEnabled && !scheduleValid && (
+            <p className="text-label-sm text-error">L’intervallo deve essere tra 15 minuti e 30 giorni.</p>
+          )}
+          <p className="text-label-sm text-on-surface-variant">
+            Il timer riparte dalla conclusione di ogni scansione, inclusa quella manuale.
+          </p>
         </fieldset>
 
         <fieldset className="border border-border rounded-lg p-3 space-y-3">

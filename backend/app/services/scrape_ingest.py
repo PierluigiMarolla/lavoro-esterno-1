@@ -521,7 +521,9 @@ def persist_collected_ads(
         phone_raw = item.normalized["phone_raw"]
         source_url = item.normalized.get("source_url") or source.base_url
         try:
-            phone_normalized = normalize_phone(phone_raw)
+            # International numbers keep their own prefix; national numbers
+            # inherit the calling code selected on the source.
+            phone_normalized = normalize_phone(phone_raw, source.country_code)
         except PhoneCryptoError as exc:
             item.persistence_outcome = "rejected_invalid_phone"
             persist_errors.append(

@@ -446,3 +446,8 @@ Se Gemma rifiuta un annuncio, consultare gli errori del run nella pagina
 Fonti. I codici `content_sanitization_*` separano problemi di configurazione,
 rete/timeout/HTTP e violazioni del contratto strutturato. Le diagnostiche sono
 deliberatamente sicure: non riportano mai il testo sottoposto al modello.
+
+Per i numeri locali configurare sempre il **Paese** della fonte. Il worker
+passa il relativo codice ISO a `normalize_phone`; i prefissi espliciti `+` e
+`00` hanno precedenza. Se entrambi mancano, l'annuncio viene rifiutato con una
+diagnostica sicura invece di assumere automaticamente l'Italia.

@@ -29,6 +29,45 @@ def test_normalize_phone_variants_converge(raw: str, expected: str) -> None:
     assert normalize_phone(raw) == expected
 
 
+@pytest.mark.parametrize(
+    "raw,region,expected",
+    [
+        ("333 1234567", "IT", "+393331234567"),
+        ("020 7946 0018", "GB", "+442079460018"),
+        ("212 555 0123", "US", "+12125550123"),
+        ("06 12 34 56 78", "FR", "+33612345678"),
+    ],
+)
+def test_national_number_inherits_source_country(
+    raw: str, region: str, expected: str
+) -> None:
+    assert normalize_phone(raw, region) == expected
+
+
+def test_explicit_prefix_is_not_replaced_by_source_country() -> None:
+    assert normalize_phone("+33 6 12 34 56 78", "IT") == "+33612345678"
+    assert normalize_phone("0033 6 12 34 56 78", "US") == "+33612345678"
+
+
+def test_local_and_prefixed_versions_produce_same_dedup_hash() -> None:
+    local = normalize_phone("333 1234567", "IT")
+    international = normalize_phone("+39 333 1234567", "FR")
+
+    assert local == international
+    assert phone_lookup_hash(local) == phone_lookup_hash(international)
+
+
+def test_national_number_requires_country_when_ingested_from_source() -> None:
+    with pytest.raises(PhoneCryptoError, match="Paese della fonte non configurato"):
+        normalize_phone("3331234567", None)
+
+
+def test_invalid_source_country_is_rejected_without_exposing_phone() -> None:
+    with pytest.raises(PhoneCryptoError, match="Paese della fonte non valido") as caught:
+        normalize_phone("3331234567", "ZZ")
+    assert "3331234567" not in str(caught.value)
+
+
 def test_normalize_phone_rejects_empty() -> None:
     with pytest.raises(PhoneCryptoError):
         normalize_phone("")

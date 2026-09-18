@@ -426,3 +426,8 @@ marcato non corrente e rimane storico fino alla retention.
 La migrazione è additiva: i record storici mantengono Paese e pagina null e
 non viene inventato alcun originale. La bonifica Gemma parte esclusivamente da
 un job amministrativo esplicito.
+
+`sources.country_code` determina anche il calling code dei telefoni nazionali
+durante l'ingestione. Nel database continua a essere salvata esclusivamente la
+forma E.164 cifrata e il relativo HMAC; nessun nuovo campo o backfill è
+necessario.

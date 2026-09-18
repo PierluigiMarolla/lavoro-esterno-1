@@ -82,6 +82,8 @@ intervento e conserva gli originali cifrati. Ogni annuncio registra la pagina
 di listing e la selezione canonica privilegia la pagina più bassa. I limiti
 globali di pagine e annunci sono opzionali: se non selezionati, lo scraper
 prosegue fino alla fine reale della paginazione o a una protezione di sicurezza.
+I telefoni con `+` o `00` mantengono il prefisso internazionale; ai numeri
+locali viene applicato il prefisso derivato dal Paese selezionato sulla fonte.
 
 Le impostazioni Admin includono inoltre destinazioni webhook filtrabili per
 fonte, firmabili HMAC e con politica sul telefono, oltre a feed proxy HTTPS
