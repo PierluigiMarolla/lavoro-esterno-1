@@ -54,8 +54,10 @@ openssl rand -base64 32   # PROXY_CREDENTIAL_ENCRYPTION_KEY (se necessaria)
 
 docker compose up --build
 
-# Il DB parte vuoto: applicare le migrazioni...
-docker compose exec api alembic upgrade head
+# Il servizio one-shot "migrate" applica Alembic prima che API e worker
+# possano partire. Verificare che sia terminato con Exit 0:
+docker compose ps -a migrate
+docker compose logs migrate
 
 # ...creare il primo utente Admin (nessun endpoint API può farlo)
 docker compose exec api python -m app.scripts.create_admin --email admin@lavoro.internal --password "una-password-forte"

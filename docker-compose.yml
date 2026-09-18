@@ -171,6 +171,25 @@ services:
       - lavoro-esterno-net
 
   # ---------------------------------------------------------------------
+  # Migrazioni DB - barriera one-shot condivisa da API, scheduler e worker.
+  # Un processo applicativo non parte finché Alembic non ha portato lo
+  # schema alla head inclusa nella stessa immagine backend.
+  # ---------------------------------------------------------------------
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: "no"
+    command: ["alembic", "upgrade", "head"]
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - lavoro-esterno-net
+
+  # ---------------------------------------------------------------------
   # API - FastAPI. Nessuna porta pubblicata verso l'host: raggiungibile
   # solo tramite il reverse proxy nginx (vedi infra/nginx/nginx.conf).
   # "expose" documenta la porta interna senza pubblicarla sull'host.
@@ -188,6 +207,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       minio:
@@ -213,6 +234,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       minio:
@@ -235,6 +258,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       minio:
@@ -257,6 +282,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       minio:
@@ -278,6 +305,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       minio:
@@ -297,6 +326,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     networks:
@@ -317,6 +348,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     networks:

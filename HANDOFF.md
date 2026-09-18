@@ -1992,7 +1992,6 @@ Nessun volume applicativo è stato eliminato o ricreato; i servizi interessati
 sono stati avviati con `--no-deps` per non coinvolgere il riferimento MinIO
 preesistente non disponibile nel registry.
 
-<<<<<<< HEAD
 # Sessione 25 — 16 settembre 2026: ripristino provisioning Grafana
 
 Grafana 13.2.1 poteva entrare in restart loop con `Datasource provisioning
@@ -2054,7 +2053,6 @@ volume montato su `/var/lib/grafana` e infine `docker compose start grafana`.
 Il nome del volume va sempre ricavato dal mount del container e la sua etichetta
 `com.docker.compose.volume` deve essere esattamente `grafana-data`; non usare
 nomi presunti, glob o comandi che coinvolgano tutti i volumi.
-=======
 # Sessione 25 — 17 settembre 2026: evoluzione completa della pipeline
 
 Sono state completate le undici richieste coordinate su fonti, scraping,
@@ -2105,4 +2103,49 @@ otto target, Loki riceve log inclusi API e worker webhook, Grafana carica le
 tre dashboard provisionate. Frontend, API, scraper, scheduler e worker webhook
 sono stati ricostruiti e riavviati. Nessun volume applicativo è stato
 eliminato o ricreato.
->>>>>>> 55905cf (New Update Fix)
+
+# Sessione 26 — 18 settembre 2026: barriera automatica per le migrazioni
+
+Un export falliva con `UndefinedColumn` su
+`advertisements.listing_page_number`: il codice e le immagini contenevano la
+head Alembic `20260917090000`, ma PostgreSQL era ancora alla revisione
+`20260909110000`. La correzione consiste nell'applicare integralmente la
+migrazione esistente; non vanno aggiunte colonne manualmente.
+
+Compose include ora il servizio one-shot `migrate`, che attende PostgreSQL
+healthy ed esegue `alembic upgrade head`. API, scheduler e tutti i worker che
+usano il database dipendono da `migrate` con
+`condition: service_completed_successfully`: se Alembic fallisce, il codice
+incompatibile non parte. Backup, storage e osservabilità restano indipendenti.
+
+Diagnostica ordinaria:
+
+```powershell
+docker compose ps -a migrate
+docker compose logs migrate
+docker compose exec api alembic current
+docker compose exec api alembic heads
+```
+
+Una seconda esecuzione `docker compose run --rm migrate` deve essere
+idempotente. Prima di una migrazione manuale conservare e verificare un dump
+PostgreSQL. In caso di errore non usare `alembic stamp`: correggere la causa o
+ripristinare il dump, quindi rieseguire il migrator. Non usare
+`docker compose down -v`.
+
+Ripristino live completato: il dump
+`/backups/lavoro_esterno_20260918_092125.sql.gz` è stato verificato con
+`gzip -t`; Alembic ha applicato `20260909110000 -> 20260917090000` e una
+seconda esecuzione non ha prodotto modifiche. La catena completa è stata
+provata anche su un PostgreSQL temporaneo vuoto. Un test Compose isolato con
+migrator volutamente fallito ha confermato che il servizio dipendente non
+parte.
+
+Il job export originariamente fallito è stato riaccodato con audit ed è ora
+`ready`: ZIP `export-v2` valido, 578 record, 594 occorrenze, campi
+`listing_page_number`/`custom_fields` presenti e download presigned HTTP 200.
+Ruff e i sei test export/privacy sono verdi; API IPv4 risponde 200 e tutti i
+cinque worker Celery rispondono `pong`. Il riavvio di Docker Desktop ha
+rigenerato su questa workstation un relay `wslrelay.exe` stale su `::1:80`:
+`127.0.0.1` funziona, mentre per ripristinare `localhost` occorre eseguire da
+PowerShell elevata `scripts/windows/Repair-Localhost.ps1 -Repair`.

@@ -27,9 +27,10 @@ openssl rand -base64 64   # -> JWT_SECRET_KEY (unica chiave, usata sia per acces
 # 3. Costruire e avviare l'intero stack
 docker compose up --build
 
-# 4. Applicare le migrazioni (il DB parte vuoto, le migrazioni non sono
-#    automatiche all'avvio del container api)
-docker compose exec api alembic upgrade head
+# 4. Le migrazioni sono applicate automaticamente dal servizio one-shot
+#    "migrate". API, scheduler e worker restano bloccati se Alembic fallisce.
+docker compose ps -a migrate
+docker compose logs migrate
 
 # 5. Creare il primo utente Admin: nessun endpoint API può farlo (la
 #    creazione utenti via API richiede già un Admin con 2FA attiva), quindi
@@ -44,7 +45,7 @@ docker compose exec api python -m app.scripts.create_admin \
 #    vuoti finché non se ne crea almeno una.
 ```
 
-Questa intera sequenza (`docker compose up --build`, migrazioni, creazione
+Questa intera sequenza (`docker compose up --build`, migrator, creazione
 admin, login) è stata eseguita ed è stata verificata contro un ambiente
 Docker reale: build delle 6 immagini custom, avvio dei 13 servizi (+ 2
 servizi di backup, vedi § 8), `POST /api/v1/auth/login` funzionante con la
@@ -92,20 +93,26 @@ reverse proxy o direttamente dal container `api`.
 
 ## 3. Migrazioni database (Alembic)
 
-Le migrazioni vivono in `backend/migrations/`. Comandi tipici (da
-eseguire nel container `api` o in un ambiente Python locale con le
-stesse dipendenze):
+Le migrazioni vivono in `backend/migrations/`. In Docker il servizio one-shot
+`migrate` esegue `alembic upgrade head` e costituisce una barriera di avvio:
+API, scheduler e worker dipendono dal suo completamento con esito positivo.
+Comandi diagnostici e di sviluppo:
 
 ```bash
-# Dentro il container api
-docker compose exec api alembic upgrade head
+# Stato del migrator e revisione effettiva
+docker compose ps -a migrate
+docker compose logs migrate
+docker compose exec api alembic current
+
+# Esecuzione manuale idempotente, utile per diagnosi
+docker compose run --rm migrate
 
 # Creare una nuova migrazione dopo aver modificato i modelli SQLAlchemy
 docker compose exec api alembic revision --autogenerate -m "descrizione modifica"
 
 # Verificare la migrazione generata prima di applicarla: l'autogenerate
 # di Alembic non è infallibile, va sempre riletta a mano.
-docker compose exec api alembic upgrade head
+docker compose run --rm migrate
 ```
 
 In locale (senza Docker), equivalente con `uv`:
