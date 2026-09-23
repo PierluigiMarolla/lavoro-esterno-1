@@ -127,6 +127,7 @@ def dispatch_due_source_scrapes() -> dict:
                 .where(
                     Source.automatic_scraping_enabled.is_(True),
                     Source.enabled.is_(True),
+                    Source.archived_at.is_(None),
                     Source.scrape_config.is_not(None),
                     Source.next_scrape_at.is_not(None),
                     Source.next_scrape_at <= now,

@@ -166,7 +166,11 @@ async def list_source_priorities(
     db: AsyncSession = Depends(get_db), _user: User = Depends(require_role("admin"))
 ) -> list[SourcePriorityRead]:
     """Elenca priorità delle fonti e impatto sui record canonici."""
-    sources = (await db.execute(select(Source).order_by(Source.name))).scalars().all()
+    sources = (
+        await db.execute(
+            select(Source).where(Source.archived_at.is_(None)).order_by(Source.name)
+        )
+    ).scalars().all()
     output = []
     for source in sources:
         affected = (
@@ -213,6 +217,8 @@ async def update_source_priority(
     ).scalar_one_or_none()
     if source is None:
         raise HTTPException(404, "Fonte non trovata.")
+    if source.archived_at is not None:
+        raise HTTPException(409, "La fonte è archiviata.")
     previous = source.priority
     source.priority = payload.priority
     job = SourcePriorityRecalculationJob(

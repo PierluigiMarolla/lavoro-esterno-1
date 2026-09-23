@@ -10,6 +10,13 @@ dati raccolti.
 
 Lo stack è containerizzato con Docker Compose ed è composto da:
 
+In produzione `docker-compose.production.yml` aggiunge Caddy come unico edge
+pubblico sulle porte 80/443. Caddy termina TLS, inoltra applicazione/API a nginx
+e inoltra esclusivamente il percorso del bucket a MinIO per gli URL presigned.
+Nginx, MinIO, PostgreSQL, Redis e Ollama restano sulla rete bridge; Grafana,
+Prometheus, Loki e la console MinIO sono pubblicati solo su loopback per tunnel
+SSH. Il profilo locale conserva invece il binding nginx su `127.0.0.1`.
+
 | Servizio | Ruolo |
 |---|---|
 | `frontend` | SPA React + Vite + TypeScript + Tailwind, servita in produzione da nginx interno al container (build multi-stage). |

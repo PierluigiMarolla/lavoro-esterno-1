@@ -175,7 +175,11 @@ async def refresh_scrape_metrics(db: AsyncSession) -> None:
     """Aggiorna atomicamente quanto possibile le gauge dal database applicativo."""
 
     now = datetime.now(UTC)
-    sources = (await db.execute(select(Source).order_by(Source.slug))).scalars().all()
+    sources = (
+        await db.execute(
+            select(Source).where(Source.archived_at.is_(None)).order_by(Source.slug)
+        )
+    ).scalars().all()
     runs_stmt = select(ScrapeRun).order_by(ScrapeRun.started_at.desc())
     if settings.TECHNICAL_LOG_RETENTION_DAYS > 0:
         runs_stmt = runs_stmt.where(

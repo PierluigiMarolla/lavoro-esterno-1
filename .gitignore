@@ -1,6 +1,7 @@
 # Segreti — non committare mai il file .env reale, solo .env.example
 .env
 .env.*.local
+.env.production
 
 # Python
 __pycache__/

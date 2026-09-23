@@ -14,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import get_db
-from app.models.advertisement import Advertisement
 from app.models.proxies import ProxyEndpoint, ProxyPool, ProxyPoolMember
 from app.models.scrape_errors import ScrapeError
 from app.models.scrape_runs import ScrapeRun
@@ -25,6 +24,9 @@ from app.schemas.sources import (
     ScanTriggerResponse,
     ScrapeErrorRead,
     ScrapeRunRead,
+    SourceArchiveRequest,
+    SourceArchiveResult,
+    SourceArchiveSkipped,
     SourceCreate,
     SourceDetailRead,
     SourceDuplicate,
@@ -256,16 +258,26 @@ async def _compute_source_read(db: AsyncSession, source: Source, since: datetime
         last_schedule_skip_reason=source.last_schedule_skip_reason,
         schedule_revision=source.schedule_revision or 1,
         automatic_scraping_state=schedule_state,
+        archived_at=source.archived_at,
+        lifecycle="archived" if source.archived_at else "active",
     )
 
 
 @router.get("", response_model=list[SourceRead])
 async def list_sources(
+    lifecycle: str = "active",
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> list[SourceRead]:
     """Elenco fonti nella forma attesa dal frontend (`Source` type)."""
-    sources = (await db.execute(select(Source).order_by(Source.name))).scalars().all()
+    if lifecycle not in {"active", "archived", "all"}:
+        raise HTTPException(422, "Il filtro lifecycle deve essere active, archived o all.")
+    stmt = select(Source).order_by(Source.name)
+    if lifecycle == "active":
+        stmt = stmt.where(Source.archived_at.is_(None))
+    elif lifecycle == "archived":
+        stmt = stmt.where(Source.archived_at.is_not(None))
+    sources = (await db.execute(stmt)).scalars().all()
     since = datetime.now(UTC) - timedelta(hours=24)
     return [await _compute_source_read(db, source, since) for source in sources]
 
@@ -285,7 +297,9 @@ async def get_sources_summary(
     pagina Sources (`GET /sources/summary`, mancante nel backend
     originario: la pagina Sources del frontend la chiama al primo
     caricamento insieme a `GET /sources`)."""
-    statuses = (await db.execute(select(Source.status))).scalars().all()
+    statuses = (
+        await db.execute(select(Source.status).where(Source.archived_at.is_(None)))
+    ).scalars().all()
     return SourcesSummaryRead(**summarize_sources_by_status(statuses))
 
 
@@ -296,7 +310,7 @@ async def export_sources(
     user: User = Depends(require_role("admin")),
 ) -> SourceTransferDocument:
     """Export portable source configuration without runtime state or proxy secrets."""
-    stmt = select(Source).order_by(Source.name)
+    stmt = select(Source).where(Source.archived_at.is_(None)).order_by(Source.name)
     if payload.scope == "selected":
         stmt = stmt.where(Source.id.in_(payload.source_ids))
     sources = (await db.execute(stmt)).scalars().all()
@@ -370,6 +384,13 @@ async def import_sources(
         .all()
     )
     existing_by_slug = {source.slug: source for source in existing_sources}
+    archived_slugs = sorted(source.slug for source in existing_sources if source.archived_at)
+    if archived_slugs:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Una o più fonti importate sono archiviate; ripristinarle prima di importare: "
+            + ", ".join(archived_slugs),
+        )
     existing_slugs = set(existing_by_slug)
     missing_actions = existing_slugs - payload.conflict_actions.keys()
     extra_actions = payload.conflict_actions.keys() - existing_slugs
@@ -501,12 +522,16 @@ async def create_source(
     scrapabile dal motore generico tramite `POST /sources/{id}/scan`.
     """
     existing = (
-        await db.execute(select(Source.id).where(Source.slug == payload.slug))
-    ).scalar_one_or_none()
+        await db.execute(select(Source.id, Source.archived_at).where(Source.slug == payload.slug))
+    ).one_or_none()
     if existing is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Una fonte con slug '{payload.slug}' esiste già.",
+            detail=(
+                f"La fonte con slug '{payload.slug}' è archiviata: ripristinarla invece di crearla."
+                if existing.archived_at
+                else f"Una fonte con slug '{payload.slug}' esiste già."
+            ),
         )
 
     await _proxy_pool_or_422(db, payload.proxy_pool_id)
@@ -545,6 +570,11 @@ async def _get_source_or_404(db: AsyncSession, source_id: uuid.UUID) -> Source:
     return source
 
 
+def _ensure_source_active(source: Source) -> None:
+    if source.archived_at is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "La fonte è archiviata.")
+
+
 @router.post(
     "/{source_id}/duplicate",
     response_model=SourceRead,
@@ -558,6 +588,7 @@ async def duplicate_source(
 ) -> SourceRead:
     """Duplica la configurazione di una fonte, senza copiarne lo storico operativo."""
     original = await _get_source_or_404(db, source_id)
+    _ensure_source_active(original)
     if payload.name.strip() == original.name.strip():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -647,6 +678,8 @@ def _to_minimal_source_read(source: Source) -> SourceRead:
             if source.automatic_scraping_enabled and source.next_scrape_at
             else "paused"
         ),
+        archived_at=source.archived_at,
+        lifecycle="archived" if source.archived_at else "active",
     )
 
 
@@ -689,6 +722,7 @@ async def update_source(
     ).scalar_one_or_none()
     if source is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Fonte non trovata.")
+    _ensure_source_active(source)
     previous_priority = source.priority
 
     updates = payload.model_dump(
@@ -762,33 +796,145 @@ async def update_source(
     return _to_minimal_source_read(source)
 
 
+async def _archive_sources(
+    db: AsyncSession, payload: SourceArchiveRequest, admin: User
+) -> SourceArchiveResult:
+    requested_ids = list(dict.fromkeys(payload.source_ids))
+    stmt = select(Source).order_by(Source.id).with_for_update()
+    if payload.scope == "all":
+        stmt = stmt.where(Source.archived_at.is_(None))
+    else:
+        stmt = stmt.where(Source.id.in_(requested_ids))
+    sources = (await db.execute(stmt)).scalars().all()
+    requested = len(sources) if payload.scope == "all" else len(requested_ids)
+    found_ids = {source.id for source in sources}
+    skipped: list[SourceArchiveSkipped] = []
+    if payload.scope == "selected":
+        skipped.extend(
+            SourceArchiveSkipped(
+                source_id=source_id,
+                source_name="Fonte non trovata",
+                reason="not_found",
+            )
+            for source_id in requested_ids
+            if source_id not in found_ids
+        )
+
+    candidate_ids = [source.id for source in sources if source.archived_at is None]
+    active_source_ids = set()
+    if candidate_ids:
+        active_source_ids = set(
+            (
+                await db.execute(
+                    select(ScrapeRun.source_id).where(
+                        ScrapeRun.source_id.in_(candidate_ids),
+                        ScrapeRun.status.in_(("pending", "running")),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    now = datetime.now(UTC)
+    archived_ids: list[str] = []
+    for source in sources:
+        if source.archived_at is not None:
+            skipped.append(
+                SourceArchiveSkipped(
+                    source_id=source.id, source_name=source.name, reason="already_archived"
+                )
+            )
+            continue
+        if source.id in active_source_ids:
+            skipped.append(
+                SourceArchiveSkipped(
+                    source_id=source.id, source_name=source.name, reason="active_scrape"
+                )
+            )
+            continue
+        source.enabled = False
+        source.automatic_scraping_enabled = False
+        source.next_scrape_at = None
+        source.last_schedule_skip_reason = "source_archived"
+        source.schedule_revision = (source.schedule_revision or 0) + 1
+        source.archived_at = now
+        source.archived_by_user_id = admin.id
+        archived_ids.append(str(source.id))
+
+    if archived_ids:
+        await log_action(
+            db,
+            user_id=admin.id,
+            action="archive_sources",
+            entity_type="source",
+            details={
+                "scope": payload.scope,
+                "count": len(archived_ids),
+                "source_ids": archived_ids,
+            },
+        )
+    await db.commit()
+    return SourceArchiveResult(requested=requested, archived=len(archived_ids), skipped=skipped)
+
+
+@router.post("/archive", response_model=SourceArchiveResult)
+async def archive_sources(
+    payload: SourceArchiveRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin_with_2fa),
+) -> SourceArchiveResult:
+    """Archivia le fonti richieste, saltando quelle con uno scan attivo."""
+    return await _archive_sources(db, payload, admin)
+
+
 @router.delete("/{source_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def delete_source(
     source_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_role("admin")),
+    admin: User = Depends(require_admin_with_2fa),
 ) -> None:
-    """Rimuove una fonte (solo Admin). Bloccato con 409 se esistono
-    `advertisement` collegati: preserva lo storico invece di lasciare
-    annunci orfani o cancellarli silenziosamente."""
+    """Compatibilità: la cancellazione singola archivia la fonte."""
     source = await _get_source_or_404(db, source_id)
-
-    has_ads = (
-        await db.execute(
-            select(Advertisement.id).where(Advertisement.source_id == source_id).limit(1)
-        )
-    ).scalar_one_or_none()
-    if has_ads is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Impossibile eliminare: esistono annunci collegati a questa fonte.",
-        )
-
-    await log_action(
-        db, user_id=user.id, action="delete_source", entity_type="source", entity_id=str(source_id)
+    if source.archived_at is not None:
+        return
+    result = await _archive_sources(
+        db, SourceArchiveRequest(scope="selected", source_ids=[source_id]), admin
     )
-    await db.delete(source)
+    if result.archived == 0:
+        raise HTTPException(409, "La fonte ha uno scraping attivo e non può essere archiviata.")
+
+
+@router.post("/{source_id}/restore", response_model=SourceRead)
+async def restore_source(
+    source_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin_with_2fa),
+) -> SourceRead:
+    source = (
+        await db.execute(select(Source).where(Source.id == source_id).with_for_update())
+    ).scalar_one_or_none()
+    if source is None:
+        raise HTTPException(404, "Fonte non trovata.")
+    if source.archived_at is None:
+        return await _compute_source_read(db, source, datetime.now(UTC) - timedelta(hours=24))
+    source.archived_at = None
+    source.archived_by_user_id = None
+    source.enabled = False
+    source.automatic_scraping_enabled = False
+    source.next_scrape_at = None
+    source.last_schedule_skip_reason = "schedule_disabled"
+    source.schedule_revision = (source.schedule_revision or 0) + 1
+    await log_action(
+        db,
+        user_id=admin.id,
+        action="restore_source",
+        entity_type="source",
+        entity_id=str(source.id),
+    )
     await db.commit()
+    await db.refresh(source)
+    return await _compute_source_read(db, source, datetime.now(UTC) - timedelta(hours=24))
 
 
 @router.get("/{source_id}/runs", response_model=list[ScrapeRunRead])
@@ -892,6 +1038,7 @@ async def pause_source(
     ).scalar_one_or_none()
     if source is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Fonte non trovata.")
+    _ensure_source_active(source)
     source.enabled = False
     source.next_scrape_at = None
     source.last_schedule_skip_reason = "source_disabled"
@@ -916,6 +1063,7 @@ async def disable_source(
     ).scalar_one_or_none()
     if source is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Fonte non trovata.")
+    _ensure_source_active(source)
     source.enabled = False
     source.status = "offline"
     source.next_scrape_at = None
@@ -939,6 +1087,7 @@ async def enable_source(
     ).scalar_one_or_none()
     if source is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Fonte non trovata.")
+    _ensure_source_active(source)
     if source.enabled:
         return
 
@@ -992,6 +1141,7 @@ async def update_source_schedule(
     ).scalar_one_or_none()
     if source is None:
         raise HTTPException(404, "Fonte non trovata.")
+    _ensure_source_active(source)
     if source.schedule_revision != payload.revision:
         raise HTTPException(409, "La schedulazione e stata modificata; ricaricare i dati.")
     if payload.enabled and (not source.enabled or source.scrape_config is None):
@@ -1053,6 +1203,7 @@ async def scan_source(
     ).scalar_one_or_none()
     if source is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Fonte non trovata.")
+    _ensure_source_active(source)
     if not source.enabled:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="La fonte è disabilitata."
@@ -1131,6 +1282,7 @@ async def check_source_robots(
     prima di lanciare uno scan reale. Sola lettura, nessuna restrizione di
     ruolo oltre l'autenticazione."""
     source = await _get_source_or_404(db, source_id)
+    _ensure_source_active(source)
 
     from app.services.robots_check import check_robots
 
@@ -1160,6 +1312,7 @@ async def test_source_config(
     come ogni altra chiamata del motore).
     """
     source = await _get_source_or_404(db, source_id)
+    _ensure_source_active(source)
     scrape_config = (
         payload.scrape_config.model_dump() if payload is not None else source.scrape_config
     )

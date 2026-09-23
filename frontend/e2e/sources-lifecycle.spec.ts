@@ -15,6 +15,7 @@ const enabledSource = {
   code: "original",
   name: "Original source",
   country: "N/D",
+  countryCode: null,
   status: "healthy",
   enabled: true,
   priority: "high",
@@ -33,6 +34,8 @@ const enabledSource = {
   lastScheduleSkipReason: null,
   scheduleRevision: 1,
   automaticScrapingState: "paused",
+  archivedAt: null,
+  lifecycle: "active",
 };
 
 const disabledSource = {
@@ -155,6 +158,48 @@ test("enable failure is surfaced without hiding the source", async ({ page }) =>
 
   await expect(page.getByRole("alert")).toContainText("Si è verificato un errore sul server.");
   await expect(page.getByText("Disabled source")).toBeVisible();
+});
+
+test("admin archives selected sources and restores them from the archive", async ({ page }) => {
+  await mockSourcesPage(page);
+  let archiveBody: unknown;
+  let restored = false;
+  const archivedSource = {
+    ...enabledSource,
+    enabled: false,
+    automaticScrapingEnabled: false,
+    automaticScrapingState: "disabled",
+    archivedAt: "2026-09-23T10:00:00Z",
+    lifecycle: "archived",
+  };
+  await page.route("**/api/v1/sources/archive", async (route) => {
+    archiveBody = route.request().postDataJSON();
+    await route.fulfill({
+      json: { requested: 1, archived: 1, skipped: [] },
+    });
+  });
+  await page.route("**/api/v1/sources?lifecycle=archived", (route) =>
+    route.fulfill({ json: [archivedSource] }),
+  );
+  await page.route(`**/api/v1/sources/${enabledSource.id}/restore`, async (route) => {
+    restored = true;
+    await route.fulfill({ json: { ...archivedSource, archivedAt: null, lifecycle: "active" } });
+  });
+
+  await page.goto("/sources");
+  await page.getByLabel("Seleziona Original source").check();
+  await page.getByRole("button", { name: "Elimina selezionate (1)" }).click();
+  const archiveDialog = page.getByRole("dialog", { name: "Archivia fonti selezionate" });
+  await archiveDialog.getByRole("button", { name: "Archivia", exact: true }).click();
+  await expect(archiveDialog).toContainText("Archiviate 1 fonti su 1 richieste.");
+  expect(archiveBody).toEqual({ scope: "selected", sourceIds: [enabledSource.id] });
+  await archiveDialog.locator("button").filter({ hasText: "Chiudi" }).click();
+
+  await page.getByRole("tab", { name: "Archiviate" }).click();
+  const archivedRow = page.getByRole("row").filter({ hasText: "Original source" });
+  await archivedRow.hover();
+  await archivedRow.getByRole("button", { name: "Ripristina Original source" }).click();
+  await expect.poll(() => restored).toBe(true);
 });
 
 test("configuration test sends the unsaved pagination draft and shows diagnostics", async ({ page }) => {

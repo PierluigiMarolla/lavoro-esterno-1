@@ -256,3 +256,18 @@ L'endpoint delle versioni richiede autenticazione; retention e diritto
 all'oblio eliminano gli snapshot in cascata con l'annuncio. I media storici
 mantengono originali immutabili e non sono inclusi nelle viste o negli export
 correnti quando `is_current=false`.
+
+## 9. Esposizione VPS e TLS
+
+Il profilo `docker-compose.production.yml` espone soltanto Caddy su 80/443.
+PostgreSQL, Redis, Ollama e nginx non pubblicano porte; MinIO, Grafana,
+Prometheus e Loki ascoltano soltanto su loopback e richiedono un tunnel SSH.
+Caddy termina TLS automatico sul dominio e inoltra il percorso del bucket
+MinIO senza alterare Host o path, necessari alla verifica delle firme S3.
+
+L'avvio con `ENVIRONMENT=production` fallisce se trova placeholder, chiavi AES
+non valide o riutilizzate, host/origin incoerenti o endpoint pubblico MinIO non
+HTTPS. Swagger e OpenAPI sono disabilitati per default. L'accesso HTTP tramite
+IP e una deroga esplicita (`ALLOW_INSECURE_IP_ACCESS=true`): funziona come
+richiesto ma espone dati e token alla rete e viene segnalato permanentemente
+nel frontend. Il dominio HTTPS resta l'unico ingresso raccomandato.

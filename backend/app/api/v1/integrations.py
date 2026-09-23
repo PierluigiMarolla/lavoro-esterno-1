@@ -107,7 +107,13 @@ async def _replace_sources(db: AsyncSession, endpoint_id: uuid.UUID, ids: list[u
     unique = list(dict.fromkeys(ids))
     if unique:
         found = set(
-            (await db.execute(select(Source.id).where(Source.id.in_(unique)))).scalars().all()
+            (
+                await db.execute(
+                    select(Source.id).where(
+                        Source.id.in_(unique), Source.archived_at.is_(None)
+                    )
+                )
+            ).scalars().all()
         )
         if found != set(unique):
             raise HTTPException(422, "Una o più fonti non esistono.")

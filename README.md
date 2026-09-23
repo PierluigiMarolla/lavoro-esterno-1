@@ -43,6 +43,21 @@ interno alla rete Docker e non viene pubblicato da nginx.
 
 Prerequisiti: Docker + Docker Compose.
 
+Per pubblicare il progetto su una VPS usare il profilo di produzione con Caddy,
+non esporre direttamente il Compose locale. Il runbook completo e in
+[`docs/DEPLOY_VPS.md`](docs/DEPLOY_VPS.md); in sintesi:
+
+```bash
+cp .env.production.example .env.production
+chmod 600 .env.production
+sh scripts/vps/preflight.sh .env.production
+sh scripts/vps/deploy.sh .env.production
+```
+
+Il dominio viene servito in HTTPS con certificati automatici. Database, Redis,
+MinIO e osservabilita restano privati; l'accesso tramite IP HTTP e disponibile
+solo perche esplicitamente abilitato e viene segnalato come non sicuro.
+
 ```bash
 cp .env.example .env
 # Generare le chiavi richieste (vedi commenti in .env.example e

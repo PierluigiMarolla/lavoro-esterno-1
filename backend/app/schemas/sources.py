@@ -502,6 +502,33 @@ class SourceRead(CamelModel):
     automatic_scraping_state: Literal["waiting", "pending", "running", "paused", "disabled"] = (
         "paused"
     )
+    archived_at: datetime | None = None
+    lifecycle: Literal["active", "archived"] = "active"
+
+
+class SourceArchiveRequest(CamelModel):
+    scope: Literal["selected", "all"]
+    source_ids: list[uuid.UUID] = Field(default_factory=list, max_length=1000)
+
+    @model_validator(mode="after")
+    def validate_scope(self) -> SourceArchiveRequest:
+        if self.scope == "selected" and not self.source_ids:
+            raise ValueError("Selezionare almeno una fonte.")
+        if self.scope == "all" and self.source_ids:
+            raise ValueError("sourceIds deve essere vuoto quando scope è all.")
+        return self
+
+
+class SourceArchiveSkipped(CamelModel):
+    source_id: uuid.UUID
+    source_name: str
+    reason: Literal["active_scrape", "already_archived", "not_found"]
+
+
+class SourceArchiveResult(CamelModel):
+    requested: int
+    archived: int
+    skipped: list[SourceArchiveSkipped] = Field(default_factory=list)
 
 
 class SourceDetailRead(SourceRead):

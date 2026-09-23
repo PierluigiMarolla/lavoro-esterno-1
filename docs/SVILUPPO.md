@@ -451,3 +451,17 @@ Per i numeri locali configurare sempre il **Paese** della fonte. Il worker
 passa il relativo codice ISO a `normalize_phone`; i prefissi espliciti `+` e
 `00` hanno precedenza. Se entrambi mancano, l'annuncio viene rifiutato con una
 diagnostica sicura invece di assumere automaticamente l'Italia.
+
+## Deploy VPS
+
+Il Compose principale rimane il profilo di sviluppo locale. Per una VPS usare
+sempre anche `docker-compose.production.yml` e il file `.env.production`:
+
+```bash
+sh scripts/vps/preflight.sh .env.production
+sh scripts/vps/deploy.sh .env.production
+```
+
+Il profilo aggiunge Caddy, azzera le porte pubbliche di nginx e limita
+MinIO/osservabilita al loopback. Dettagli su DNS, firewall, segreti, tunnel SSH,
+aggiornamento e rollback sono in `docs/DEPLOY_VPS.md`.

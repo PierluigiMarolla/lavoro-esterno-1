@@ -13,6 +13,8 @@ import {
   useUpdateSource,
   useUpdateSourceSchedule,
   useDeleteSource,
+  useArchiveSources,
+  useRestoreSource,
   useCheckSourceRobots,
   useExportSources,
   useTestSourceConfig,
@@ -44,6 +46,7 @@ import type {
   ScrapeIntervalUnit,
   TestConfigResult,
 } from "@/types";
+import type { SourceArchiveResult } from "@/api/sources";
 
 // Replicates desing/sources_lavoro_esterno/code.html: 4 summary cards
 // (Total/Active/Degraded/Offline) followed by a sources table with
@@ -1842,11 +1845,11 @@ function DeleteSourceDialog({ source, onClose }: { source: Source | null; onClos
   }
 
   return (
-    <Dialog open={source !== null} onClose={handleClose} title="Elimina fonte">
+    <Dialog open={source !== null} onClose={handleClose} title="Archivia fonte">
       <div className="flex flex-col gap-4">
         <p className="text-body-md text-on-surface">
-          Eliminare la fonte <span className="font-semibold">{source?.name}</span>? L’operazione è bloccata se
-          esistono annunci collegati.
+          Archiviare la fonte <span className="font-semibold">{source?.name}</span>? Annunci, media e storico
+          saranno conservati. La fonte potrà essere ripristinata in seguito.
         </p>
         {deleteSource.isError && (
           <p className="text-body-md text-error">{describeError(deleteSource.error).description}</p>
@@ -1856,8 +1859,111 @@ function DeleteSourceDialog({ source, onClose }: { source: Source | null; onClos
             Annulla
           </Button>
           <Button type="button" variant="danger" onClick={handleConfirm} disabled={deleteSource.isPending}>
-            {deleteSource.isPending ? "Eliminazione…" : "Elimina"}
+            {deleteSource.isPending ? "Archiviazione…" : "Archivia"}
           </Button>
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
+type BulkArchiveMode = "selected" | "all";
+
+function archiveReason(reason: SourceArchiveResult["skipped"][number]["reason"]): string {
+  if (reason === "active_scrape") return "scraping attivo";
+  if (reason === "already_archived") return "già archiviata";
+  return "fonte non trovata";
+}
+
+function BulkArchiveDialog({
+  mode,
+  selectedIds,
+  onClose,
+}: {
+  mode: BulkArchiveMode | null;
+  selectedIds: string[];
+  onClose: () => void;
+}) {
+  const archive = useArchiveSources();
+  const [confirmation, setConfirmation] = useState("");
+  const isAll = mode === "all";
+
+  function handleClose() {
+    archive.reset();
+    setConfirmation("");
+    onClose();
+  }
+
+  function handleConfirm() {
+    if (!mode) return;
+    archive.mutate({ scope: mode, sourceIds: mode === "selected" ? selectedIds : [] });
+  }
+
+  return (
+    <Dialog
+      open={mode !== null}
+      onClose={handleClose}
+      title={isAll ? "Archivia tutte le fonti" : "Archivia fonti selezionate"}
+    >
+      <div className="flex flex-col gap-4">
+        {!archive.data ? (
+          <>
+            <p className="text-body-md text-on-surface">
+              {isAll
+                ? "Tutte le fonti attive verranno archiviate."
+                : `${selectedIds.length} fonti selezionate verranno archiviate.`}{" "}
+              Annunci, media e storico saranno conservati. Le fonti con uno scraping attivo saranno saltate.
+            </p>
+            {isAll && (
+              <label className="space-y-1 text-label-md text-on-surface">
+                Digita <span className="font-semibold">ELIMINA TUTTE</span> per confermare
+                <Input
+                  value={confirmation}
+                  onChange={(event) => setConfirmation(event.target.value)}
+                  autoComplete="off"
+                  aria-label="Conferma archiviazione di tutte le fonti"
+                />
+              </label>
+            )}
+          </>
+        ) : (
+          <div className="space-y-3" role="status">
+            <p className="text-body-md text-on-surface">
+              Archiviate {archive.data.archived} fonti su {archive.data.requested} richieste.
+            </p>
+            {archive.data.skipped.length > 0 && (
+              <div>
+                <p className="text-label-md text-warning mb-1">Fonti saltate</p>
+                <ul className="list-disc pl-5 text-body-sm text-on-surface-variant">
+                  {archive.data.skipped.map((item) => (
+                    <li key={item.sourceId}>
+                      {item.sourceName}: {archiveReason(item.reason)}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+        {archive.isError && <p className="text-body-md text-error">{describeError(archive.error).description}</p>}
+        <div className="flex justify-end gap-2">
+          {!archive.data && (
+            <Button type="button" variant="secondary" onClick={handleClose}>
+              Annulla
+            </Button>
+          )}
+          {archive.data ? (
+            <Button type="button" onClick={handleClose}>Chiudi</Button>
+          ) : (
+            <Button
+              type="button"
+              variant="danger"
+              onClick={handleConfirm}
+              disabled={archive.isPending || (isAll && confirmation !== "ELIMINA TUTTE")}
+            >
+              {archive.isPending ? "Archiviazione…" : "Archivia"}
+            </Button>
+          )}
         </div>
       </div>
     </Dialog>
@@ -1969,18 +2075,21 @@ export default function SourcesPage() {
   const canManageSources = user?.role !== "viewer";
   const isAdmin = user?.role === "admin";
   const summary = useSourcesSummary();
-  const sources = useSources();
+  const [lifecycle, setLifecycle] = useState<"active" | "archived">("active");
+  const sources = useSources(lifecycle);
   const runScan = useRunSourceScan();
   const pause = usePauseSource();
   const disable = useDisableSource();
   const enable = useEnableSource();
   const checkRobots = useCheckSourceRobots();
   const exportSources = useExportSources();
+  const restoreSource = useRestoreSource();
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [importOpen, setImportOpen] = useState(false);
   const [formSource, setFormSource] = useState<Source | null | "new">(null);
   const [deleteTarget, setDeleteTarget] = useState<Source | null>(null);
+  const [bulkArchiveMode, setBulkArchiveMode] = useState<BulkArchiveMode | null>(null);
   const [duplicateTarget, setDuplicateTarget] = useState<Source | null>(null);
   const [robotsResultBySource, setRobotsResultBySource] = useState<Record<string, string>>({});
 
@@ -2054,19 +2163,19 @@ export default function SourcesPage() {
         <div>
           <h2 className="text-headline-md text-on-surface">Fonti dati</h2>
           <p className="text-body-md text-on-surface-variant mt-1">
-            Manage, monitor, and configure active external data pipelines.
+            Gestisci, monitora e configura le pipeline di acquisizione esterne.
           </p>
         </div>
         {isAdmin && (
           <div className="flex flex-wrap justify-end gap-2">
-            <Button variant="secondary" onClick={() => setImportOpen(true)}>
+            <Button variant="secondary" onClick={() => setImportOpen(true)} disabled={lifecycle === "archived"}>
               <Icon name="upload" size={18} />
               Importa
             </Button>
             <Button
               variant="secondary"
               onClick={() => handleExport("selected")}
-              disabled={selectedIds.size === 0 || exportSources.isPending}
+              disabled={lifecycle === "archived" || selectedIds.size === 0 || exportSources.isPending}
             >
               <Icon name="download" size={18} />
               Esporta selezionate
@@ -2074,12 +2183,32 @@ export default function SourcesPage() {
             <Button
               variant="secondary"
               onClick={() => handleExport("all")}
-              disabled={!sources.data?.length || exportSources.isPending}
+              disabled={lifecycle === "archived" || !sources.data?.length || exportSources.isPending}
             >
               <Icon name="download" size={18} />
               Esporta tutte
             </Button>
-            <Button onClick={() => setFormSource("new")}>
+            {lifecycle === "active" && (
+              <Button
+                variant="danger"
+                onClick={() => setBulkArchiveMode("selected")}
+                disabled={selectedIds.size === 0}
+              >
+                <Icon name="delete" size={18} />
+                Elimina selezionate ({selectedIds.size})
+              </Button>
+            )}
+            {lifecycle === "active" && (
+              <Button
+                variant="danger"
+                onClick={() => setBulkArchiveMode("all")}
+                disabled={!sources.data?.length}
+              >
+                <Icon name="delete_sweep" size={18} />
+                Elimina tutte
+              </Button>
+            )}
+            <Button onClick={() => setFormSource("new")} disabled={lifecycle === "archived"}>
               <Icon name="add" size={18} />
               Aggiungi fonte
             </Button>
@@ -2116,12 +2245,32 @@ export default function SourcesPage() {
       </div>
 
       {/* Sources Table */}
-      {(enable.isError || runScan.isError || exportSources.isError) && (
+      <div className="flex gap-2" role="tablist" aria-label="Stato delle fonti">
+        <Button
+          size="sm"
+          variant={lifecycle === "active" ? "primary" : "secondary"}
+          role="tab"
+          aria-selected={lifecycle === "active"}
+          onClick={() => setLifecycle("active")}
+        >
+          Attive
+        </Button>
+        <Button
+          size="sm"
+          variant={lifecycle === "archived" ? "primary" : "secondary"}
+          role="tab"
+          aria-selected={lifecycle === "archived"}
+          onClick={() => setLifecycle("archived")}
+        >
+          Archiviate
+        </Button>
+      </div>
+      {(enable.isError || runScan.isError || exportSources.isError || restoreSource.isError) && (
         <div
           role="alert"
           className="bg-error-container/20 border border-error/20 rounded-lg p-4 text-error text-body-md"
         >
-          {describeError(enable.error ?? runScan.error ?? exportSources.error).description}
+          {describeError(enable.error ?? runScan.error ?? exportSources.error ?? restoreSource.error).description}
         </div>
       )}
       <div className="bg-surface-container-lowest border border-border rounded-lg shadow-[0_1px_2px_rgba(0,0,0,0.02)] flex flex-col min-h-[400px]">
@@ -2166,7 +2315,10 @@ export default function SourcesPage() {
               <ErrorRow colSpan={isAdmin ? 9 : 8} error={sources.error} onRetry={() => sources.refetch()} />
             )}
             {sources.data && sources.data.length === 0 && (
-              <EmptyRow colSpan={isAdmin ? 9 : 8} message="Nessuna fonte configurata." />
+              <EmptyRow
+                colSpan={isAdmin ? 9 : 8}
+                message={lifecycle === "archived" ? "Nessuna fonte archiviata." : "Nessuna fonte configurata."}
+              />
             )}
             {sources.data?.map((source) => {
               const isExpanded = expandedIds.has(source.id);
@@ -2205,6 +2357,7 @@ export default function SourcesPage() {
                         <div>
                           <div className="font-medium text-on-surface flex items-center gap-1.5">
                             {source.name}
+                            {source.lifecycle === "archived" && <Badge tone="neutral">Archiviata</Badge>}
                             {isBroken && (
                               <span
                                 title={`${source.consecutiveFailures} esecuzioni consecutive non riuscite`}
@@ -2287,15 +2440,15 @@ export default function SourcesPage() {
                             {robotsResultBySource[source.id]}
                           </span>
                         )}
-                        <button
+                        {lifecycle === "active" && <button
                           onClick={() => handleCheckRobots(source)}
                           disabled={checkRobots.isPending}
                           title="Controlla robots.txt"
                           className="p-1.5 text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded transition-colors disabled:opacity-50"
                         >
                           <Icon name="policy" size={16} />
-                        </button>
-                        {canManageSources && source.enabled && source.hasScrapeConfig && (
+                        </button>}
+                        {lifecycle === "active" && canManageSources && source.enabled && source.hasScrapeConfig && (
                           <button
                             onClick={() => handleRunScan(source.id)}
                             disabled={
@@ -2309,7 +2462,7 @@ export default function SourcesPage() {
                             <Icon name="play_arrow" size={16} />
                           </button>
                         )}
-                        {canManageSources && source.enabled && (
+                        {lifecycle === "active" && canManageSources && source.enabled && (
                           <button
                             onClick={() => pause.mutate(source.id)}
                             disabled={pause.isPending}
@@ -2319,7 +2472,7 @@ export default function SourcesPage() {
                             <Icon name="pause" size={16} />
                           </button>
                         )}
-                        {isAdmin && (
+                        {lifecycle === "active" && isAdmin && (
                           <button
                             onClick={() => setDuplicateTarget(source)}
                             title="Duplica"
@@ -2329,7 +2482,7 @@ export default function SourcesPage() {
                             <Icon name="content_copy" size={16} />
                           </button>
                         )}
-                        {isAdmin && (
+                        {lifecycle === "active" && isAdmin && (
                           <button
                             onClick={() => setFormSource(source)}
                             title={source.hasScrapeConfig ? "Modifica configurazione" : "Configura"}
@@ -2338,7 +2491,7 @@ export default function SourcesPage() {
                             <Icon name="tune" size={16} />
                           </button>
                         )}
-                        {canManageSources && source.enabled && (
+                        {lifecycle === "active" && canManageSources && source.enabled && (
                           <button
                             onClick={() => disable.mutate(source.id)}
                             disabled={disable.isPending}
@@ -2348,7 +2501,7 @@ export default function SourcesPage() {
                             <Icon name="block" size={16} />
                           </button>
                         )}
-                        {canManageSources && !source.enabled && (
+                        {lifecycle === "active" && canManageSources && !source.enabled && (
                           <button
                             onClick={() => enable.mutate(source.id)}
                             disabled={enable.isPending}
@@ -2359,13 +2512,24 @@ export default function SourcesPage() {
                             <Icon name="power_settings_new" size={16} />
                           </button>
                         )}
-                        {isAdmin && (
+                        {lifecycle === "active" && isAdmin && (
                           <button
                             onClick={() => setDeleteTarget(source)}
                             title="Elimina"
                             className="p-1.5 text-on-surface-variant hover:text-error hover:bg-error-container/30 rounded transition-colors"
                           >
                             <Icon name="delete" size={16} />
+                          </button>
+                        )}
+                        {lifecycle === "archived" && isAdmin && (
+                          <button
+                            onClick={() => restoreSource.mutate(source.id)}
+                            disabled={restoreSource.isPending}
+                            title="Ripristina"
+                            aria-label={`Ripristina ${source.name}`}
+                            className="p-1.5 text-on-surface-variant hover:text-success hover:bg-success/10 rounded transition-colors disabled:opacity-50"
+                          >
+                            <Icon name="restore_from_trash" size={16} />
                           </button>
                         )}
                       </div>
@@ -2385,6 +2549,14 @@ export default function SourcesPage() {
         editingSource={formSource === "new" ? null : formSource}
       />
       <DeleteSourceDialog source={deleteTarget} onClose={() => setDeleteTarget(null)} />
+      <BulkArchiveDialog
+        mode={bulkArchiveMode}
+        selectedIds={[...selectedIds]}
+        onClose={() => {
+          setBulkArchiveMode(null);
+          setSelectedIds(new Set());
+        }}
+      />
       <DuplicateSourceDialog
         source={duplicateTarget}
         sources={sources.data ?? []}

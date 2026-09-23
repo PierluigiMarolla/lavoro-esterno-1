@@ -106,6 +106,11 @@ File (immagine/video) associato a un annuncio.
 - `created_at`
 
 ### `sources`
+
+Il ciclo di vita è reversibile: `archived_at` e `archived_by_user_id` identificano
+le fonti archiviate. L'archiviazione disabilita acquisizione e schedule ma non
+elimina annunci, media, run o configurazioni; `archived_at` è indicizzato per
+separare rapidamente le viste attive e archiviate.
 - `id` UUID PK
 - `name` String(200)
 - `slug` String(100), **unique, index** — identificatore tecnico della

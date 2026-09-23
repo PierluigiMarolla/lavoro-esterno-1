@@ -37,6 +37,9 @@ export const it = {
       validation: "Controlla i campi evidenziati.", unauthorized: "Devi effettuare l’accesso.",
       forbidden: "Non disponi dei permessi necessari.", notFound: "Risorsa non trovata.",
     },
+    security: {
+      insecureHttp: "Connessione non sicura tramite IP: password, token e dati non sono cifrati. Usa il dominio HTTPS.",
+    },
   },
 } as const;
 

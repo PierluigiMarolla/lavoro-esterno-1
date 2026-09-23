@@ -88,13 +88,21 @@ async def get_dashboard_kpis(
     total_records_delta_pct = new_records_delta_pct
 
     active_sources = (
-        await db.execute(select(func.count()).select_from(Source).where(Source.enabled.is_(True)))
+        await db.execute(
+            select(func.count()).select_from(Source).where(
+                Source.enabled.is_(True), Source.archived_at.is_(None)
+            )
+        )
     ).scalar_one()
     active_healthy_sources = (
         await db.execute(
             select(func.count())
             .select_from(Source)
-            .where(Source.enabled.is_(True), Source.status == "healthy")
+            .where(
+                Source.enabled.is_(True),
+                Source.archived_at.is_(None),
+                Source.status == "healthy",
+            )
         )
     ).scalar_one()
     active_sources_healthy_pct = safe_percentage(active_healthy_sources, active_sources)
@@ -169,6 +177,7 @@ async def get_scraping_activity(
         select(ScrapeRun, Source.name, Source.slug)
         .join(Source, Source.id == ScrapeRun.source_id)
         .where(
+            Source.archived_at.is_(None),
             ScrapeRun.started_at >= time_range.start,
             ScrapeRun.started_at < time_range.end,
         )
@@ -204,7 +213,9 @@ async def get_source_health(
     _user: User = Depends(get_current_user),
 ) -> SourceHealthBreakdownRead:
     """Aggrega il numero di fonti per stato di salute corrente."""
-    statuses = (await db.execute(select(Source.status))).scalars().all()
+    statuses = (
+        await db.execute(select(Source.status).where(Source.archived_at.is_(None)))
+    ).scalars().all()
     return SourceHealthBreakdownRead(**health_breakdown(statuses))
 
 

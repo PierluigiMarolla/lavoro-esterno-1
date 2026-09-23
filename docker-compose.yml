@@ -182,7 +182,7 @@ services:
     restart: "no"
     command: ["alembic", "upgrade", "head"]
     env_file:
-      - .env
+      - ${APP_ENV_FILE:-.env}
     depends_on:
       postgres:
         condition: service_healthy
@@ -201,7 +201,7 @@ services:
     restart: unless-stopped
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     env_file:
-      - .env
+      - ${APP_ENV_FILE:-.env}
     expose:
       - "8000"
     depends_on:
@@ -230,7 +230,7 @@ services:
     restart: unless-stopped
     command: ["celery", "-A", "app.workers.celery_app", "worker", "-Q", "scraping,maintenance", "-n", "worker-scraper@%h", "--loglevel=info"]
     env_file:
-      - .env
+      - ${APP_ENV_FILE:-.env}
     depends_on:
       postgres:
         condition: service_healthy
@@ -254,7 +254,7 @@ services:
     restart: unless-stopped
     command: ["celery", "-A", "app.workers.celery_app", "worker", "-Q", "media", "-n", "worker-media@%h", "--loglevel=info"]
     env_file:
-      - .env
+      - ${APP_ENV_FILE:-.env}
     depends_on:
       postgres:
         condition: service_healthy
@@ -278,7 +278,7 @@ services:
     restart: unless-stopped
     command: ["celery", "-A", "app.workers.celery_app", "worker", "-Q", "ai", "-n", "worker-ai@%h", "--loglevel=info", "--concurrency=1"]
     env_file:
-      - .env
+      - ${APP_ENV_FILE:-.env}
     depends_on:
       postgres:
         condition: service_healthy
@@ -301,7 +301,7 @@ services:
     restart: unless-stopped
     command: ["celery", "-A", "app.workers.celery_app", "worker", "-Q", "exports", "-n", "worker-exports@%h", "--loglevel=info", "--concurrency=1"]
     env_file:
-      - .env
+      - ${APP_ENV_FILE:-.env}
     depends_on:
       postgres:
         condition: service_healthy
@@ -322,7 +322,7 @@ services:
     restart: unless-stopped
     command: ["celery", "-A", "app.workers.celery_app", "worker", "-Q", "webhooks", "-n", "worker-webhooks@%h", "--loglevel=info", "--concurrency=2"]
     env_file:
-      - .env
+      - ${APP_ENV_FILE:-.env}
     depends_on:
       postgres:
         condition: service_healthy
@@ -344,7 +344,7 @@ services:
     restart: unless-stopped
     command: ["celery", "-A", "app.workers.celery_app", "beat", "--loglevel=info"]
     env_file:
-      - .env
+      - ${APP_ENV_FILE:-.env}
     depends_on:
       postgres:
         condition: service_healthy

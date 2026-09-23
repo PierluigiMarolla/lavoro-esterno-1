@@ -1,0 +1,47 @@
+{
+	email {$ACME_EMAIL}
+	admin off
+}
+
+(application_routes) {
+	encode zstd gzip
+
+	# Gli URL presigned MinIO hanno forma /<bucket>/<object>. Il percorso e
+	# l'Host originali devono restare invariati perche fanno parte della firma.
+	@minio path /{$MINIO_BUCKET}/*
+	handle @minio {
+		reverse_proxy minio:9000 {
+			header_up Host {host}
+		}
+	}
+
+	handle {
+		reverse_proxy nginx:80
+	}
+}
+
+{$APP_DOMAIN} {
+	import application_routes
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Frame-Options "DENY"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+		Content-Security-Policy "default-src 'self'; img-src 'self' data: blob: https:; media-src 'self' blob: https:; connect-src 'self'; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+		-Server
+	}
+}
+
+# Accesso deliberatamente non cifrato richiesto per l'IP pubblico. Il frontend
+# mostra un avviso persistente; il dominio rimane l'ingresso raccomandato.
+http://{$PUBLIC_IP} {
+	import application_routes
+	header {
+		X-Frame-Options "DENY"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+		-Server
+	}
+}

@@ -90,13 +90,15 @@ blocco tutte le sessioni dell'utente.
 | POST | `/api/v1/sources/export` | Esporta tutte le fonti o una selezione in un documento JSON portabile e versionato. Solo Admin. |
 | POST | `/api/v1/sources/import/preview` | Valida un documento di fonti senza modificarle e segnala nuove fonti, conflitti, errori e pool proxy mancanti. Solo Admin. |
 | POST | `/api/v1/sources/import` | Applica atomicamente un documento validato, richiedendo `update` o `skip` per ogni slug esistente. Solo Admin. |
-| GET | `/api/v1/sources` | Elenco e stato delle fonti, inclusi `enabled`, metriche recenti e schedulazione (`automaticScrapingEnabled`, intervallo, revisione, ultima/prossima esecuzione e stato `waiting/pending/running/paused/disabled`). |
+| GET | `/api/v1/sources` | Elenco e stato delle fonti. `lifecycle=active` è il default; sono disponibili anche `archived` e `all`. Espone `archivedAt` e `lifecycle`. |
 | GET | `/api/v1/sources/summary` | Conteggio fonti per stato (`total`/`active`/`degraded`/`offline`). |
 | GET | `/api/v1/sources/{source_id}` | Dettaglio di una fonte, incluso `scrapeConfig` completo (assente da `GET /sources`, che espone solo il booleano `hasScrapeConfig`) — usato per precompilare il form "Edit configuration". |
 | POST | `/api/v1/sources` | Crea una fonte (solo Admin). Accetta `scrapeConfig` e `watermarkRemoval`; quest'ultimo richiede riferimento autorizzativo e almeno una regione normalizzata se abilitato. |
 | POST | `/api/v1/sources/{source_id}/duplicate` | Duplica URL, priorità, configurazione scraper/proxy e watermark con nuovo nome/slug. Non copia annunci o run e crea la copia offline/disabilitata. Solo Admin. |
 | PATCH | `/api/v1/sources/{source_id}` | Modifica `name`/`baseUrl`/`priority`/`scrapeConfig`/`watermarkRemoval` (solo Admin). Non permette di cambiare `slug`. |
-| DELETE | `/api/v1/sources/{source_id}` | Rimuove una fonte (solo Admin). 409 se esistono `advertisement` collegati (storico preservato). |
+| POST | `/api/v1/sources/archive` | Archivia una selezione (`scope=selected`) o tutte le fonti attive (`scope=all`). Le fonti con scan attivi sono saltate e riportate nella risposta. Solo Admin con 2FA. |
+| DELETE | `/api/v1/sources/{source_id}` | Archivia reversibilmente una singola fonte conservando annunci, media e storico. Solo Admin con 2FA. |
+| POST | `/api/v1/sources/{source_id}/restore` | Ripristina una fonte archiviata lasciandola disabilitata e senza schedule automatico. Solo Admin con 2FA. |
 | POST | `/api/v1/sources/{source_id}/check-robots` | Verifica live il `robots.txt` pubblico della fonte usando lo stesso User-Agent configurato per lo scan — nessun altro contenuto scaricato. Nessuna restrizione di ruolo oltre l'autenticazione. |
 | POST | `/api/v1/sources/{source_id}/test-config` | Prova una bozza opzionale `{"scrapeConfig": ...}` senza salvarla; senza body usa la configurazione persistita. Restituisce campione, paginazione e, in caso di errore, `errorCode`, `httpStatus` e `recommendedActions`. Richiede Admin/Operator. |
 | GET | `/api/v1/sources/{source_id}/runs` | Storico dei run con origine `manual`/`scheduled`, accodamento, istante pianificato, errori con `errorCode` opzionale e diagnostica di paginazione/proxy. |

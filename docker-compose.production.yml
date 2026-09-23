@@ -1,0 +1,88 @@
+volumes:
+  caddy-data:
+  caddy-config:
+
+services:
+  # In produzione Caddy e l'unico processo in ascolto su tutte le interfacce.
+  # Nginx resta il router applicativo interno e conserva il comportamento locale.
+  caddy:
+    build:
+      context: ./infra/caddy
+      dockerfile: Dockerfile
+      args:
+        CADDY_VERSION: v2.11.4
+    image: lavoro-esterno/caddy:2.11.4-secure
+    restart: unless-stopped
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+      PUBLIC_IP: ${PUBLIC_IP}
+      ACME_EMAIL: ${ACME_EMAIL}
+      MINIO_BUCKET: ${MINIO_BUCKET:-lavoro-esterno-media}
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    ports:
+      - "0.0.0.0:80:80"
+      - "0.0.0.0:443:443"
+      - "0.0.0.0:443:443/udp"
+    depends_on:
+      api:
+        condition: service_healthy
+      nginx:
+        condition: service_started
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null --header=Host:$${PUBLIC_IP} http://127.0.0.1/api/v1/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks:
+      - lavoro-esterno-net
+
+  api:
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --proxy-headers
+      - --forwarded-allow-ips=*
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/healthz', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  # Le porte del profilo locale vengono azzerate: Caddy raggiunge nginx
+  # esclusivamente tramite la rete Docker.
+  nginx:
+    ports: !reset []
+    expose:
+      - "80"
+
+  minio:
+    ports: !override
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+
+  grafana:
+    ports: !override
+      - "127.0.0.1:3000:3000"
+
+  prometheus:
+    ports: !override
+      - "127.0.0.1:9090:9090"
+
+  loki:
+    ports: !override
+      - "127.0.0.1:3100:3100"

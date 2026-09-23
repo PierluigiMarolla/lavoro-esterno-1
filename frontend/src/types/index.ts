@@ -62,8 +62,10 @@ export interface Source {
   lastCompletedScrapeAt: string | null;
   lastScheduleSkipReason: string | null;
   scheduleRevision: number;
-  automaticScrapingState: AutomaticScrapingState;
-}
+    automaticScrapingState: AutomaticScrapingState;
+    archivedAt: string | null;
+    lifecycle: "active" | "archived";
+  }
 
 export type ScrapeFieldExtractionMode = "value" | "keyValue" | "posterVideo" | "items";
 

@@ -2209,3 +2209,42 @@ Verifica: Ruff superato, suite backend completa `300 passed`, lint frontend
 senza errori (due warning Fast Refresh preesistenti) e build Vite riuscita.
 Docker Desktop era spento, quindi le immagini non sono state ricostruite e
 nessun volume è stato modificato.
+
+# Sessione 29 — 23 settembre 2026: profilo di produzione VPS
+
+È stato aggiunto `docker-compose.production.yml`: Caddy è l'unico edge
+pubblico su TCP 80/443 e UDP 443, gestisce ACME per `APP_DOMAIN`, serve anche
+l'app in HTTP su `PUBLIC_IP` e inoltra il percorso del bucket direttamente a
+MinIO preservando la firma. Nginx perde i binding host; MinIO, Grafana,
+Prometheus e Loki sono vincolati a `127.0.0.1` e restano raggiungibili tramite
+tunnel SSH. Il Compose locale Windows non cambia.
+
+Il backend ora applica Trusted Host, disabilita docs/OpenAPI in produzione e
+blocca l'avvio per placeholder, segreti deboli, chiavi AES invalide/riutilizzate
+o URL/host incoerenti. Il frontend mostra un avviso persistente quando viene
+aperto tramite IP HTTP. Configurazione e comandi sono in
+`.env.production.example`, `docs/DEPLOY_VPS.md` e `scripts/vps/`.
+
+Il deploy crea backup prima degli aggiornamenti, usa la barriera `migrate`, non
+esegue mai `down -v` e verifica dominio HTTPS, IP HTTP e servizi principali.
+Restano esterni al repository: assegnazione reale della VPS, record DNS,
+firewall del provider, copia backup off-site, secret manager e pentest.
+
+La scansione iniziale ha bloccato `caddy:2.10-alpine` per rilievi
+High/Critical correggibili. L'edge usa quindi una build riproducibile di Caddy
+2.11.4 su Go 1.26.6 con moduli corretti. Trivy sul tar finale riporta zero
+High/Critical sia per Alpine sia per il binario Go; la CI costruisce e analizza
+ora anche questa immagine. Bandit, pip-audit, npm audit e scansione filesystem
+Trivy sono puliti.
+# Aggiornamento 2026-09-23 — archivio e cancellazione multipla delle fonti
+
+- `DELETE /sources/{id}` ora archivia la fonte senza eliminare dati acquisiti.
+- `POST /sources/archive` supporta fonti selezionate e tutte le fonti attive;
+  gli scan `pending`/`running` vengono saltati e restituiti con motivo sicuro.
+- `GET /sources?lifecycle=active|archived|all` separa le viste e
+  `POST /sources/{id}/restore` ripristina una fonte lasciandola disabilitata.
+- La pagina Fonti include “Elimina selezionate”, “Elimina tutte”, conferma
+  testuale per l'operazione globale, vista Archiviate e ripristino.
+- La migrazione `20260923120000_source_archiving.py` aggiunge `archived_at` e
+  `archived_by_user_id`. Dopo l'aggiornamento eseguire `alembic upgrade head`;
+  il migrator Compose lo esegue automaticamente all'avvio.

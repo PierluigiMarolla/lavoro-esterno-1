@@ -61,6 +61,7 @@ jobs:
         run: |
           docker build -t lavoro-esterno/backend:security backend
           docker build -t lavoro-esterno/frontend:security frontend
+          docker build --pull -t lavoro-esterno/caddy:security infra/caddy
       - name: Scan backend image
         uses: aquasecurity/trivy-action@0.28.0
         with:
@@ -72,6 +73,13 @@ jobs:
         uses: aquasecurity/trivy-action@0.28.0
         with:
           image-ref: lavoro-esterno/frontend:security
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Scan public edge image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: lavoro-esterno/caddy:security
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"

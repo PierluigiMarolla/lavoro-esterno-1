@@ -7,9 +7,14 @@ solo la struttura tipizzata e i default utili per lo sviluppo locale).
 
 from __future__ import annotations
 
+import base64
+import binascii
+import ipaddress
+import re
 from functools import lru_cache
+from urllib.parse import urlparse
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -52,7 +57,8 @@ class Settings(BaseSettings):
         default="lavoro-esterno-media", description="Bucket per i media raccolti."
     )
     MINIO_SECURE: bool = Field(
-        default=False, description="Usa TLS per la connessione a MinIO (True in produzione)."
+        default=False,
+        description="Usa TLS per la connessione interna a MinIO (normalmente False in Docker).",
     )
     MINIO_PUBLIC_ENDPOINT: str | None = Field(
         default=None,
@@ -202,11 +208,119 @@ class Settings(BaseSettings):
         default="development",
         description="Ambiente di esecuzione (development/staging/production).",
     )
+    APP_DOMAIN: str = Field(default="", description="Dominio pubblico, senza schema o path.")
+    PUBLIC_IP: str = Field(default="", description="Indirizzo IPv4/IPv6 pubblico della VPS.")
+    PUBLIC_BASE_URL: str = Field(default="", description="URL HTTPS canonico dell'applicazione.")
+    ALLOWED_HOSTS: str = Field(
+        default="localhost,127.0.0.1,testserver",
+        description="Host HTTP accettati, separati da virgola.",
+    )
+    ALLOW_INSECURE_IP_ACCESS: bool = Field(
+        default=False,
+        description="Consente esplicitamente l'accesso applicativo HTTP tramite IP pubblico.",
+    )
+    ENABLE_API_DOCS: bool = Field(
+        default=True, description="Espone Swagger e lo schema OpenAPI. Disabilitare in produzione."
+    )
+
+    # Valori presenti nell'ambiente Compose e controllati dal preflight di
+    # produzione. Restano opzionali in sviluppo/test per non duplicare la
+    # configurazione dei container infrastrutturali.
+    POSTGRES_PASSWORD: str | None = None
+    MINIO_ROOT_PASSWORD: str | None = None
+    GF_SECURITY_ADMIN_PASSWORD: str | None = None
 
     @property
     def cors_origins(self) -> list[str]:
         """Espande CORS_ORIGIN (stringa CSV) in una lista di origin per FastAPI CORSMiddleware."""
         return [origin.strip() for origin in self.CORS_ORIGIN.split(",") if origin.strip()]
+
+    @property
+    def allowed_hosts(self) -> list[str]:
+        """Espande l'allowlist Host senza accettare wildcard implicite."""
+        return [host.strip() for host in self.ALLOWED_HOSTS.split(",") if host.strip()]
+
+    @model_validator(mode="after")
+    def validate_production_configuration(self) -> Settings:
+        """Blocca l'avvio se un deploy pubblico usa placeholder o URL incoerenti."""
+        if self.ENVIRONMENT.lower() != "production":
+            return self
+
+        errors: list[str] = []
+        domain_pattern = re.compile(
+            r"^(?=.{1,253}$)(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+"
+            r"[a-zA-Z]{2,63}$"
+        )
+        if not domain_pattern.fullmatch(self.APP_DOMAIN):
+            errors.append("APP_DOMAIN deve essere un nome DNS valido senza schema o percorso")
+
+        try:
+            public_ip = ipaddress.ip_address(self.PUBLIC_IP)
+            if not public_ip.is_global:
+                errors.append("PUBLIC_IP deve essere un indirizzo pubblico instradabile")
+        except ValueError:
+            errors.append("PUBLIC_IP deve essere un indirizzo IP valido")
+
+        expected_base_url = f"https://{self.APP_DOMAIN}" if self.APP_DOMAIN else ""
+        parsed_base_url = urlparse(self.PUBLIC_BASE_URL)
+        if (
+            self.PUBLIC_BASE_URL.rstrip("/") != expected_base_url
+            or parsed_base_url.scheme != "https"
+            or parsed_base_url.path not in ("", "/")
+        ):
+            errors.append("PUBLIC_BASE_URL deve essere https://APP_DOMAIN senza percorso")
+        if (self.MINIO_PUBLIC_ENDPOINT or "").rstrip("/") != expected_base_url:
+            errors.append("MINIO_PUBLIC_ENDPOINT deve coincidere con PUBLIC_BASE_URL")
+        if self.MINIO_SECURE:
+            errors.append("MINIO_SECURE deve restare false per l'endpoint interno Docker")
+        if not self.ALLOW_INSECURE_IP_ACCESS:
+            errors.append(
+                "ALLOW_INSECURE_IP_ACCESS deve essere true per pubblicare l'app via IP HTTP"
+            )
+
+        required_origins = {expected_base_url, f"http://{self.PUBLIC_IP}"}
+        if not required_origins.issubset(set(self.cors_origins)):
+            errors.append("CORS_ORIGIN deve includere dominio HTTPS e IP pubblico HTTP")
+        required_hosts = {self.APP_DOMAIN, self.PUBLIC_IP, "localhost", "127.0.0.1"}
+        if "*" in self.allowed_hosts or not required_hosts.issubset(set(self.allowed_hosts)):
+            errors.append("ALLOWED_HOSTS deve includere dominio e IP e non può contenere '*'")
+
+        weak_markers = ("change-me", "insecure", "example", "password")
+        secrets = {
+            "JWT_SECRET_KEY": self.JWT_SECRET_KEY,
+            "PHONE_HMAC_SECRET": self.PHONE_HMAC_SECRET,
+            "MINIO_SECRET_KEY": self.MINIO_SECRET_KEY,
+            "POSTGRES_PASSWORD": self.POSTGRES_PASSWORD,
+            "MINIO_ROOT_PASSWORD": self.MINIO_ROOT_PASSWORD,
+            "GF_SECURITY_ADMIN_PASSWORD": self.GF_SECURITY_ADMIN_PASSWORD,
+        }
+        for name, value in secrets.items():
+            normalized = (value or "").lower()
+            if len(value or "") < 32 or any(marker in normalized for marker in weak_markers):
+                errors.append(f"{name} deve essere un segreto casuale di almeno 32 caratteri")
+
+        encoded_keys = {
+            "PHONE_ENCRYPTION_KEY": self.PHONE_ENCRYPTION_KEY,
+            "AI_CREDENTIAL_ENCRYPTION_KEY": self.AI_CREDENTIAL_ENCRYPTION_KEY,
+            "PROXY_CREDENTIAL_ENCRYPTION_KEY": self.PROXY_CREDENTIAL_ENCRYPTION_KEY,
+            "INTEGRATION_ENCRYPTION_KEY": self.INTEGRATION_ENCRYPTION_KEY,
+        }
+        decoded_keys: list[bytes] = []
+        for name, value in encoded_keys.items():
+            try:
+                decoded = base64.b64decode(value or "", validate=True)
+            except (binascii.Error, ValueError):
+                decoded = b""
+            if len(decoded) != 32:
+                errors.append(f"{name} deve essere base64 valido corrispondente a 32 byte")
+            else:
+                decoded_keys.append(decoded)
+        if len(decoded_keys) != len(set(decoded_keys)):
+            errors.append("Le chiavi di cifratura devono essere tutte differenti")
+
+        if errors:
+            raise ValueError("Configurazione production non valida: " + "; ".join(errors))
+        return self
 
 
 @lru_cache

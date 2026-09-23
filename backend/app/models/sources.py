@@ -42,6 +42,12 @@ class Source(UUIDPKMixin, TimestampMixin, Base):
     last_completed_scrape_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_schedule_skip_reason: Mapped[str | None] = mapped_column(String(80))
     schedule_revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    archived_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    archived_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
 
     # Configurazione del motore di scraping generico (vedi
     # app/scrapers/generic.py:GenericScraper), validata a livello di schema

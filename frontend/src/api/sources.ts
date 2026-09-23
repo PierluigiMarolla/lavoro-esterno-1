@@ -63,6 +63,23 @@ export interface SourceExportInput {
   sourceIds: string[];
 }
 
+export type SourceLifecycle = "active" | "archived" | "all";
+
+export interface SourceArchiveInput {
+  scope: "selected" | "all";
+  sourceIds: string[];
+}
+
+export interface SourceArchiveResult {
+  requested: number;
+  archived: number;
+  skipped: Array<{
+    sourceId: string;
+    sourceName: string;
+    reason: "active_scrape" | "already_archived" | "not_found";
+  }>;
+}
+
 export interface SourceImportInput {
   document: SourceTransferDocument;
   conflictActions: Record<string, "update" | "skip">;
@@ -74,8 +91,8 @@ export interface ScanTriggerResponse {
   runId: string;
 }
 
-export function fetchSources(): Promise<Source[]> {
-  return apiRequest<Source[]>("/sources");
+export function fetchSources(lifecycle: SourceLifecycle = "active"): Promise<Source[]> {
+  return apiRequest<Source[]>(lifecycle === "active" ? "/sources" : `/sources?lifecycle=${lifecycle}`);
 }
 
 export function fetchSourcesSummary(): Promise<SourcesSummary> {
@@ -144,6 +161,14 @@ export function updateSource(id: string, input: UpdateSourceInput): Promise<Sour
 
 export function deleteSource(id: string): Promise<void> {
   return apiRequest<void>(`/sources/${id}`, { method: "DELETE" });
+}
+
+export function archiveSources(input: SourceArchiveInput): Promise<SourceArchiveResult> {
+  return apiRequest<SourceArchiveResult>("/sources/archive", { method: "POST", body: input });
+}
+
+export function restoreSource(id: string): Promise<Source> {
+  return apiRequest<Source>(`/sources/${id}/restore`, { method: "POST" });
 }
 
 // Checks the source's public robots.txt for the configured user-agent —

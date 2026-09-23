@@ -1,5 +1,6 @@
 /** Mappa delle route pubbliche/protette e redirect di compatibilità della SPA. */
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import AppShell from "@/layout/AppShell";
 import ProtectedRoute from "@/routes/ProtectedRoute";
 import LoginPage from "@/routes/LoginPage";
@@ -23,7 +24,9 @@ import RecordHistoryTab from "@/routes/records/RecordHistoryTab";
 
 export default function App() {
   return (
-    <Routes>
+    <>
+      <InsecureHttpBanner />
+      <Routes>
       <Route path="/login" element={<LoginPage />} />
 
       {/* Everything below requires an authenticated session */}
@@ -59,7 +62,24 @@ export default function App() {
       </Route>
 
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
-    </Routes>
+      </Routes>
+    </>
+  );
+}
+
+function InsecureHttpBanner() {
+  const { t } = useTranslation();
+  const hostname = window.location.hostname;
+  const isLocal = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  if (window.location.protocol !== "http:" || isLocal) return null;
+
+  return (
+    <div
+      role="alert"
+      className="fixed inset-x-0 top-0 z-[100] bg-error px-4 py-2 text-center text-sm font-semibold text-on-error shadow-md"
+    >
+      {t("security.insecureHttp")}
+    </div>
   );
 }
 

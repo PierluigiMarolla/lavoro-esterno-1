@@ -514,20 +514,22 @@ Docker dell'host.
       **produzione** (hosting: VPS dedicato, cloud provider — decisione
       da prendere con il cliente).
 - [ ] Configurare **dominio e DNS** per l'ambiente pubblico.
-- [ ] Configurare **TLS** (es. Let's Encrypt/reverse proxy con
+- [x] Configurare **TLS** (es. Let's Encrypt/reverse proxy con
       certificati automatici, o terminazione TLS a livello di load
       balancer/CDN a monte di `nginx`) — nel setup attuale nginx espone
-      solo la porta 80 in chiaro.
+      solo la porta 80 in chiaro. Il profilo VPS ora usa Caddy con ACME
+      automatico; l'emissione reale richiede il DNS della VPS.
 - [ ] Configurare **backup automatici** end-to-end (Postgres + MinIO) con
       test periodico di ripristino (collegato al punto 2).
 - [ ] Implementare **secrets management** in produzione (oggi solo file
       `.env` locale): valutare un vault/secrets manager del provider
       cloud scelto, evitare segreti in chiaro sulle macchine di deploy.
-- [ ] Restringere l'esposizione pubblica di **MinIO console (9001)**,
+- [x] Restringere l'esposizione pubblica di **MinIO console (9001)**,
       **Grafana (3000)** e **Prometheus (9090)**: nel `docker-compose.yml`
       attuale sono pubblicate per comodità di sviluppo, in produzione
       vanno messe dietro VPN/autenticazione o rimosse da `ports:`.
-      pubblico.
+      Nel profilo VPS sono vincolate a `127.0.0.1`; soltanto Caddy pubblica
+      80/443.
 - [ ] Configurare **pipeline di deploy** (CD) — oggi la CI
       (`.github/workflows/ci.yml`) fa solo lint/test/build immagini,
       senza push né deploy: aggiungere step di push su registry e deploy

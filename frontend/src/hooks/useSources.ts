@@ -7,8 +7,12 @@ const summaryKey = ["sources", "summary"] as const;
 
 const ACTIVE_POLL_INTERVAL_MS = 3000;
 
-export function useSources() {
-  return useQuery({ queryKey: sourcesKey, queryFn: sourcesApi.fetchSources, refetchInterval: 30000 });
+export function useSources(lifecycle: sourcesApi.SourceLifecycle = "active") {
+  return useQuery({
+    queryKey: [...sourcesKey, lifecycle],
+    queryFn: () => sourcesApi.fetchSources(lifecycle),
+    refetchInterval: 30000,
+  });
 }
 
 export function useSourcesSummary() {
@@ -122,6 +126,16 @@ export function useUpdateSource() {
 export function useDeleteSource() {
   const invalidate = useInvalidateSources();
   return useMutation({ mutationFn: sourcesApi.deleteSource, onSuccess: invalidate });
+}
+
+export function useArchiveSources() {
+  const invalidate = useInvalidateSources();
+  return useMutation({ mutationFn: sourcesApi.archiveSources, onSuccess: invalidate });
+}
+
+export function useRestoreSource() {
+  const invalidate = useInvalidateSources();
+  return useMutation({ mutationFn: sourcesApi.restoreSource, onSuccess: invalidate });
 }
 
 // Not a mutation in the TanStack sense (nothing is persisted server-side),
