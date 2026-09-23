@@ -39,6 +39,7 @@ class ScrapeRun(UUIDPKMixin, Base):
     items_updated: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     items_unchanged: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     errors_count: Mapped[int] = mapped_column(Integer, default=0)
+    warnings_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     pages_visited: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     pagination_mode: Mapped[str] = mapped_column(
         String(20), default="none", server_default="none", nullable=False

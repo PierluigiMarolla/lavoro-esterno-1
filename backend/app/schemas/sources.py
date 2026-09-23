@@ -559,6 +559,7 @@ class ScrapeErrorRead(CamelModel):
     id: uuid.UUID
     url: str
     error_message: str
+    severity: Literal["warning", "error"] = "error"
     error_code: (
         Literal[
             "anti_bot_blocked",
@@ -577,6 +578,7 @@ class ScrapeErrorRead(CamelModel):
             "content_sanitization_invalid_changed",
             "content_sanitization_unchanged_mismatch",
             "content_sanitization_numbers_changed",
+            "persistence_failed",
         ]
         | None
     ) = None
@@ -596,6 +598,7 @@ class ScrapeRunRead(CamelModel):
     items_updated: int = 0
     items_unchanged: int = 0
     errors_count: int
+    warnings_count: int = 0
     pages_visited: int = 0
     pagination_mode: str = "none"
     pagination_stop_reason: str | None = None

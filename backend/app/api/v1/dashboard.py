@@ -114,6 +114,7 @@ async def get_dashboard_kpis(
             .where(
                 ScrapeError.created_at >= time_range.start,
                 ScrapeError.created_at < time_range.end,
+                ScrapeError.severity == "error",
             )
         )
     ).scalar_one()
@@ -124,6 +125,7 @@ async def get_dashboard_kpis(
             .where(
                 ScrapeError.created_at >= time_range.previous_start,
                 ScrapeError.created_at < time_range.start,
+                ScrapeError.severity == "error",
             )
         )
     ).scalar_one()

@@ -224,7 +224,8 @@ export type ScrapeFailureCode =
   | "content_sanitization_empty_output"
   | "content_sanitization_invalid_changed"
   | "content_sanitization_unchanged_mismatch"
-  | "content_sanitization_numbers_changed";
+  | "content_sanitization_numbers_changed"
+  | "persistence_failed";
 
 export type ProxyScheme = "http" | "https" | "socks4" | "socks5";
 
@@ -374,7 +375,11 @@ export interface RecordOverview {
   /** Valori valorizzati raccolti da tutte le occorrenze, con provenienza. */
   customFieldGroups: CustomFieldGroup[];
   contentRevision: number;
+  textSanitizationStatus: TextSanitizationStatus;
+  textSanitizationWarningCode: string | null;
 }
+
+export type TextSanitizationStatus = "unchanged" | "changed" | "fallback";
 
 export type CustomFieldObject = Record<string, string>;
 export type CustomFieldValue = string | string[] | CustomFieldObject | CustomFieldObject[] | null;
@@ -408,6 +413,8 @@ export interface RecordOccurrence {
   lastChangedAt: string;
   hasUpdates: boolean;
   listingPageNumber: number | null;
+  textSanitizationStatus: TextSanitizationStatus;
+  textSanitizationWarningCode: string | null;
 }
 
 export interface RecordOccurrenceDetail extends RecordOccurrence {
@@ -577,6 +584,7 @@ export interface ScrapeError {
   url: string;
   errorMessage: string;
   errorCode: ScrapeFailureCode | null;
+  severity: "warning" | "error";
   createdAt: string;
 }
 
@@ -595,6 +603,7 @@ export interface ScrapeRun {
   itemsUpdated: number;
   itemsUnchanged: number;
   errorsCount: number;
+  warningsCount: number;
   pagesVisited: number;
   paginationMode: "none" | "href" | "click";
   paginationStopReason: string | null;

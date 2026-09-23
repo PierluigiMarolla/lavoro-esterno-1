@@ -48,6 +48,7 @@ def sanitize_existing_advertisements() -> dict:
     session = SyncSessionLocal()
     processed = failed = 0
     failures_by_reason: Counter[str] = Counter()
+    warnings_by_reason: Counter[str] = Counter()
     try:
         rows = session.execute(
             select(Advertisement, Source)
@@ -77,6 +78,8 @@ def sanitize_existing_advertisements() -> dict:
             advertisement.custom_fields = result.normalized.get("custom_fields") or {}
             advertisement.original_content_encrypted = result.original_encrypted
             advertisement.sanitization_metadata = result.metadata
+            if result.warning_code:
+                warnings_by_reason[result.warning_code] += 1
             if changed_fields:
                 advertisement.content_hash = advertisement_content_hash(result.normalized)
                 advertisement.last_changed_at = datetime.now(UTC)
@@ -109,6 +112,7 @@ def sanitize_existing_advertisements() -> dict:
                     "processed": processed,
                     "failed": failed,
                     "failures_by_reason": dict(failures_by_reason),
+                    "warnings_by_reason": dict(warnings_by_reason),
                 },
             )
         )
@@ -118,6 +122,7 @@ def sanitize_existing_advertisements() -> dict:
             "processed": processed,
             "failed": failed,
             "failures_by_reason": dict(failures_by_reason),
+            "warnings_by_reason": dict(warnings_by_reason),
         }
     finally:
         session.close()

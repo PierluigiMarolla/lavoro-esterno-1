@@ -436,3 +436,10 @@ un job amministrativo esplicito.
 durante l'ingestione. Nel database continua a essere salvata esclusivamente la
 forma E.164 cifrata e il relativo HMAC; nessun nuovo campo o backfill è
 necessario.
+## Warning di scraping e sanitizzazione
+
+`scrape_runs.warnings_count` conta gli avvisi non bloccanti separatamente da
+`errors_count`. `scrape_errors.severity` distingue `warning` ed `error`; le
+righe storiche sono considerate errori. Lo stato della pulizia Gemma resta in
+`advertisements.sanitization_metadata` con `status`, `changed`, modello,
+revisione e l'eventuale `warningCode`, senza salvare output rifiutati.

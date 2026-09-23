@@ -406,3 +406,11 @@ campi modificati, snapshot corrente e riferimento opzionale al run.
 
 I riepiloghi AI espongono `recordContentRevision` e `isStale`; la
 rigenerazione resta esplicita e asincrona.
+## Avvisi di sanitizzazione testuale
+
+I run di scraping espongono `warningsCount`; ogni elemento diagnostico espone
+`severity` (`warning` oppure `error`). Un fallback Gemma viene registrato come
+warning e non modifica lo stato completato del run. Overview e Occorrenze
+espongono `textSanitizationStatus` (`unchanged`, `changed`, `fallback`) e
+`textSanitizationWarningCode`. Il valore `fallback` indica che l'output del
+modello e stato scartato e che e stato conservato il testo originale.

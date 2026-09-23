@@ -13,6 +13,8 @@ export function useRecordSearch(filters: RecordSearchFilters) {
       filters.phone.replace(/\D/g, "").length >= 9 ||
       Boolean(filters.source || filters.status || filters.dateFrom || filters.dateTo),
     placeholderData: (previous) => previous,
+    refetchInterval: 3000,
+    refetchIntervalInBackground: false,
   });
 }
 

@@ -42,6 +42,7 @@ def enqueue_run_webhooks(session: Session, source, run, collection, outcome: dic
             "itemsUpdated": outcome.get("items_updated", 0),
             "itemsUnchanged": outcome.get("items_unchanged", 0),
             "errorsCount": run.errors_count,
+            "warningsCount": run.warnings_count,
             "pagesVisited": run.pages_visited,
             "paginationStopReason": run.pagination_stop_reason,
         },
@@ -49,6 +50,10 @@ def enqueue_run_webhooks(session: Session, source, run, collection, outcome: dic
         "errors": [
             {"code": error.code, "message": error.message[:500]}
             for error in outcome.get("errors", [])
+        ],
+        "warnings": [
+            {"code": warning.code, "message": warning.message[:500]}
+            for warning in outcome.get("warnings", [])
         ],
     }
     session.add(ScrapeRunPayload(scrape_run_id=run.id, payload_encrypted=encrypt_json(payload)))

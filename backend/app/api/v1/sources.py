@@ -989,6 +989,7 @@ async def get_source_runs(
                 url=err.url,
                 error_message=error_message,
                 error_code=error_code,
+                severity=err.severity,
                 created_at=err.created_at,
             )
         )
@@ -1004,6 +1005,7 @@ async def get_source_runs(
             items_updated=run.items_updated,
             items_unchanged=run.items_unchanged,
             errors_count=run.errors_count,
+            warnings_count=run.warnings_count,
             pages_visited=run.pages_visited,
             pagination_mode=run.pagination_mode,
             pagination_stop_reason=run.pagination_stop_reason,

@@ -465,3 +465,11 @@ sh scripts/vps/deploy.sh .env.production
 Il profilo aggiunge Caddy, azzera le porte pubbliche di nginx e limita
 MinIO/osservabilita al loopback. Dettagli su DNS, firewall, segreti, tunnel SSH,
 aggiornamento e rollback sono in `docs/DEPLOY_VPS.md`.
+## Sanitizzazione Gemma best-effort
+
+La sanitizzazione prova tre volte a ottenere un output strutturato valido. Se
+il modello non risponde o viola il contratto, l'intero output viene ignorato e
+la pipeline conserva il testo originale. Il fallback produce un warning, non
+degrada la fonte e non blocca persistenza, export o riepiloghi. Nei test va
+sempre verificato che il testo parziale o invalido del modello non raggiunga il
+database.

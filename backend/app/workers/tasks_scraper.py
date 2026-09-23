@@ -262,12 +262,31 @@ def run_scrape_source(self, source_id: str, run_id: str | None = None) -> dict:
                 published_ads = []
                 sanitization_errors = []
                 persistence_errors = []
+                persistence_warnings = []
                 aggregate = {
                     "items_new": 0,
                     "items_updated": 0,
                     "items_unchanged": 0,
+                    "warnings_count": 0,
                     "media_ids": [],
                 }
+
+                def store_live_error(error: ScrapeErrorDetail) -> None:
+                    """Expose per-ad failures without waiting for the run to finish."""
+                    from app.services.scrape_ingest import encode_scrape_error_message
+
+                    run.items_found += 1
+                    run.errors_count += 1
+                    session.add(
+                        ScrapeError(
+                            scrape_run_id=run.id,
+                            url=error.url,
+                            error_message=encode_scrape_error_message(error.code, error.message),
+                            severity=error.severity,
+                        )
+                    )
+                    session.commit()
+                    error.stored = True
 
                 def publish_pending_batch() -> None:
                     if not pending_batch:
@@ -279,10 +298,16 @@ def run_scrape_source(self, source_id: str, run_id: str | None = None) -> dict:
                         run.id,
                         batch_size=batch_size,
                     )
-                    for key in ("items_new", "items_updated", "items_unchanged"):
+                    for key in (
+                        "items_new",
+                        "items_updated",
+                        "items_unchanged",
+                        "warnings_count",
+                    ):
                         aggregate[key] += partial[key]
                     aggregate["media_ids"].extend(partial["media_ids"])
                     persistence_errors.extend(partial["errors"])
+                    persistence_warnings.extend(partial["warnings"])
                     pending_batch.clear()
 
                 def sanitize_and_stage(collected) -> bool:
@@ -291,17 +316,26 @@ def run_scrape_source(self, source_id: str, run_id: str | None = None) -> dict:
                             session, collected.normalized, source.scrape_config or {}
                         )
                     except ContentSanitizationError as exc:
-                        sanitization_errors.append(
-                            ScrapeErrorDetail(
-                                url=collected.normalized.get("source_url") or source.base_url,
-                                message=str(exc),
-                                code=exc.error_code,
-                            )
+                        error = ScrapeErrorDetail(
+                            url=collected.normalized.get("source_url") or source.base_url,
+                            message=str(exc),
+                            code=exc.error_code,
                         )
+                        sanitization_errors.append(error)
+                        store_live_error(error)
                         return False
                     collected.normalized = sanitized.normalized
                     collected.original_content_encrypted = sanitized.original_encrypted
                     collected.sanitization_metadata = sanitized.metadata
+                    if sanitized.warning_code and sanitized.warning_message:
+                        collected.warnings.append(
+                            ScrapeErrorDetail(
+                                url=collected.normalized.get("source_url") or source.base_url,
+                                message=sanitized.warning_message,
+                                code=sanitized.warning_code,
+                                severity="warning",
+                            )
+                        )
                     pending_batch.append(collected)
                     published_ads.append(collected)
                     if len(pending_batch) >= batch_size:
@@ -327,6 +361,8 @@ def run_scrape_source(self, source_id: str, run_id: str | None = None) -> dict:
                         "items_found": len(collection.ads) + len(collection.errors),
                         "errors": collection.errors,
                         "errors_count": len(collection.errors),
+                        "warnings": persistence_warnings,
+                        "warnings_count": len(persistence_warnings),
                         "pages_visited": 0,
                         "pagination_mode": None,
                         "pagination_stop_reason": "unexpected_error",
@@ -344,6 +380,8 @@ def run_scrape_source(self, source_id: str, run_id: str | None = None) -> dict:
                     "items_found": len(collection.ads) + len(all_errors),
                     "errors": all_errors,
                     "errors_count": len(all_errors),
+                    "warnings": persistence_warnings,
+                    "warnings_count": len(persistence_warnings),
                     "pages_visited": collection.discovery_diagnostics.pages_visited,
                     "pagination_mode": collection.discovery_diagnostics.pagination_mode,
                     "pagination_stop_reason": collection.discovery_diagnostics.stop_reason,
@@ -376,6 +414,7 @@ def run_scrape_source(self, source_id: str, run_id: str | None = None) -> dict:
                 run.items_updated = outcome["items_updated"]
                 run.items_unchanged = outcome["items_unchanged"]
                 run.errors_count = outcome["errors_count"]
+                run.warnings_count = outcome["warnings_count"]
                 run.pages_visited = outcome["pages_visited"]
                 run.pagination_mode = outcome["pagination_mode"]
                 run.pagination_stop_reason = outcome["pagination_stop_reason"]
@@ -423,11 +462,27 @@ def run_scrape_source(self, source_id: str, run_id: str | None = None) -> dict:
                 from app.services.scrape_ingest import encode_scrape_error_message
 
                 for error in outcome["errors"]:
+                    if error.stored:
+                        continue
                     session.add(
                         ScrapeError(
                             scrape_run_id=run.id,
                             url=error.url,
                             error_message=encode_scrape_error_message(error.code, error.message),
+                            severity=error.severity,
+                        )
+                    )
+                for warning in outcome["warnings"]:
+                    if warning.stored:
+                        continue
+                    session.add(
+                        ScrapeError(
+                            scrape_run_id=run.id,
+                            url=warning.url,
+                            error_message=encode_scrape_error_message(
+                                warning.code, warning.message
+                            ),
+                            severity="warning",
                         )
                     )
         except Exception as exc:  # keep every claimed run terminal and schedulable

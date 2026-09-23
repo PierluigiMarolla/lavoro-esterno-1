@@ -104,9 +104,14 @@ def test_scrape_run_read_serializes_camel_case_with_nested_errors() -> None:
         items_found=10,
         items_new=2,
         errors_count=1,
+        warnings_count=1,
         errors=[
             ScrapeErrorRead(
-                id=error_id, url="https://example.invalid", error_message="boom", created_at=now
+                id=error_id,
+                url="https://example.invalid",
+                error_message="warning",
+                severity="warning",
+                created_at=now,
             )
         ],
     )
@@ -114,7 +119,9 @@ def test_scrape_run_read_serializes_camel_case_with_nested_errors() -> None:
     assert dumped["itemsFound"] == 10
     assert dumped["itemsNew"] == 2
     assert dumped["errorsCount"] == 1
-    assert dumped["errors"][0]["errorMessage"] == "boom"
+    assert dumped["warningsCount"] == 1
+    assert dumped["errors"][0]["errorMessage"] == "warning"
+    assert dumped["errors"][0]["severity"] == "warning"
 
 
 def test_record_ai_summary_version_read_serializes_camel_case() -> None:

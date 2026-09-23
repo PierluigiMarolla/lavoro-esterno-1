@@ -36,6 +36,7 @@ import { COUNTRIES } from "@/lib/countries";
 import type {
   ScrapeConfig,
   ScrapeFetchMode,
+  ScrapeFailureCode,
   ScrapeFieldConfig,
   ScrapeFieldExtractionMode,
   ScrapeSelectorType,
@@ -143,6 +144,21 @@ const PAGINATION_STOP_DETAILS: Record<string, { label: string; suggestion?: stri
   },
 };
 
+const SCRAPE_ERROR_LABELS: Partial<Record<ScrapeFailureCode, string>> = {
+  content_sanitization_failed: "Pulizia del testo non riuscita",
+  content_sanitization_configuration: "Gemma non configurato",
+  content_sanitization_timeout: "Tempo di risposta di Gemma scaduto",
+  content_sanitization_unavailable: "Gemma non disponibile",
+  content_sanitization_http_error: "Errore di comunicazione con Gemma",
+  content_sanitization_invalid_response: "Risposta Gemma non valida",
+  content_sanitization_incomplete_response: "Risposta Gemma incompleta",
+  content_sanitization_empty_output: "Testo Gemma vuoto",
+  content_sanitization_invalid_changed: "Indicatore di modifica Gemma non valido",
+  content_sanitization_unchanged_mismatch: "Testo modificato ma dichiarato invariato",
+  content_sanitization_numbers_changed: "Dati numerici alterati da Gemma",
+  persistence_failed: "Salvataggio dell'annuncio non riuscito",
+};
+
 function paginationStopDetails(reason: string | null | undefined) {
   if (!reason) return null;
   return PAGINATION_STOP_DETAILS[reason] ?? { label: reason };
@@ -214,6 +230,9 @@ function SourceRunsPanel({ sourceId, colSpan }: { sourceId: string; colSpan: num
                     <span className={run.errorsCount > 0 ? "text-error" : undefined}>
                       Errori: {run.errorsCount}
                     </span>
+                    <span className={run.warningsCount > 0 ? "text-warning" : undefined}>
+                      Avvisi: {run.warningsCount}
+                    </span>
                   </div>
                 </div>
                 {stopDetails && (
@@ -235,15 +254,15 @@ function SourceRunsPanel({ sourceId, colSpan }: { sourceId: string; colSpan: num
                     Proxy stop: <span className="font-mono">{run.proxyStopReason}</span>
                   </p>
                 )}
-                {run.errorsCount > 0 && run.errors.length > 0 && (
+                {run.errors.length > 0 && (
                   <ul className="mt-2 space-y-1 border-t border-border pt-2">
                     {run.errors.map((err) => (
                       <li key={err.id} className="text-label-sm text-on-surface-variant">
-                        <span className="font-mono text-error">{truncate(err.url, 60)}</span>
+                        <span className={err.severity === "warning" ? "font-mono text-warning" : "font-mono text-error"}>{truncate(err.url, 60)}</span>
                         {" — "}
                         {err.errorCode && (
-                          <span className="mr-2 rounded bg-error/10 px-1.5 py-0.5 font-mono text-error">
-                            {err.errorCode}
+                          <span className={err.severity === "warning" ? "mr-2 rounded bg-warning/10 px-1.5 py-0.5 font-mono text-warning" : "mr-2 rounded bg-error/10 px-1.5 py-0.5 font-mono text-error"}>
+                            {SCRAPE_ERROR_LABELS[err.errorCode] ?? err.errorCode}
                           </span>
                         )}
                         <span>{truncate(err.errorMessage)}</span>

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -154,6 +154,8 @@ class RecordOverviewRead(CamelModel):
     custom_fields: dict[str, CustomFieldValue] = Field(default_factory=dict)
     custom_field_groups: list[CustomFieldGroupRead] = Field(default_factory=list)
     content_revision: int = 0
+    text_sanitization_status: Literal["unchanged", "changed", "fallback"] = "unchanged"
+    text_sanitization_warning_code: str | None = None
 
 
 class RecordOccurrenceRead(CamelModel):
@@ -173,6 +175,8 @@ class RecordOccurrenceRead(CamelModel):
     last_changed_at: datetime
     has_updates: bool = False
     listing_page_number: int | None = None
+    text_sanitization_status: Literal["unchanged", "changed", "fallback"] = "unchanged"
+    text_sanitization_warning_code: str | None = None
 
 
 class AdvertisementVersionRead(CamelModel):
@@ -224,6 +228,8 @@ class RecordOccurrenceDetailRead(CamelModel):
     last_changed_at: datetime
     custom_fields: dict[str, CustomFieldValue] = Field(default_factory=dict)
     media: list[RecordMediaRead] = Field(default_factory=list)
+    text_sanitization_status: Literal["unchanged", "changed", "fallback"] = "unchanged"
+    text_sanitization_warning_code: str | None = None
 
 
 class RecordHistoryEventRead(CamelModel):

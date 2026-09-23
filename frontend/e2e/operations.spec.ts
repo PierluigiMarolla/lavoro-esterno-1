@@ -13,12 +13,18 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("records lists all sources without an explicit filter", async ({ page }) => {
+  let recordRequests = 0;
   await page.route("**/api/v1/sources", (route) => route.fulfill({ json: [] }));
-  await page.route("**/api/v1/records/search?*", (route) => route.fulfill({ json: { results: [], total: 0, page: 1, pageSize: 25 } }));
+  await page.route("**/api/v1/records/search?*", (route) => {
+    recordRequests += 1;
+    return route.fulfill({ json: { results: [], total: 0, page: 1, pageSize: 25 } });
+  });
   await page.goto("/records");
   await expect(page.getByRole("heading", { name: "Record", exact: true })).toBeVisible();
   await expect(page.getByLabel("Fonte di origine")).toHaveValue("");
   await expect(page.getByText("Nessun record corrisponde ai filtri.")).toBeVisible();
+  await expect(page.getByText("Aggiornamento automatico ogni 3 secondi mentre questa pagina è aperta.")).toBeVisible();
+  await expect.poll(() => recordRequests, { timeout: 5000 }).toBeGreaterThan(1);
 });
 
 test("missing AI summary is an empty state rather than a query error", async ({ page }) => {
@@ -29,6 +35,37 @@ test("missing AI summary is an empty state rather than a query error", async ({ 
   await page.goto(`/records/${id}/ai-summary`);
   await expect(page.getByText("Nessun riepilogo AI disponibile per questo record.")).toBeVisible();
   await expect(page.getByRole("button", { name: /Genera riepilogo/ })).toBeVisible();
+});
+
+test("record overview marks text preserved after a Gemma fallback", async ({ page }) => {
+  const id = "639fd3fb-27d6-4389-9893-4b03b5b95e33";
+  await page.route(`**/api/v1/records/${id}`, (route) =>
+    route.fulfill({
+      json: {
+        id,
+        phone: "***",
+        phoneVisibility: "masked",
+        canonicalTitle: "Testo originale",
+        canonicalDescription: "Descrizione conservata",
+        confidenceScore: 100,
+        sourcesCount: 1,
+        occurrencesCount: 1,
+        firstSeenAt: "2026-01-01T00:00:00Z",
+        lastSeenAt: "2026-01-01T00:00:00Z",
+        status: "verified",
+        tags: [],
+        customFields: {},
+        customFieldGroups: [],
+        contentRevision: 1,
+        textSanitizationStatus: "fallback",
+        textSanitizationWarningCode: "content_sanitization_unchanged_mismatch",
+      },
+    }),
+  );
+
+  await page.goto(`/records/${id}`);
+
+  await expect(page.getByText("Testo originale non verificato")).toBeVisible();
 });
 
 test("account button opens the account page", async ({ page }) => {

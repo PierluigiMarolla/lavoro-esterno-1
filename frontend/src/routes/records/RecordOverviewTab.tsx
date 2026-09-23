@@ -55,6 +55,12 @@ export default function RecordOverviewTab() {
             </span>
           </div>
           <div className="p-6">
+            {record.textSanitizationStatus === "fallback" && (
+              <div className="mb-5 flex items-center gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-body-sm text-on-surface">
+                <Icon name="info" size={18} className="text-warning" />
+                <span>Testo originale non verificato</span>
+              </div>
+            )}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
               <div className="md:col-span-2">
                 <label className="text-label-sm text-on-surface-variant block mb-1">Titolo</label>

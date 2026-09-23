@@ -25,6 +25,13 @@ def test_scrape_error_code_round_trip_and_legacy_compatibility() -> None:
         "field_pagination_incomplete",
         "Paginazione incompleta per il campo 'reviews'.",
     )
+    persistence = encode_scrape_error_message(
+        "persistence_failed", "Salvataggio dell'annuncio non riuscito."
+    )
+    assert decode_scrape_error_message(persistence) == (
+        "persistence_failed",
+        "Salvataggio dell'annuncio non riuscito.",
+    )
 
 
 async def test_collect_ads_surfaces_empty_media_selector_and_keeps_ad(

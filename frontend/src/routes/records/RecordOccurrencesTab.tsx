@@ -32,6 +32,12 @@ function OccurrenceDetails({
         <div className="grid gap-4 md:grid-cols-2">
           <section className="rounded border border-border bg-surface-container-lowest p-4">
             <h4 className="font-semibold text-on-surface">{detail.data.title}</h4>
+            {detail.data.textSanitizationStatus === "fallback" && (
+              <div className="mt-2 inline-flex items-center gap-1 rounded border border-warning/40 bg-warning/10 px-2 py-1 text-label-sm text-on-surface">
+                <Icon name="info" size={15} className="text-warning" />
+                Testo originale non verificato
+              </div>
+            )}
             <p className="mt-2 whitespace-pre-wrap text-body-sm text-on-surface-variant">{detail.data.description || "Nessuna descrizione"}</p>
           </section>
           <section className="rounded border border-border bg-surface-container-lowest p-4 text-body-sm">
@@ -155,6 +161,11 @@ export default function RecordOccurrencesTab() {
                       {occ.hasUpdates && (
                         <span className="px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wider uppercase bg-info/10 text-info border border-info/30">
                           Aggiornata · r{occ.revision}
+                        </span>
+                      )}
+                      {occ.textSanitizationStatus === "fallback" && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase bg-warning/10 text-warning border border-warning/30">
+                          Testo non verificato
                         </span>
                       )}
                     </div>

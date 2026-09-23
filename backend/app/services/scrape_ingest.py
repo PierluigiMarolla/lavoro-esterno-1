@@ -55,7 +55,7 @@ from app.services.canonical import (
 )
 from app.services.dedup import content_sha256
 from app.services.media_processing import probe_video, validate_image
-from app.services.media_storage import sniff_mime_type, upload_media_object
+from app.services.media_storage import remove_object, sniff_mime_type, upload_media_object
 from app.services.phone_crypto import (
     PhoneCryptoError,
     encrypt_phone,
@@ -83,6 +83,7 @@ _SCRAPE_ERROR_CODES = {
     "content_sanitization_invalid_changed",
     "content_sanitization_unchanged_mismatch",
     "content_sanitization_numbers_changed",
+    "persistence_failed",
 }
 
 
@@ -143,6 +144,7 @@ class CollectedAd:
     listing_page_number: int | None = None
     original_content_encrypted: bytes | None = None
     sanitization_metadata: dict = field(default_factory=dict)
+    warnings: list[ScrapeErrorDetail] = field(default_factory=list)
     persistence_outcome: str = "pending"
 
 
@@ -151,6 +153,8 @@ class ScrapeErrorDetail:
     url: str
     message: str
     code: str | None = None
+    severity: str = "error"
+    stored: bool = False
 
 
 @dataclass
@@ -162,7 +166,11 @@ class CollectionResult:
 
     @property
     def errors_count(self) -> int:
-        return len(self.errors)
+        return sum(error.severity == "error" for error in self.errors)
+
+    @property
+    def warnings_count(self) -> int:
+        return sum(error.severity == "warning" for error in self.errors)
 
 
 async def collect_ads(
@@ -334,6 +342,7 @@ class MediaPersistResult:
     new_media_ids: list[uuid.UUID]
     current_hashes: list[str]
     complete: bool
+    new_object_keys: list[str]
 
 
 def _reconcile_media(
@@ -343,6 +352,7 @@ def _reconcile_media(
     media_bytes_list: list[bytes],
     *,
     download_complete: bool,
+    created_object_keys: list[str] | None = None,
 ) -> MediaPersistResult:
     """Reconcile current media while preserving immutable original objects."""
     now = datetime.now(UTC)
@@ -357,6 +367,7 @@ def _reconcile_media(
     incoming = {hashlib.sha256(data).hexdigest(): data for data in media_bytes_list}
     accepted_hashes: set[str] = set()
     new_ids: list[uuid.UUID] = []
+    new_object_keys: list[str] = []
     effective_complete = download_complete
 
     for sha256, data in incoming.items():
@@ -374,6 +385,9 @@ def _reconcile_media(
                 else probe_video(data, mime_type)
             )
             object_key = upload_media_object(record_id, data, mime_type)
+            new_object_keys.append(object_key)
+            if created_object_keys is not None:
+                created_object_keys.append(object_key)
         except Exception as exc:  # noqa: BLE001
             effective_complete = False
             logger.warning(
@@ -409,7 +423,12 @@ def _reconcile_media(
                 media.is_current = False
     else:
         accepted_hashes.update(media.sha256 for media in existing_media if media.is_current)
-    return MediaPersistResult(new_ids, sorted(accepted_hashes), effective_complete)
+    return MediaPersistResult(
+        new_ids,
+        sorted(accepted_hashes),
+        effective_complete,
+        new_object_keys,
+    )
 
 
 def _changed_fields(
@@ -510,153 +529,268 @@ def persist_collected_ads(
     telefono, upsert per URL, upload media, ricalcolo canonico). Nessuna
     richiesta di rete qui: solo operazioni DB (+ upload MinIO, anch'esso
     locale/interno alla rete Docker, non verso la fonte scrapata)."""
+    if batch_size < 1:
+        raise ValueError("batch_size deve essere almeno 1")
+
     items_new = 0
     items_updated = 0
     items_unchanged = 0
     persist_errors: list[ScrapeErrorDetail] = []
     media_ids: list[uuid.UUID] = []
-    pending_since_commit = 0
+    processed_since_commit = 0
+    initial_errors = [issue for issue in result.errors if issue.severity == "error"]
+    initial_warnings = [issue for issue in result.errors if issue.severity == "warning"]
+    pending_progress = {
+        "items_found": len(initial_errors),
+        "items_new": 0,
+        "items_updated": 0,
+        "items_unchanged": 0,
+        "errors_count": len(initial_errors),
+        "warnings_count": len(initial_warnings),
+    }
+    pending_issues = list(result.errors)
+
+    def commit_progress() -> None:
+        """Commit data and the corresponding live run counters together."""
+        if run_id is not None:
+            from app.models.scrape_errors import ScrapeError
+            from app.models.scrape_runs import ScrapeRun
+
+            run = session.get(ScrapeRun, run_id)
+            if run is not None:
+                for key, value in pending_progress.items():
+                    setattr(run, key, getattr(run, key) + value)
+                for error in pending_issues:
+                    session.add(
+                        ScrapeError(
+                            scrape_run_id=run.id,
+                            url=error.url,
+                            error_message=encode_scrape_error_message(error.code, error.message),
+                            severity=error.severity,
+                        )
+                    )
+        session.commit()
+        for error in pending_issues:
+            error.stored = True
+        for key in pending_progress:
+            pending_progress[key] = 0
+        pending_issues.clear()
 
     for item in result.ads:
-        phone_raw = item.normalized["phone_raw"]
         source_url = item.normalized.get("source_url") or source.base_url
+        created_object_keys: list[str] = []
+        item_media_ids: list[uuid.UUID] = []
+        item_outcome: str | None = None
+        item_error: ScrapeErrorDetail | None = None
+
         try:
-            # International numbers keep their own prefix; national numbers
-            # inherit the calling code selected on the source.
-            phone_normalized = normalize_phone(phone_raw, source.country_code)
-        except PhoneCryptoError as exc:
-            item.persistence_outcome = "rejected_invalid_phone"
-            persist_errors.append(
-                ScrapeErrorDetail(url=source_url, message=f"Telefono non valido: {exc}")
-            )
-            continue
+            # A savepoint prevents one malformed or conflicting advertisement
+            # from invalidating the other completed items in the same batch.
+            with session.begin_nested():
+                phone_raw = item.normalized["phone_raw"]
+                try:
+                    # International numbers keep their own prefix; national numbers
+                    # inherit the calling code selected on the source.
+                    phone_normalized = normalize_phone(phone_raw, source.country_code)
+                except PhoneCryptoError:
+                    item.persistence_outcome = "rejected_invalid_phone"
+                    item_error = ScrapeErrorDetail(
+                        url=source_url,
+                        message="Numero di telefono non valido; annuncio non pubblicato.",
+                    )
+                else:
+                    lookup_hash = phone_lookup_hash(phone_normalized)
+                    # A confirmed erasure request must not be undone by the
+                    # next run. The clear phone is never copied into the log.
+                    from app.models.privacy import SuppressionEntry
 
-        lookup_hash = phone_lookup_hash(phone_normalized)
-        # A completed/confirmed right-to-erasure request must not be undone by
-        # the next scraper run.  Store only the keyed HMAC and aggregate
-        # counters: the clear phone is never copied into the suppression log.
-        from app.models.privacy import SuppressionEntry
+                    suppression = session.execute(
+                        select(SuppressionEntry).where(
+                            SuppressionEntry.phone_lookup_hash == lookup_hash
+                        )
+                    ).scalar_one_or_none()
+                    if suppression is not None:
+                        item.persistence_outcome = "suppressed"
+                        suppression.blocked_ingestions += 1
+                        suppression.last_blocked_at = datetime.now(UTC)
+                        session.add(suppression)
+                    else:
+                        record = _get_or_create_record(session, lookup_hash, phone_normalized)
+                        now = datetime.now(UTC)
+                        advertisement = session.execute(
+                            select(Advertisement)
+                            .where(
+                                Advertisement.record_id == record.id,
+                                Advertisement.source_id == source.id,
+                                Advertisement.source_url == item.normalized["source_url"],
+                            )
+                            .with_for_update()
+                        ).scalar_one_or_none()
+                        is_new = advertisement is None
+                        new_content_hash = advertisement_content_hash(item.normalized)
+                        if advertisement is None:
+                            advertisement = Advertisement(
+                                record_id=record.id,
+                                source_id=source.id,
+                                source_url=item.normalized["source_url"],
+                                title=item.normalized.get("title"),
+                                description=item.normalized.get("description"),
+                                listing_page_number=item.listing_page_number,
+                                original_content_encrypted=item.original_content_encrypted,
+                                sanitization_metadata=item.sanitization_metadata,
+                                custom_fields=item.normalized.get("custom_fields") or {},
+                                content_hash=new_content_hash,
+                                confidence=1.0,
+                                status="active",
+                                revision=1,
+                                first_seen_at=now,
+                                last_seen_at=now,
+                                scraped_at=now,
+                                last_changed_at=now,
+                            )
+                            session.add(advertisement)
+                            session.flush()
 
-        suppression = session.execute(
-            select(SuppressionEntry).where(SuppressionEntry.phone_lookup_hash == lookup_hash)
-        ).scalar_one_or_none()
-        if suppression is not None:
-            item.persistence_outcome = "suppressed"
-            suppression.blocked_ingestions += 1
-            suppression.last_blocked_at = datetime.now(UTC)
-            session.add(suppression)
-            pending_since_commit += 1
-            if pending_since_commit >= batch_size:
-                session.commit()
-                pending_since_commit = 0
-            continue
-        record = _get_or_create_record(session, lookup_hash, phone_normalized)
+                        previous_hashes = (
+                            session.execute(
+                                select(Media.sha256).where(
+                                    Media.advertisement_id == advertisement.id,
+                                    Media.is_current.is_(True),
+                                )
+                            )
+                            .scalars()
+                            .all()
+                        )
+                        previous_media_hash = advertisement.media_set_hash or media_set_hash(
+                            previous_hashes
+                        )
+                        media_result = _reconcile_media(
+                            session,
+                            record.id,
+                            advertisement,
+                            item.media_bytes,
+                            download_complete=item.media_download_complete,
+                            created_object_keys=created_object_keys,
+                        )
+                        item_media_ids.extend(media_result.new_media_ids)
+                        new_media_hash = media_set_hash(media_result.current_hashes)
 
-        now = datetime.now(UTC)
-        advertisement = session.execute(
-            select(Advertisement)
-            .where(
-                Advertisement.record_id == record.id,
-                Advertisement.source_id == source.id,
-                Advertisement.source_url == item.normalized["source_url"],
+                        if is_new:
+                            advertisement.media_set_hash = new_media_hash
+                            record.content_revision += 1
+                            _save_version(
+                                session,
+                                advertisement,
+                                run_id,
+                                ["initial"],
+                                media_result.current_hashes,
+                            )
+                            recompute_canonical(session, record)
+                            item_outcome = "created"
+                        else:
+                            resolved_page_number = advertisement.listing_page_number
+                            if item.listing_page_number is not None:
+                                resolved_page_number = (
+                                    item.listing_page_number
+                                    if resolved_page_number is None
+                                    else min(resolved_page_number, item.listing_page_number)
+                                )
+                            changed = _changed_fields(
+                                advertisement,
+                                item.normalized,
+                                new_media_hash != previous_media_hash,
+                            )
+                            if advertisement.listing_page_number != resolved_page_number:
+                                changed.append("listingPageNumber")
+                            advertisement.last_seen_at = now
+                            # Sanitization diagnostics are operational metadata,
+                            # not a material content revision. Refresh them even
+                            # when the scraped text itself is unchanged.
+                            advertisement.original_content_encrypted = (
+                                item.original_content_encrypted
+                            )
+                            advertisement.sanitization_metadata = item.sanitization_metadata
+                            if not changed:
+                                item_outcome = "unchanged"
+                            else:
+                                advertisement.title = item.normalized.get("title")
+                                advertisement.description = item.normalized.get("description")
+                                advertisement.listing_page_number = resolved_page_number
+                                advertisement.custom_fields = (
+                                    item.normalized.get("custom_fields") or {}
+                                )
+                                advertisement.content_hash = new_content_hash
+                                advertisement.media_set_hash = new_media_hash
+                                advertisement.scraped_at = now
+                                advertisement.last_changed_at = now
+                                advertisement.revision += 1
+                                record.content_revision += 1
+                                _save_version(
+                                    session,
+                                    advertisement,
+                                    run_id,
+                                    changed,
+                                    media_result.current_hashes,
+                                )
+                                recompute_canonical(session, record)
+                                item_outcome = "updated"
+                        item.persistence_outcome = item_outcome
+                # Force deferred ORM work inside the savepoint so constraint
+                # failures can be attributed to this item and safely skipped.
+                session.flush()
+        except Exception as exc:  # noqa: BLE001 - isolation boundary per item
+            logger.error(
+                "Persistenza annuncio non riuscita per la fonte '%s' (%s).",
+                source.slug,
+                type(exc).__name__,
             )
-            .with_for_update()
-        ).scalar_one_or_none()
-        is_new = advertisement is None
-        new_content_hash = advertisement_content_hash(item.normalized)
-        if advertisement is None:
-            advertisement = Advertisement(
-                record_id=record.id,
-                source_id=source.id,
-                source_url=item.normalized["source_url"],
-                title=item.normalized.get("title"),
-                description=item.normalized.get("description"),
-                listing_page_number=item.listing_page_number,
-                original_content_encrypted=item.original_content_encrypted,
-                sanitization_metadata=item.sanitization_metadata,
-                custom_fields=item.normalized.get("custom_fields") or {},
-                content_hash=new_content_hash,
-                confidence=1.0,
-                status="active",
-                revision=1,
-                first_seen_at=now,
-                last_seen_at=now,
-                scraped_at=now,
-                last_changed_at=now,
+            for object_key in created_object_keys:
+                try:
+                    remove_object(object_key)
+                except Exception as cleanup_exc:  # noqa: BLE001 - orphan cleanup is best effort
+                    logger.warning(
+                        "Pulizia oggetto media non riuscita dopo rollback (%s).",
+                        type(cleanup_exc).__name__,
+                    )
+            item.persistence_outcome = "persistence_failed"
+            item_error = ScrapeErrorDetail(
+                url=source_url,
+                message="Salvataggio dell'annuncio non riuscito; elaborazione proseguita.",
+                code="persistence_failed",
             )
-            session.add(advertisement)
-            session.flush()
+            item_media_ids.clear()
+
+        if item_outcome == "created":
             items_new += 1
-            item.persistence_outcome = "created"
+            pending_progress["items_new"] += 1
+        elif item_outcome == "updated":
+            items_updated += 1
+            pending_progress["items_updated"] += 1
+        elif item_outcome == "unchanged":
+            items_unchanged += 1
+            pending_progress["items_unchanged"] += 1
+        media_ids.extend(item_media_ids)
+        if item_error is not None:
+            persist_errors.append(item_error)
+            pending_issues.append(item_error)
+            pending_progress["errors_count"] += 1
+        if item_outcome in {"created", "updated", "unchanged"}:
+            pending_issues.extend(item.warnings)
+            pending_progress["warnings_count"] += len(item.warnings)
+        pending_progress["items_found"] += 1
+        processed_since_commit += 1
 
-        previous_hashes = (
-            session.execute(
-                select(Media.sha256).where(
-                    Media.advertisement_id == advertisement.id, Media.is_current.is_(True)
-                )
-            )
-            .scalars()
-            .all()
-        )
-        previous_media_hash = advertisement.media_set_hash or media_set_hash(previous_hashes)
-        media_result = _reconcile_media(
-            session,
-            record.id,
-            advertisement,
-            item.media_bytes,
-            download_complete=item.media_download_complete,
-        )
-        media_ids.extend(media_result.new_media_ids)
-        new_media_hash = media_set_hash(media_result.current_hashes)
+        if processed_since_commit >= batch_size:
+            commit_progress()
+            processed_since_commit = 0
 
-        if is_new:
-            advertisement.media_set_hash = new_media_hash
-            record.content_revision += 1
-            _save_version(session, advertisement, run_id, ["initial"], media_result.current_hashes)
-            recompute_canonical(session, record)
-        else:
-            resolved_page_number = advertisement.listing_page_number
-            if item.listing_page_number is not None:
-                resolved_page_number = (
-                    item.listing_page_number
-                    if resolved_page_number is None
-                    else min(resolved_page_number, item.listing_page_number)
-                )
-            changed = _changed_fields(
-                advertisement, item.normalized, new_media_hash != previous_media_hash
-            )
-            if advertisement.listing_page_number != resolved_page_number:
-                changed.append("listingPageNumber")
-            advertisement.last_seen_at = now
-            if not changed:
-                items_unchanged += 1
-                item.persistence_outcome = "unchanged"
-            else:
-                advertisement.title = item.normalized.get("title")
-                advertisement.description = item.normalized.get("description")
-                advertisement.listing_page_number = resolved_page_number
-                advertisement.original_content_encrypted = item.original_content_encrypted
-                advertisement.sanitization_metadata = item.sanitization_metadata
-                advertisement.custom_fields = item.normalized.get("custom_fields") or {}
-                advertisement.content_hash = new_content_hash
-                advertisement.media_set_hash = new_media_hash
-                advertisement.scraped_at = now
-                advertisement.last_changed_at = now
-                advertisement.revision += 1
-                record.content_revision += 1
-                items_updated += 1
-                item.persistence_outcome = "updated"
-                _save_version(session, advertisement, run_id, changed, media_result.current_hashes)
-                recompute_canonical(session, record)
-        pending_since_commit += 1
-        if pending_since_commit >= batch_size:
-            session.commit()
-            pending_since_commit = 0
+    if processed_since_commit or pending_issues:
+        commit_progress()
 
-    if pending_since_commit:
-        session.commit()
-
-    all_errors = result.errors + persist_errors
+    item_warnings = [warning for item in result.ads for warning in item.warnings]
+    all_issues = result.errors + persist_errors + item_warnings
+    all_errors = [issue for issue in all_issues if issue.severity == "error"]
+    all_warnings = [issue for issue in all_issues if issue.severity == "warning"]
     return {
         "items_found": len(result.ads) + result.errors_count,
         "items_new": items_new,
@@ -664,6 +798,8 @@ def persist_collected_ads(
         "items_unchanged": items_unchanged,
         "errors": all_errors,
         "errors_count": len(all_errors),
+        "warnings": all_warnings,
+        "warnings_count": len(all_warnings),
         "media_ids": [str(media_id) for media_id in media_ids],
         "pages_visited": result.discovery_diagnostics.pages_visited,
         "pagination_mode": result.discovery_diagnostics.pagination_mode,

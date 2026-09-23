@@ -111,6 +111,9 @@ export default function SearchPage() {
           <p className="text-body-md text-on-surface-variant mt-1">
             Consulta e filtra i record raccolti da tutte le fonti sincronizzate.
           </p>
+          <p className="mt-1 text-label-sm text-on-surface-variant">
+            Aggiornamento automatico ogni 3 secondi mentre questa pagina è aperta.
+          </p>
         </div>
         <div className="max-w-3xl">
           <Input

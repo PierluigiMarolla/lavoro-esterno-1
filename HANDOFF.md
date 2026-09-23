@@ -2248,3 +2248,62 @@ Trivy sono puliti.
 - La migrazione `20260923120000_source_archiving.py` aggiunge `archived_at` e
   `archived_by_user_id`. Dopo l'aggiornamento eseguire `alembic upgrade head`;
   il migrator Compose lo esegue automaticamente all'avvio.
+
+# Aggiornamento 2026-09-23 - persistenza incrementale dei record
+
+- L'impostazione di ingestione e ora presentata come **Annunci per commit**.
+  Con valore `1`, ogni annuncio viene estratto e completato (media inclusi),
+  quindi salvato e committato prima che il worker passi all'annuncio seguente.
+- Ogni annuncio usa un savepoint indipendente. Un errore di persistenza viene
+  registrato come `persistence_failed`, l'annuncio viene annullato e il run
+  continua senza perdere i commit precedenti.
+- I contatori del run vengono aggiornati nello stesso commit dei record, quindi
+  lo storico Fonti mostra nuovi, aggiornati, invariati ed errori durante lo scan.
+- Gli oggetti MinIO appena caricati vengono rimossi con strategia best effort se
+  la transazione relativa all'annuncio fallisce; il cleanup notturno degli
+  orfani rimane la protezione finale.
+- La pagina Record ricarica i risultati ogni tre secondi mentre e visibile e
+  conserva i dati precedenti durante la richiesta, evitando tabelle vuote o
+  lampeggiamenti.
+- Il valore regola la frequenza dei commit e non la deduplicazione: numeri gia
+  conosciuti continuano ad aggiornare il Record o l'occorrenza esistente.
+- Il deployment del 23 settembre e stato eseguito in modalita rolling per non
+  interrompere due scan lunghi gia in corso: `worker-scraper-1` completa solo i
+  task acquisiti e non consuma piu la coda `scraping`; `worker-scraper-2` usa
+  l'immagine aggiornata e riceve tutti i nuovi scan. Quando il primo worker non
+  mostra piu task attivi, puo essere consolidato con una normale ricreazione del
+  solo servizio `worker-scraper`.
+
+# Aggiornamento 2026-09-23 - sanitizzazione Gemma best-effort
+
+- Gemma non blocca piu l'acquisizione: dopo tre tentativi falliti o un output
+  incoerente, il risultato del modello viene scartato integralmente e viene
+  salvato il testo originale.
+- I fallback sono warning non degradanti, separati dagli errori tramite
+  `scrape_runs.warnings_count` e `scrape_errors.severity`.
+- `sanitization_metadata.status` distingue `unchanged`, `changed` e `fallback`;
+  Overview e Occorrenze mostrano il badge "Testo originale non verificato".
+- La migrazione `20260923150000_sanitization_warnings.py` aggiunge soltanto i
+  campi diagnostici e classifica le righe storiche come errori.
+- Il comando seguente esegue una diagnosi non distruttiva dei run segnati come
+  `running` ma assenti da task attivi, riservati o pianificati in Celery:
+
+  ```powershell
+  docker compose exec api python -m app.scripts.recover_orphaned_scrape_runs
+  ```
+
+  Dopo aver verificato gli ID elencati, la riparazione deve essere richiesta
+  esplicitamente con `--repair` e, preferibilmente, uno o più `--run-id`.
+  Il comando rifiuta di procedere se non raggiunge alcun worker.
+- Il 23 settembre i due run rimasti orfani durante lo spegnimento dello stack
+  sono stati chiusi con questa procedura; dopo la verifica non risultavano più
+  run orfani. Il deployment è ora consolidato sul solo `worker-scraper-2`.
+- Verifiche completate: migrazione alla head `20260923150000`, 319 test backend,
+  lint e build frontend, controllo i18n, Playwright mirato e `git diff --check`.
+- La verifica live con `gemma4:e2b` ha prodotto
+  `content_sanitization_unchanged_mismatch`: il risultato finale era
+  `status=fallback`, `changed=[]` e il confronto ha confermato che l'originale
+  era stato preservato. Il successivo scan reale di Agrigento ha registrato 16
+  fallback come warning (13 mismatch, 2 numeri alterati, 1 risposta incompleta)
+  e 20 errori separati relativi esclusivamente a telefoni assenti/non validi.
+  Il run e quindi fallito per l'assenza di numeri pubblicabili, non per Gemma.

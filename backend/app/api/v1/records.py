@@ -423,6 +423,16 @@ async def get_record_overview(
         custom_fields=custom_fields,
         custom_field_groups=custom_field_groups,
         content_revision=record.content_revision,
+        text_sanitization_status=(
+            (canonical_ad.sanitization_metadata or {}).get("status", "unchanged")
+            if canonical_ad
+            else "unchanged"
+        ),
+        text_sanitization_warning_code=(
+            (canonical_ad.sanitization_metadata or {}).get("warningCode")
+            if canonical_ad
+            else None
+        ),
     )
 
 
@@ -459,6 +469,12 @@ async def get_record_occurrences(
             last_changed_at=ad.last_changed_at,
             has_updates=ad.revision > 1,
             listing_page_number=ad.listing_page_number,
+            text_sanitization_status=(ad.sanitization_metadata or {}).get(
+                "status", "unchanged"
+            ),
+            text_sanitization_warning_code=(ad.sanitization_metadata or {}).get(
+                "warningCode"
+            ),
         )
         for ad, source_name, source_slug in rows
     ]
@@ -645,6 +661,12 @@ async def get_occurrence_detail(
         last_changed_at=advertisement.last_changed_at,
         custom_fields=advertisement.custom_fields or {},
         media=media,
+        text_sanitization_status=(advertisement.sanitization_metadata or {}).get(
+            "status", "unchanged"
+        ),
+        text_sanitization_warning_code=(advertisement.sanitization_metadata or {}).get(
+            "warningCode"
+        ),
     )
 
 

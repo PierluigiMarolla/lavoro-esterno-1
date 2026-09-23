@@ -1,4 +1,4 @@
-"""Fail-closed text moderation and faithful rewriting through local Gemma."""
+"""Sanitizzazione testuale best-effort e riscrittura fedele tramite Gemma locale."""
 
 from __future__ import annotations
 
@@ -94,6 +94,31 @@ class SanitizedContent:
     normalized: dict[str, Any]
     original_encrypted: bytes
     metadata: dict[str, Any]
+    warning_code: str | None = None
+    warning_message: str | None = None
+
+
+def _fallback_result(
+    normalized: dict[str, Any],
+    original: dict[str, Any],
+    error: ContentSanitizationError,
+    provider: AIProviderConfig | None = None,
+) -> SanitizedContent:
+    """Ignore every untrusted model result and preserve the scraped text."""
+    metadata: dict[str, Any] = {
+        "status": "fallback",
+        "changed": [],
+        "warningCode": error.error_code,
+    }
+    if provider is not None:
+        metadata.update({"model": provider.model_name, "revision": provider.revision})
+    return SanitizedContent(
+        copy.deepcopy(normalized),
+        encrypt_json(original),
+        metadata,
+        warning_code=error.error_code,
+        warning_message=str(error),
+    )
 
 
 def _selected_paths(normalized: dict[str, Any], scrape_config: dict[str, Any]) -> dict[str, str]:
@@ -137,13 +162,24 @@ def sanitize_normalized(
     fields = _selected_paths(normalized, scrape_config)
     original = {"fields": fields}
     if not fields:
-        return SanitizedContent(copy.deepcopy(normalized), encrypt_json(original), {"changed": []})
+        return SanitizedContent(
+            copy.deepcopy(normalized),
+            encrypt_json(original),
+            {"status": "unchanged", "changed": []},
+        )
     provider = session.execute(
         select(AIProviderConfig).where(AIProviderConfig.provider == "ollama")
     ).scalar_one_or_none()
     if provider is None or not provider.enabled or "gemma" not in provider.model_name.lower():
-        raise ContentSanitizationError("configuration")
-    config = runtime_config(provider)
+        return _fallback_result(
+            normalized, original, ContentSanitizationError("configuration"), provider
+        )
+    try:
+        config = runtime_config(provider)
+    except Exception:  # noqa: BLE001 - configuration details must stay private
+        return _fallback_result(
+            normalized, original, ContentSanitizationError("configuration"), provider
+        )
     field_schema = {
         "type": "object",
         "properties": {
@@ -175,7 +211,6 @@ def sanitize_normalized(
             },
         ],
     }
-    last_error: Exception | None = None
     last_reason = "unexpected"
     last_http_status: int | None = None
     for _attempt in range(3):
@@ -219,22 +254,25 @@ def sanitize_normalized(
             return SanitizedContent(
                 cleaned,
                 encrypt_json(original),
-                {"changed": changed, "model": config.model, "revision": provider.revision},
+                {
+                    "status": "changed" if changed else "unchanged",
+                    "changed": changed,
+                    "model": config.model,
+                    "revision": provider.revision,
+                },
             )
         except _ResponseValidationError as exc:
             last_reason = exc.reason
-            last_error = exc
-        except httpx.TimeoutException as exc:
+        except httpx.TimeoutException:
             last_reason = "timeout"
-            last_error = exc
         except httpx.HTTPStatusError as exc:
             last_reason = "http_error"
             last_http_status = exc.response.status_code
-            last_error = exc
-        except httpx.RequestError as exc:
+        except httpx.RequestError:
             last_reason = "unavailable"
-            last_error = exc
-        except Exception as exc:
+        except Exception:
             last_reason = "invalid_response"
-            last_error = exc
-    raise ContentSanitizationError(last_reason, http_status=last_http_status) from last_error
+    # Gemma is deliberately best-effort: a malformed or unavailable model
+    # must never prevent ingestion. Its output is discarded in full.
+    error = ContentSanitizationError(last_reason, http_status=last_http_status)
+    return _fallback_result(normalized, original, error, provider)
