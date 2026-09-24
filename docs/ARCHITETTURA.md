@@ -172,7 +172,8 @@ verificato dal vivo, è più preciso su questi punti (vedi PROGETTO.md § 4):
   (lo scraping è I/O-bound e sensibile al rate limiting delle fonti, la
   classificazione media è CPU/GPU-bound, l'AI è sensibile a costi/rate
   limit del provider LLM).
-- **`ollama` / `ollama-init`**: runtime LLM interno e inizializzazione
+- **`ollama` / `ollama-init`**: runtime LLM interno (limitato dal Compose a
+  un massimo di 8 CPU) e inizializzazione
   idempotente di `gemma4:e2b`. Il modello vive nel volume `ollama-data`, la
   porta 11434 non è pubblicata sull'host e `worker-ai` usa concorrenza 1.
 - **`scheduler`**: Celery Beat invoca ogni minuto un dispatcher DB-backed.

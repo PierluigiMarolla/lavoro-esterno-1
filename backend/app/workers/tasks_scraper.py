@@ -240,8 +240,6 @@ def run_scrape_source(self, source_id: str, run_id: str | None = None) -> dict:
         collection = None
         webhook_delivery_ids: list[str] = []
         try:
-            if not source.enabled:
-                raise RuntimeError("source_disabled")
             if not source.scrape_config:
                 raise RuntimeError("configuration_missing")
             try:
@@ -270,6 +268,18 @@ def run_scrape_source(self, source_id: str, run_id: str | None = None) -> dict:
                     "warnings_count": 0,
                     "media_ids": [],
                 }
+
+                def source_should_stop() -> bool:
+                    """Rilegge lo stato persistito, senza usare l'istanza ORM in cache."""
+
+                    state = session.execute(
+                        select(Source.enabled, Source.archived_at).where(Source.id == source.id)
+                    ).one_or_none()
+                    return (
+                        state is None
+                        or not state.enabled
+                        or state.archived_at is not None
+                    )
 
                 def store_live_error(error: ScrapeErrorDetail) -> None:
                     """Expose per-ad failures without waiting for the run to finish."""
@@ -344,7 +354,12 @@ def run_scrape_source(self, source_id: str, run_id: str | None = None) -> dict:
 
                 try:
                     collection = asyncio.run(
-                        collect_ads(source, proxy_candidates, on_ad=sanitize_and_stage)
+                        collect_ads(
+                            source,
+                            proxy_candidates,
+                            on_ad=sanitize_and_stage,
+                            should_stop=source_should_stop,
+                        )
                     )
                     # A run with fewer ads than the configured threshold still
                     # publishes its final partial batch.
@@ -386,6 +401,7 @@ def run_scrape_source(self, source_id: str, run_id: str | None = None) -> dict:
                     "pagination_mode": collection.discovery_diagnostics.pagination_mode,
                     "pagination_stop_reason": collection.discovery_diagnostics.stop_reason,
                     "proxy_events": collection.proxy_events,
+                    "cancelled": collection.cancelled,
                 }
             except ProxyPoolUnavailableError:
                 run.status = "failed"
@@ -450,7 +466,9 @@ def run_scrape_source(self, source_id: str, run_id: str | None = None) -> dict:
                         dedup_key=f"proxy_pool_exhausted:{run.id}",
                     )
                 run.status = (
-                    "failed"
+                    "completed"
+                    if outcome.get("cancelled")
+                    else "failed"
                     if (
                         outcome["items_new"] == 0
                         and outcome["items_updated"] == 0

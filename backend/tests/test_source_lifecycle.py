@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -10,7 +11,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app import main
-from app.api.v1.sources import duplicate_source, enable_source
+from app.api.v1.sources import duplicate_source, enable_source, pause_source
 from app.api.v1.sources import test_source_config as execute_test_source_config
 from app.db import get_db
 from app.models.audit_log import AuditLog
@@ -189,6 +190,25 @@ async def test_enable_source_is_idempotent_when_already_enabled() -> None:
     assert source.status == "degraded"
     assert db.commits == 0
     assert db.added == []
+
+
+@pytest.mark.asyncio
+async def test_pause_source_persists_stop_signal_and_clears_schedule() -> None:
+    source = _source(enabled=True, status="healthy")
+    source.next_scrape_at = datetime.now(UTC)
+    db = _FakeSession(source)
+
+    await pause_source(
+        source.id,
+        db=db,  # type: ignore[arg-type]
+        user=SimpleNamespace(id=uuid.uuid4()),  # type: ignore[arg-type]
+    )
+
+    assert source.enabled is False
+    assert source.next_scrape_at is None
+    assert source.last_schedule_skip_reason == "source_disabled"
+    assert db.commits == 1
+    assert any(isinstance(item, AuditLog) and item.action == "pause_source" for item in db.added)
 
 
 @pytest.mark.asyncio

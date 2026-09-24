@@ -2327,3 +2327,18 @@ Trivy sono puliti.
   e prova HTML, CSS, JavaScript e font attraverso entrambi gli ingressi.
 - Il deployment richiede la ricostruzione di frontend e Caddy, senza migrazioni
   DB e senza rimozione di volumi: `sh scripts/vps/deploy.sh .env.production`.
+
+# Aggiornamento 2026-09-24 - limite Ollama e pausa effettiva degli scan
+
+- Il servizio `ollama` ha ora `cpus: 8.0`: Docker limita l'intero container a
+  otto core anche sugli host che ne espongono di piu.
+- La pausa di una fonte non agisce piu soltanto sulle pianificazioni future.
+  Il worker rilegge `enabled` e `archived_at` durante discovery, paginazione,
+  acquisizione annunci e download media e interrompe cooperativamente il run.
+- I batch gia committati restano validi; l'eventuale batch parziale completato
+  viene pubblicato, il run termina `completed` con
+  `pagination_stop_reason=source_paused` e non produce una notifica di errore.
+- Nessuna migrazione e necessaria. Verifiche: Compose risolve il limite a 8
+  CPU, Ruff pulito, suite backend completa `320 passed`, successivi 60 test
+  mirati scraper/pausa/lifecycle superati e Playwright sul click Pausa
+  `1 passed`. Lint e build CSP del frontend sono riusciti.

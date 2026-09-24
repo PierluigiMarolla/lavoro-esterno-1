@@ -34,6 +34,7 @@ import re
 import socket
 import time
 import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urldefrag, urljoin, urlparse
@@ -110,6 +111,10 @@ class BrowserPaginationError(Exception):
         self.safe_message = safe_message
 
 
+class ScrapeCancelledError(Exception):
+    """Arresto cooperativo richiesto mentre lo scraper e in esecuzione."""
+
+
 @dataclass
 class DiscoveryDiagnostics:
     pages_visited: int = 0
@@ -177,11 +182,24 @@ class GenericScraper(Scraper):
         self.discovery_diagnostics = DiscoveryDiagnostics()
         self.field_pagination_diagnostics: dict[str, FieldPaginationDiagnostic] = {}
         self.field_pagination_warnings: list[str] = []
+        self.should_stop: Callable[[], bool] | None = None
         # URL assoluto -> pagina di listing piu bassa in cui e stato visto.
         self.discovered_page_numbers: dict[str, int] = {}
 
     def _config_value(self, snake_case_key: str, camel_case_key: str, default: Any = None) -> Any:
         return self.config.get(snake_case_key, self.config.get(camel_case_key, default))
+
+    def _raise_if_cancelled(self) -> None:
+        """Interrompe il lavoro ai confini sicuri tra richieste/pagine.
+
+        Il callback viene fornito dall'orchestratore Celery e rilegge lo stato
+        persistito della fonte. Lo scraper resta riutilizzabile senza database
+        quando il callback non e configurato.
+        """
+
+        if self.should_stop is not None and self.should_stop():
+            self.discovery_diagnostics.stop_reason = "source_paused"
+            raise ScrapeCancelledError("source_paused")
 
     def _ensure_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -282,6 +300,7 @@ class GenericScraper(Scraper):
 
     async def _fetch_page(self, url: str) -> Any:
         """Fetch unico per pagine HTML: robots.txt + rate limit + Scrapling."""
+        self._raise_if_cancelled()
         await self._ensure_robots_loaded()
         from app.services.robots_check import is_allowed
 
@@ -289,6 +308,7 @@ class GenericScraper(Scraper):
             raise RobotsDisallowedError(url)
 
         await asyncio.sleep(self.rate_limit_seconds)
+        self._raise_if_cancelled()
 
         async def fetch() -> Any:
             try:
@@ -734,9 +754,11 @@ class GenericScraper(Scraper):
         urls: list[str] = []
         seen_urls: set[str] = set()
         for start_url in self._config_value("start_urls", "startUrls"):
+            self._raise_if_cancelled()
             page_url = start_url
             visited_pages: set[str] = set()
             for page_index in range(max_pages):
+                self._raise_if_cancelled()
                 if page_url in visited_pages:
                     self.discovery_diagnostics.stop_reason = "repeated_page"
                     self.discovery_diagnostics.errors.append(
@@ -813,6 +835,7 @@ class GenericScraper(Scraper):
         stop_all = False
 
         for start_url in self._config_value("start_urls", "startUrls"):
+            self._raise_if_cancelled()
             if stop_all:
                 break
             if not is_allowed(self._robots_txt, start_url, self.user_agent):
@@ -828,6 +851,7 @@ class GenericScraper(Scraper):
             ) -> None:
                 nonlocal stop_all
                 for page_index in range(max_pages):
+                    self._raise_if_cancelled()
                     current_url, absolute_hrefs, container_hash = (
                         await self._browser_listing_state(
                             browser_page, ad_link_selector, ad_link_selector_type
@@ -960,6 +984,7 @@ class GenericScraper(Scraper):
                     page_changed = False
                     navigation_started = False
                     while time.monotonic() < deadline:
+                        self._raise_if_cancelled()
                         try:
                             popup = next(
                                 (
@@ -1052,6 +1077,7 @@ class GenericScraper(Scraper):
         return urls
 
     async def _fetch_browser_for_discovery(self, url: str, page_action: Any) -> None:
+        self._raise_if_cancelled()
         kwargs = self._browser_request_kwargs()
         kwargs["page_action"] = page_action
         session = await self._ensure_browser_session()
@@ -1059,6 +1085,7 @@ class GenericScraper(Scraper):
         self._raise_for_status(response, url)
 
     async def scrape_ad(self, url: str) -> dict[str, Any]:
+        self._raise_if_cancelled()
         page = await self._fetch_page(url)
 
         raw: dict[str, Any] = {"source_url": url}
@@ -1185,6 +1212,7 @@ class GenericScraper(Scraper):
                 return self._extract_field(document, spec)
 
             try:
+                self._raise_if_cancelled()
                 current_value = await extract_current()
                 aggregate, reached = self._merge_paginated_value(
                     aggregate, current_value, extraction_mode, max_items
@@ -1198,6 +1226,7 @@ class GenericScraper(Scraper):
                     return
 
                 for _page_index in range(1, max_pages):
+                    self._raise_if_cancelled()
                     controls = browser_page.locator(
                         self._browser_selector(next_selector, next_selector_type)
                     )
@@ -1226,6 +1255,7 @@ class GenericScraper(Scraper):
                     before_state = state
                     href = equivalent_next_url or await control.get_attribute("href")
                     await asyncio.sleep(self.rate_limit_seconds)
+                    self._raise_if_cancelled()
                     if href:
                         next_url = urldefrag(urljoin(before_url, href)).url
                         diagnostic.pagination_mode = "href"
@@ -1246,6 +1276,7 @@ class GenericScraper(Scraper):
                         await control.evaluate("(element) => element.click()")
                         deadline = time.monotonic() + (_PAGINATION_CHANGE_TIMEOUT_MS / 1000)
                         while True:
+                            self._raise_if_cancelled()
                             current_value = await extract_current()
                             state = self._value_fingerprint(current_value)
                             if str(browser_page.url) != before_url or state != before_state:
@@ -1270,6 +1301,8 @@ class GenericScraper(Scraper):
                         return
 
                 diagnostic.stop_reason = "max_pages"
+            except ScrapeCancelledError:
+                raise
             except Exception:  # noqa: BLE001 - diagnostica senza URL o contenuto target
                 diagnostic.stop_reason = "pagination_failed"
 
@@ -1282,7 +1315,10 @@ class GenericScraper(Scraper):
 
         try:
             await asyncio.sleep(self.rate_limit_seconds)
+            self._raise_if_cancelled()
             await self._with_proxy_rotation("field_pagination", fetch_with_action)
+        except ScrapeCancelledError:
+            raise
         except Exception:  # noqa: BLE001 - il valore iniziale resta utilizzabile
             if diagnostic.stop_reason == "not_started":
                 diagnostic.stop_reason = "pagination_failed"
@@ -1394,10 +1430,12 @@ class GenericScraper(Scraper):
         return "Errore inatteso durante il download media."
 
     async def download_media(self, ad: dict[str, Any]) -> MediaDownloadResult:
+        self._raise_if_cancelled()
         media_urls = [*(ad.get("images") or []), *(ad.get("videos") or [])]
         result = MediaDownloadResult(attempted_count=len(media_urls))
         for media_url in media_urls:
             try:
+                self._raise_if_cancelled()
                 await self._ensure_robots_loaded()
                 from app.services.robots_check import is_allowed
 
@@ -1406,12 +1444,15 @@ class GenericScraper(Scraper):
                     raise RobotsDisallowedError(absolute_url)
 
                 await asyncio.sleep(self.rate_limit_seconds)
+                self._raise_if_cancelled()
                 result.media_bytes.append(
                     await self._with_proxy_rotation(
                         "media",
                         lambda absolute_url=absolute_url: self._download_media_stream(absolute_url),
                     )
                 )
+            except ScrapeCancelledError:
+                raise
             except Exception as exc:  # noqa: BLE001 - download best-effort per singolo media
                 # Non loggare l'eccezione o l'URL media: possono contenere token.
                 logger.warning(
@@ -1457,6 +1498,7 @@ class GenericScraper(Scraper):
             proxy=proxy.httpx_url() if proxy else None,
         ) as client:
             for _ in range(6):
+                self._raise_if_cancelled()
                 await self._assert_public_url(current)
                 async with client.stream(
                     "GET",

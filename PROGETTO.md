@@ -336,6 +336,11 @@ scrivere su DB -> scan reale).
       run precedente (anche manuale o fallito); run persistenti `pending`,
       dispatcher Celery Beat, recupero pubblicazioni e vincolo DB assicurano
       che una fonte non abbia mai due scan pending/running contemporanei.
+- [x] **Pausa cooperativa dei run attivi**: `POST /sources/{id}/pause` disabilita
+      subito le nuove pianificazioni e il worker rilegge lo stato persistito tra
+      pagine, annunci e media. Il run termina con motivo `source_paused`,
+      conservando soltanto i batch gia committati e senza generare un falso
+      errore operativo.
 - [x] **Aggiornamento continuo e versionato delle occorrenze**: ogni scan
       confronta titolo, descrizione, JSON custom e set SHA-256 dei media per la
       terna record/fonte/URL. Un contenuto identico aggiorna soltanto

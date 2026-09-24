@@ -45,6 +45,7 @@ from app.scrapers.generic import (
     PageFetchError,
     ProxyPoolExhaustedError,
     RobotsDisallowedError,
+    ScrapeCancelledError,
 )
 from app.services.canonical import (
     CandidateAdvertisement,
@@ -163,6 +164,7 @@ class CollectionResult:
     errors: list[ScrapeErrorDetail] = field(default_factory=list)
     discovery_diagnostics: DiscoveryDiagnostics = field(default_factory=DiscoveryDiagnostics)
     proxy_events: list[ProxyRuntimeEvent] = field(default_factory=list)
+    cancelled: bool = False
 
     @property
     def errors_count(self) -> int:
@@ -177,6 +179,7 @@ async def collect_ads(
     source: Source,
     proxy_candidates: list[ProxyRuntimeConfig] | None = None,
     on_ad: Callable[[CollectedAd], bool] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> CollectionResult:
     """Fase 1: esegue davvero `discover -> scrape_ad -> normalize ->
     download_media` per la fonte, senza toccare il database.
@@ -192,10 +195,18 @@ async def collect_ads(
         config=source.scrape_config,
         proxy_candidates=proxy_candidates,
     )
+    scraper.should_stop = should_stop
 
     try:
         try:
             ad_urls = await scraper.discover()
+        except ScrapeCancelledError:
+            return CollectionResult(
+                ads=[],
+                discovery_diagnostics=scraper.discovery_diagnostics,
+                proxy_events=scraper.proxy_events,
+                cancelled=True,
+            )
         except RobotsDisallowedError as exc:
             logger.warning(
                 "robots.txt vieta l'accesso alla pagina di elenco per '%s': %s", source.slug, exc
@@ -227,10 +238,15 @@ async def collect_ads(
             for message in scraper.discovery_diagnostics.errors
         ]
 
+        cancelled = False
         for url in ad_urls:
             pagination_warning_offset = len(scraper.field_pagination_warnings)
             try:
+                scraper._raise_if_cancelled()
                 raw = await scraper.scrape_ad(url)
+            except ScrapeCancelledError:
+                cancelled = True
+                break
             except (RobotsDisallowedError, httpx.HTTPError, PageFetchError) as exc:
                 logger.info("Annuncio saltato (%s): %s", url, exc)
                 errors.append(
@@ -261,6 +277,7 @@ async def collect_ads(
             media_download_complete = True
             media_issues = scraper.media_extraction_warnings(raw)
             try:
+                scraper._raise_if_cancelled()
                 media_result = await scraper.download_media(normalized)
                 media_bytes = media_result.media_bytes
                 if media_result.failures:
@@ -270,6 +287,9 @@ async def collect_ads(
                         f"{media_result.failed_count} di {media_result.attempted_count} file "
                         f"non scaricati. Primo errore: {media_result.failures[0].message}"
                     )
+            except ScrapeCancelledError:
+                cancelled = True
+                break
             except Exception as exc:  # noqa: BLE001 - protezione best-effort del run
                 media_download_complete = False
                 # Non serializzare l'eccezione: potrebbe contenere l'URL media.
@@ -301,6 +321,7 @@ async def collect_ads(
             errors=errors,
             discovery_diagnostics=scraper.discovery_diagnostics,
             proxy_events=scraper.proxy_events,
+            cancelled=cancelled,
         )
     finally:
         await scraper.aclose()

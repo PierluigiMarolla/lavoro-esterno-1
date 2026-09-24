@@ -123,6 +123,22 @@ test("disabled source exposes Enable and hides operational stop actions", async 
   await expect.poll(() => enabled).toBe(true);
 });
 
+test("pause action sends the stop request for the active source", async ({ page }) => {
+  await mockSourcesPage(page);
+  let pauseRequested = false;
+  await page.route(`**/api/v1/sources/${enabledSource.id}/pause`, async (route) => {
+    pauseRequested = true;
+    await route.fulfill({ status: 204 });
+  });
+
+  await page.goto("/sources");
+  const enabledRow = page.getByRole("row").filter({ hasText: "Original source" });
+  await enabledRow.hover();
+  await enabledRow.getByTitle("Metti in pausa").click();
+
+  await expect.poll(() => pauseRequested).toBe(true);
+});
+
 test("duplicate action is hidden from operators", async ({ page }) => {
   await mockSourcesPage(page, "operator");
   await page.goto("/sources");

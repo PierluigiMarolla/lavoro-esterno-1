@@ -90,6 +90,7 @@ const RUN_STATUS_LABEL: Record<ScrapeRunStatus, string> = {
 const PAGINATION_STOP_DETAILS: Record<string, { label: string; suggestion?: string }> = {
   not_started: { label: "Non avviata" },
   completed: { label: "Completata" },
+  source_paused: { label: "Interrotta dalla pausa della fonte" },
   max_pages: { label: "Raggiunto il limite di pagine" },
   max_ads: { label: "Raggiunto il limite di annunci" },
   end_of_pagination: { label: "Ultima pagina raggiunta" },

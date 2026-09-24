@@ -20,6 +20,9 @@ services:
   ollama:
     image: ollama/ollama:latest
     restart: unless-stopped
+    # Limite applicato dal runtime Docker all'intero container Ollama.
+    # Evita che l'inferenza saturi host con piu di 8 core disponibili.
+    cpus: 8.0
     volumes:
       - ollama-data:/root/.ollama
     expose:
