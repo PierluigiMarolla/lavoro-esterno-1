@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
-// Kept in sync with the inline script in index.html, which applies the
+// Kept in sync with the same-origin public/theme-init.js script, which applies the
 // persisted/system theme before first paint to avoid a flash of the wrong
 // theme — that script reads the SAME storage key.
 const STORAGE_KEY = "lavoro_esterno_theme";

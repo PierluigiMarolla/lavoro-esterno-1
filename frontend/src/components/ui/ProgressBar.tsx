@@ -3,12 +3,12 @@ import { cn } from "@/lib/cn";
 import type { BadgeTone } from "./Badge";
 
 const barTone: Record<BadgeTone, string> = {
-  success: "bg-success",
-  warning: "bg-warning",
-  error: "bg-error",
-  info: "bg-info",
-  neutral: "bg-outline",
-  primary: "bg-primary",
+  success: "text-success",
+  warning: "text-warning",
+  error: "text-error",
+  info: "text-info",
+  neutral: "text-outline",
+  primary: "text-primary",
 };
 
 export default function ProgressBar({
@@ -22,15 +22,17 @@ export default function ProgressBar({
 }) {
   const clamped = Math.max(0, Math.min(100, value));
   return (
-    <div className={cn("w-full bg-surface-container-high rounded-full h-2", className)}>
-      <div
-        className={cn("h-2 rounded-full transition-all", barTone[tone])}
-        style={{ width: `${clamped}%` }}
-        role="progressbar"
-        aria-valuenow={clamped}
-        aria-valuemin={0}
-        aria-valuemax={100}
-      />
-    </div>
+    <svg
+      className={cn("h-2 w-full overflow-hidden rounded-full", className)}
+      viewBox="0 0 100 8"
+      preserveAspectRatio="none"
+      role="progressbar"
+      aria-valuenow={clamped}
+      aria-valuemin={0}
+      aria-valuemax={100}
+    >
+      <rect width="100" height="8" rx="4" className="fill-current text-surface-container-high" />
+      <rect width={clamped} height="8" rx="4" className={cn("fill-current", barTone[tone])} />
+    </svg>
   );
 }

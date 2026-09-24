@@ -271,7 +271,7 @@ export default function LoginPage() {
         </div>
 
         <div className="px-8 py-4 bg-surface-container-low border-t border-border flex items-center justify-center gap-2">
-          <span className="material-symbols-outlined text-warning" style={{ fontSize: 16 }}>
+          <span className="material-symbols-outlined text-[16px] text-warning">
             warning
           </span>
           <p className="text-label-sm text-on-surface-variant">Accesso riservato / Sistema interno</p>

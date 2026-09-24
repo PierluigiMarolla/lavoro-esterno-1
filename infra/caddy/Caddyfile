@@ -20,28 +20,27 @@
 	}
 }
 
-{$APP_DOMAIN} {
-	import application_routes
+(security_headers) {
 	header {
-		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Frame-Options "DENY"
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "strict-origin-when-cross-origin"
 		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
-		Content-Security-Policy "default-src 'self'; img-src 'self' data: blob: https:; media-src 'self' blob: https:; connect-src 'self'; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+		Cross-Origin-Opener-Policy "same-origin"
+		Content-Security-Policy "default-src 'self'; script-src 'self'; script-src-attr 'none'; style-src 'self'; style-src-attr 'none'; font-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-src 'none'; frame-ancestors 'none'; manifest-src 'self'; worker-src 'none'"
 		-Server
 	}
+}
+
+{$APP_DOMAIN} {
+	import application_routes
+	import security_headers
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
 }
 
 # Accesso deliberatamente non cifrato richiesto per l'IP pubblico. Il frontend
 # mostra un avviso persistente; il dominio rimane l'ingresso raccomandato.
 http://{$PUBLIC_IP} {
 	import application_routes
-	header {
-		X-Frame-Options "DENY"
-		X-Content-Type-Options "nosniff"
-		Referrer-Policy "strict-origin-when-cross-origin"
-		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
-		-Server
-	}
+	import security_headers
 }

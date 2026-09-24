@@ -23,13 +23,11 @@ function initials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-export default function Avatar({ name, size = 32 }: { name: string; size?: number }) {
+export default function Avatar({ name, size = 32 }: { name: string; size?: 28 | 32 }) {
   const tone = PALETTE[hashString(name) % PALETTE.length];
+  const sizeClass = size === 28 ? "h-7 w-7 text-[11px]" : "h-8 w-8 text-[12px]";
   return (
-    <div
-      className={`flex items-center justify-center rounded-full font-semibold shrink-0 ${tone}`}
-      style={{ width: size, height: size, fontSize: size * 0.38 }}
-    >
+    <div className={`flex items-center justify-center rounded-full font-semibold shrink-0 ${tone} ${sizeClass}`}>
       {initials(name)}
     </div>
   );

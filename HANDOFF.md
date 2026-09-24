@@ -2307,3 +2307,23 @@ Trivy sono puliti.
   fallback come warning (13 mismatch, 2 numeri alterati, 1 risposta incompleta)
   e 20 errori separati relativi esclusivamente a telefoni assenti/non validi.
   Il run e quindi fallito per l'assenza di numeri pubblicabili, non per Gemma.
+
+# Aggiornamento 2026-09-24 - CSP rigorosa e font locali
+
+- Rimosso lo script tema inline: `/theme-init.js` è ora una risorsa sincrona
+  same-origin caricata prima del bundle React e mantiene la chiave
+  `lavoro_esterno_theme` e il fallback alla preferenza di sistema.
+- Inter 400/500/600, JetBrains Mono 400/500 e Material Symbols Outlined sono
+  inclusi localmente nel build. Le licenze OFL/Apache vengono copiate in
+  `dist/licenses`; non vengono più contattati Google Fonts o gstatic.
+- Rimossi tutti gli attributi `style` dai componenti Icon, Avatar, ProgressBar
+  e Login. Dimensioni e avanzamento usano classi tipizzate o SVG.
+- Caddy usa un unico snippet di sicurezza per dominio HTTPS e IP HTTP con CSP
+  same-origin, `script-src-attr 'none'` e `style-src-attr 'none'`. Non sono
+  ammessi `unsafe-inline` né wildcard `https:`. HSTS resta solo sul dominio.
+- `npm run build` esegue un controllo automatico del bundle; il test separato
+  `npm run test:theme-init` copre tema chiaro, scuro e preferenza di sistema.
+- `scripts/vps/verify.sh .env.production` confronta le due CSP, verifica HSTS
+  e prova HTML, CSS, JavaScript e font attraverso entrambi gli ingressi.
+- Il deployment richiede la ricostruzione di frontend e Caddy, senza migrazioni
+  DB e senza rimozione di volumi: `sh scripts/vps/deploy.sh .env.production`.

@@ -1,7 +1,16 @@
-import type { CSSProperties } from "react";
+const SIZE_CLASS = {
+  14: "text-[14px]",
+  15: "text-[15px]",
+  16: "text-[16px]",
+  18: "text-[18px]",
+  20: "text-[20px]",
+  24: "text-[24px]",
+  28: "text-[28px]",
+} as const;
 
-// Wraps a Material Symbols Outlined glyph. The font is loaded globally via
-// index.html; this component just standardizes size/className usage.
+export type IconSize = keyof typeof SIZE_CLASS;
+
+// Wraps a locally bundled Material Symbols Outlined glyph without inline styles.
 export default function Icon({
   name,
   className,
@@ -9,16 +18,15 @@ export default function Icon({
 }: {
   name: string;
   className?: string;
-  size?: number;
+  size?: IconSize;
 }) {
-  const style: CSSProperties = { fontSize: size };
   return (
-    <span className={cnIcon(className)} style={style} aria-hidden="true">
+    <span className={cnIcon(SIZE_CLASS[size], className)} aria-hidden="true">
       {name}
     </span>
   );
 }
 
-function cnIcon(className?: string) {
-  return ["material-symbols-outlined", className].filter(Boolean).join(" ");
+function cnIcon(...classNames: Array<string | undefined>) {
+  return ["material-symbols-outlined", ...classNames].filter(Boolean).join(" ");
 }

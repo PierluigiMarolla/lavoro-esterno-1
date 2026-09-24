@@ -119,3 +119,34 @@ una procedura specifica e non cancellare volumi. Se una migrazione fallisce,
 
 I backup inclusi restano sullo stesso host: configurare una copia cifrata
 off-site e provarne periodicamente il ripristino prima del go-live definitivo.
+
+## 6. Content Security Policy e risorse frontend
+
+Il dominio HTTPS e l'ingresso HTTP tramite IP applicano la stessa CSP
+restrittiva. Script, stili, font, chiamate API, immagini e video sono ammessi
+soltanto dalla stessa origine; non sono presenti `unsafe-inline` o wildcard
+`https:`. HSTS viene inviato esclusivamente dal dominio HTTPS.
+
+Inter, JetBrains Mono e Material Symbols sono inclusi nel bundle come WOFF2.
+Le relative licenze vengono copiate in `dist/licenses` durante il build. Anche
+lo script che determina il tema iniziale è servito localmente come
+`/theme-init.js`, prima del bundle React.
+
+La verifica completa è inclusa nel normale deploy:
+
+```bash
+sh scripts/vps/verify.sh .env.production
+```
+
+Lo script confronta la CSP dei due ingressi, controlla HSTS, rifiuta
+`unsafe-inline` e prova HTML, CSS, JavaScript, tema e font locali. Per una
+diagnosi manuale:
+
+```bash
+curl -sSI https://APP_DOMAIN/ | grep -iE 'content-security-policy|strict-transport-security'
+curl -sSI -H 'Host: PUBLIC_IP' http://PUBLIC_IP/ | grep -iE 'content-security-policy|strict-transport-security'
+```
+
+La seconda risposta deve avere la stessa CSP ma non deve contenere HSTS. Dopo
+un aggiornamento del frontend eseguire sempre `npm run build`: il controllo
+`check:csp` blocca script/stili inline, URL Google e risorse CSS remote.

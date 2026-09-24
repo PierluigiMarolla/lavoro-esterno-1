@@ -271,3 +271,19 @@ HTTPS. Swagger e OpenAPI sono disabilitati per default. L'accesso HTTP tramite
 IP e una deroga esplicita (`ALLOW_INSECURE_IP_ACCESS=true`): funziona come
 richiesto ma espone dati e token alla rete e viene segnalato permanentemente
 nel frontend. Il dominio HTTPS resta l'unico ingresso raccomandato.
+
+## 10. Content Security Policy
+
+La Content Security Policy è identica sul dominio e sull'ingresso IP:
+`default-src`, script, stili, font e connessioni sono limitati a `'self'`;
+gli attributi script/style sono vietati e object, frame e worker sono
+disabilitati. Immagini e media consentono soltanto la stessa origine più
+`data:`/`blob:` dove necessario. Non sono ammessi `unsafe-inline`, domini
+Google o wildcard `https:`. Inter, JetBrains Mono, Material Symbols e lo script
+iniziale del tema sono distribuiti dall'applicazione. Il build fallisce se
+ricompaiono dipendenze remote o costrutti incompatibili con questa policy.
+
+`Cross-Origin-Opener-Policy: same-origin` e gli header anti-framing, MIME
+sniffing, referrer e permissions sono applicati da un unico snippet Caddy a
+entrambi gli ingressi. HSTS resta deliberatamente limitato al dominio HTTPS,
+per evitare di attribuire proprietà TLS all'accesso IP che rimane non cifrato.
