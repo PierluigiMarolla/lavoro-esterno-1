@@ -125,7 +125,9 @@ verificato dal vivo, è più preciso su questi punti (vedi PROGETTO.md § 4):
   lo User-Agent configurato per la fonte. Se non configurato, HTTP/robots/media
   usano il default del progetto e il browser usa quello generato da Scrapling.
   Dynamic e Stealth mantengono una sessione per run, riusando cookie e storage;
-  la rotazione proxy ricrea la sessione per non mescolare identità di rete.
+  ogni sessione usa un solo browser e un pool di tab limitato da
+  `BROWSER_MAX_TABS` (default 10). La rotazione proxy ricrea la sessione per
+  non mescolare identità di rete.
   I campi delle pagine annuncio possono inoltre avere una paginazione isolata:
   il motore visita con il browser gli stati successivi di caroselli o raccolte
   “Carica altri”, deduplica liste semplici o oggetti strutturati e conserva
@@ -174,7 +176,8 @@ verificato dal vivo, è più preciso su questi punti (vedi PROGETTO.md § 4):
   limit del provider LLM).
 - **`ollama` / `ollama-init`**: runtime LLM interno (limitato dal Compose a
   un massimo di 8 CPU) e inizializzazione
-  idempotente di `gemma4:e2b`. Il modello vive nel volume `ollama-data`, la
+  idempotente di `hf.co/unsloth/gemma-4-E2B-it-GGUF:UD-Q4_K_XL`. Il modello
+  vive nel volume `ollama-data`, la
   porta 11434 non è pubblicata sull'host e `worker-ai` usa concorrenza 1.
 - **`scheduler`**: Celery Beat invoca ogni minuto un dispatcher DB-backed.
   Il dispatcher blocca le fonti dovute con `FOR UPDATE SKIP LOCKED`, crea il

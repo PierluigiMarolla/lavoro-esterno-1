@@ -1,5 +1,22 @@
 # Riassunto sessione - Progetto "Lavoro Esterno"
 
+## Sessione 30 — 25 settembre 2026: pool tab Chromium e Gemma GGUF
+
+- Le sessioni browser Scrapling ricevono ora `max_pages` da
+  `BROWSER_MAX_TABS` (default `10`): una scansione usa un solo browser headless
+  con un pool limitato di tab, mantenendo cookie/storage nella sessione e
+  separando le sessioni che richiedono configurazioni o proxy differenti.
+- Il modello Ollama predefinito è stato sostituito con
+  `hf.co/unsloth/gemma-4-E2B-it-GGUF:UD-Q4_K_XL`. `ollama-init` lo scarica nel
+  volume persistente; la migrazione `20260925090000` aggiorna solo installazioni
+  ancora impostate sul vecchio default `gemma4:e2b`, preservando i modelli
+  personalizzati.
+- Verifica: Ruff superato; 58 test mirati backend e 27 test browser reali
+  superati; suite backend completa con 319 test superati, 1 saltato e un solo
+  errore ambientale non correlato (`ffprobe` assente sull'host Windows); lint,
+  build/CSP frontend ed E2E impostazioni AI superati. Compose risolve
+  `BROWSER_MAX_TABS=10` e il nuovo identificatore GGUF.
+
 ## Aggiornamento Dashboard - 4 settembre 2026
 
 Il controllo temporale della Dashboard non è più statico. Offre le finestre

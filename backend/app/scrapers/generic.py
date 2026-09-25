@@ -44,6 +44,7 @@ from curl_cffi.requests import AsyncSession as CurlAsyncSession
 from curl_cffi.requests.errors import RequestsError as CurlRequestsError
 from lxml import html as lxml_html
 
+from app.config import settings
 from app.scrapers.base import MediaDownloadFailure, MediaDownloadResult, Scraper
 from app.services.proxy_rotation import ProxyRuntimeConfig, ProxyRuntimeEvent
 
@@ -354,6 +355,9 @@ class GenericScraper(Scraper):
         kwargs: dict[str, Any] = {
             "headless": True,
             "timeout": _BROWSER_NAVIGATION_TIMEOUT_MS,
+            # Scrapling mantiene un solo processo browser per sessione e
+            # assegna le richieste concorrenti al proprio pool di tab.
+            "max_pages": settings.BROWSER_MAX_TABS,
         }
         if self.configured_user_agent:
             kwargs["useragent"] = self.configured_user_agent

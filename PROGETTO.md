@@ -399,7 +399,8 @@ priorità. Corretto aggiungendo `priority` allo schema `SourceRead`.
       persistiti. È disponibile anche `POST /media/{id}/reprocess`.
 - [x] **Riepiloghi asincroni multiprovider** con Ollama locale, OpenAI,
       Anthropic/Claude, Google Gemini, Groq, Mistral, OpenRouter e un endpoint
-      OpenAI-compatible personalizzato. Il default è `gemma4:e2b` locale;
+      OpenAI-compatible personalizzato. Il default locale è
+      `hf.co/unsloth/gemma-4-E2B-it-GGUF:UD-Q4_K_XL`;
       provider, modello, credenziali cifrate e limiti sono amministrabili da
       `/settings/ai`. OpenAI conserva Responses API, Structured Outputs e
       `store=false`. Non esistono fallback silenziosi tra modelli/provider.

@@ -85,6 +85,7 @@ async def test_browser_session_is_reused_and_only_receives_explicit_user_agent(
     configured_user_agent: str | None,
     expected_user_agent: str | None,
 ) -> None:
+    monkeypatch.setattr("app.scrapers.generic.settings.BROWSER_MAX_TABS", 7)
     sessions: list[object] = []
 
     class FakeSession:
@@ -120,6 +121,7 @@ async def test_browser_session_is_reused_and_only_receives_explicit_user_agent(
     assert session.started is True
     assert session.fetches == [f"{open_site_url}/one", f"{open_site_url}/two"]
     assert session.kwargs.get("useragent") == expected_user_agent
+    assert session.kwargs["max_pages"] == 7
     assert session.closed is True
 
 

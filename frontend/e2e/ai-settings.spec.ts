@@ -2,7 +2,7 @@
 import { test, expect } from "@playwright/test";
 
 const providers = [
-  ["ollama", "Ollama locale", "gemma4:e2b", true, false],
+  ["ollama", "Ollama locale", "hf.co/unsloth/gemma-4-E2B-it-GGUF:UD-Q4_K_XL", true, false],
   ["openai", "OpenAI", "gpt-5.6-luna", false, true],
 ] as const;
 
@@ -35,7 +35,11 @@ test.describe("AI settings", () => {
       },
     }));
     await page.route("**/api/v1/admin/ai-settings/providers/*/models", (route) => route.fulfill({
-      json: { provider: "ollama", models: ["gemma4:e2b"], cached: true },
+      json: {
+        provider: "ollama",
+        models: ["hf.co/unsloth/gemma-4-E2B-it-GGUF:UD-Q4_K_XL"],
+        cached: true,
+      },
     }));
 
     await page.goto("/login");
@@ -45,7 +49,9 @@ test.describe("AI settings", () => {
     await page.reload();
     await page.goto("/settings/ai");
     await expect(page.getByRole("heading", { name: "Impostazioni" })).toBeVisible();
-    await expect(page.locator('input[value="gemma4:e2b"]')).toBeVisible();
+    await expect(
+      page.locator('input[value="hf.co/unsloth/gemma-4-E2B-it-GGUF:UD-Q4_K_XL"]'),
+    ).toBeVisible();
     await expect(page.getByText("Un budget cloud pari a 0 blocca i provider remoti, ma non Ollama locale.")).toBeVisible();
     const openAIKey = page.getByLabel(/API key .* configurata/);
     await expect(openAIKey).toHaveAttribute("type", "password");

@@ -117,6 +117,12 @@ class Settings(BaseSettings):
     SCRAPE_PENDING_RETRY_MINUTES: int = Field(default=2, ge=1, le=60)
     SCRAPE_STALE_HOURS: int = Field(default=6, ge=1, le=72)
     SCRAPE_SCHEDULER_BATCH_SIZE: int = Field(default=100, ge=1, le=1000)
+    BROWSER_MAX_TABS: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+        description="Numero massimo di tab concorrenti per sessione browser headless.",
+    )
 
     # --- JWT (autenticazione) -------------------------------------------
     JWT_SECRET_KEY: str = Field(

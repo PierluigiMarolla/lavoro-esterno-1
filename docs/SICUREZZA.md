@@ -197,7 +197,8 @@ chiusura di ogni rilievo High/Critical.
   vengono usati per training salvo opt-in; i log di abuse monitoring possono
   essere conservati fino a 30 giorni. Zero Data Retention richiede idoneità e
   approvazione separate e non va presunta da questa configurazione.
-- Il provider predefinito è Ollama locale con `gemma4:e2b`. Le API key dei
+- Il provider predefinito è Ollama locale con
+  `hf.co/unsloth/gemma-4-E2B-it-GGUF:UD-Q4_K_XL`. Le API key dei
   provider remoti sono write-only e cifrate con la chiave dedicata
   `AI_CREDENTIAL_ENCRYPTION_KEY`, distinta dalle chiavi telefono e JWT.
   La chiave master deve essere custodita e inclusa nel backup sicuro dei

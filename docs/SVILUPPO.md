@@ -264,7 +264,8 @@ FFmpeg è installato nell'immagine backend/worker. In locale verificare con
 `ffmpeg -version`; la suite genera un MP4 sintetico e controlla transcodifica,
 thumbnail e frame senza includere materiale sensibile nel repository.
 
-Il default è Ollama locale con `gemma4:e2b`: `ollama-init` scarica il modello
+Il default è Ollama locale con `hf.co/unsloth/gemma-4-E2B-it-GGUF:UD-Q4_K_XL`:
+`ollama-init` scarica il modello
 nel volume persistente al primo avvio e il worker AI parte solo al termine.
 La configurazione è disponibile in `/settings/ai`. I provider cloud richiedono
 una credenziale salvata, un test riuscito e budget token positivo; budget zero

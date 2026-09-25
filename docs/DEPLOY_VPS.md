@@ -17,7 +17,8 @@ CI e il deploy devono continuare a bloccare immagini con rilievi High/Critical.
 - porte TCP 80/443 raggiungibili; UDP 443 e consigliata per HTTP/3;
 - porta SSH nota e consentita prima di attivare il firewall.
 
-Il modello `gemma4:e2b` richiede un download iniziale di circa 7,2 GB. I dati
+Il modello `hf.co/unsloth/gemma-4-E2B-it-GGUF:UD-Q4_K_XL` richiede un download
+iniziale. I dati
 del modello e i certificati Caddy restano in volumi Docker persistenti.
 
 ## 2. Configurazione
