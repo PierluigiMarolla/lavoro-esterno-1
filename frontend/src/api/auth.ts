@@ -7,7 +7,16 @@ interface LoginResponseDto {
   access_token?: string;
   refresh_token?: string;
   mfa_token?: string;
-  user?: { id: string; email: string; name: string; role: string; mfa_enabled: boolean; status: string };
+  user?: {
+    id: string;
+    email: string;
+    name: string;
+    role: string;
+    mfa_enabled: boolean;
+    mfa_policy_enabled: boolean;
+    mfa_setup_required: boolean;
+    status: string;
+  };
   new_backup_codes?: string[];
 }
 
@@ -18,6 +27,8 @@ function mapUser(dto: NonNullable<LoginResponseDto["user"]>): User {
     name: dto.name,
     role: dto.role as User["role"],
     mfaEnabled: dto.mfa_enabled,
+    mfaPolicyEnabled: dto.mfa_policy_enabled,
+    mfaSetupRequired: dto.mfa_setup_required,
     status: dto.status as User["status"],
   };
 }

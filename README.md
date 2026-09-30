@@ -20,6 +20,10 @@ scraping per fonte), alert Grafana, exporter PostgreSQL/Redis/Celery/volumi e
 raccolta dei log Docker tramite Grafana Alloy verso Loki. `/metrics` resta
 interno alla rete Docker e non viene pubblicato da nginx.
 
+L'OTP TOTP è disattivato per default. Un Admin può abilitarlo globalmente
+per tutti gli utenti da **Impostazioni > Sicurezza**; la modifica si applica
+dal login successivo e non interrompe le sessioni già aperte.
+
 ## Documentazione
 
 - [`docs/ARCHITETTURA.md`](docs/ARCHITETTURA.md) - componenti del

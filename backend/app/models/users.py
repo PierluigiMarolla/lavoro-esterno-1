@@ -15,9 +15,7 @@ UserRole = sa.Enum("admin", "operator", "viewer", name="user_role", create_type=
 
 
 class User(UUIDPKMixin, TimestampMixin, Base):
-    """Account operatore, con RBAC a 3 ruoli e 2FA TOTP opzionale (ma
-    obbligatoria per operazioni sensibili se il ruolo è admin, vedi
-    app/api/v1/admin.py)."""
+    """Account operatore con RBAC a 3 ruoli e TOTP governato globalmente."""
 
     __tablename__ = "users"
 

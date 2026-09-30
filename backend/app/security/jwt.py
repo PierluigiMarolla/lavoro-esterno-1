@@ -48,6 +48,7 @@ def _create_token(
     ttl: timedelta,
     *,
     security_stamp_at: datetime | None = None,
+    mfa_exempt: bool = False,
 ) -> str:
     now = datetime.now(UTC)
     payload: dict[str, Any] = {
@@ -66,26 +67,37 @@ def _create_token(
         # app/security/deps.py: se non combaciano, il token è considerato
         # revocato in blocco (logout globale, cambio password, reset 2FA).
         payload["sst"] = _to_unix(security_stamp_at)
+    if mfa_exempt:
+        # Contrassegna una sessione iniziata mentre la policy OTP globale
+        # era spenta. Il refresh propaga il claim, perciò l'attivazione
+        # amministrativa vale soltanto dal login successivo.
+        payload["mfa_exempt"] = True
     return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
-def create_access_token(user_id: uuid.UUID, role: str, security_stamp_at: datetime) -> str:
+def create_access_token(
+    user_id: uuid.UUID, role: str, security_stamp_at: datetime, *, mfa_exempt: bool = False
+) -> str:
     return _create_token(
         user_id,
         role,
         TokenType.ACCESS,
         timedelta(minutes=settings.JWT_ACCESS_TTL_MINUTES),
         security_stamp_at=security_stamp_at,
+        mfa_exempt=mfa_exempt,
     )
 
 
-def create_refresh_token(user_id: uuid.UUID, role: str, security_stamp_at: datetime) -> str:
+def create_refresh_token(
+    user_id: uuid.UUID, role: str, security_stamp_at: datetime, *, mfa_exempt: bool = False
+) -> str:
     return _create_token(
         user_id,
         role,
         TokenType.REFRESH,
         timedelta(days=settings.JWT_REFRESH_TTL_DAYS),
         security_stamp_at=security_stamp_at,
+        mfa_exempt=mfa_exempt,
     )
 
 

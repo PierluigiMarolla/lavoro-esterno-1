@@ -14,9 +14,8 @@ export default function ProtectedRoute() {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  // Admin/Operator accounts without 2FA enrolled: every route except the
-  // setup page itself redirects there (mirrors the backend's own 403 on any
-  // other endpoint via get_current_user, app/security/deps.py).
+  // Quando la policy globale lo richiede, ogni account non ancora iscritto
+  // viene confinato al setup (stesso controllo applicato dal backend).
   if (requiresTwoFactorSetup && location.pathname !== "/2fa-setup") {
     return <Navigate to="/2fa-setup" replace />;
   }

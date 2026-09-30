@@ -7,23 +7,23 @@ checkbox man mano che gli elementi vengono completati.
 
 ## 1. Autenticazione / 2FA
 
-Tutti i punti sottostanti sono stati implementati e verificati dal vivo
-(`docker compose up --build`, non solo test statici): login Admin/Operator
-senza 2FA → `mfa_setup_required` con blocco 403 di ogni altro endpoint,
+Tutti i punti sottostanti sono stati implementati. La policy aggiornata è
+globale, disattivata per default e gestibile dall'Admin in Impostazioni >
+Sicurezza: quando attiva, un utente senza 2FA riceve
+`mfa_setup_required` con blocco 403 di ogni altro endpoint,
 setup+verify 2FA, consumo di tutti e 10 i backup code con auto-rigenerazione
 sull'ultimo, riuso di un codice consumato rifiutato, recovery via reset
 admin, `change-password` con validazione debole/forte e revoca del refresh
 token precedente, `logout` con blacklist del refresh token. Dettagli
 implementativi in `docs/SICUREZZA.md`.
 
-- [x] Decidere e implementare la policy MFA per il ruolo **Operator**
-      (oggi solo "raccomandata"): obbligatoria da subito, obbligatoria
-      dopo N giorni di grazia, o solo Admin — decisione di prodotto.
-      **Deciso con l'utente: obbligatoria da subito**, stesso livello di
-      Admin. `app/security/deps.py:get_current_user` blocca con 403
-      (`error_code: mfa_setup_required`) ogni endpoint applicativo per i
-      ruoli admin/operator privi di 2FA attiva, eccetto gli endpoint di
-      setup stesso (`get_current_user_allow_unenrolled`). Lato frontend,
+- [x] Decidere e implementare la policy MFA. **Decisione aggiornata con
+      l'utente: disattivata per default e attivabile globalmente dall'Admin
+      per tutti i ruoli**. L'attivazione vale dal login successivo e non
+      interrompe le sessioni già aperte. `app/security/deps.py:get_current_user`
+      blocca con 403 (`error_code: mfa_setup_required`) ogni endpoint
+      applicativo per le nuove sessioni prive di 2FA, eccetto gli endpoint
+      di setup stesso (`get_current_user_allow_unenrolled`). Lato frontend,
       `ProtectedRoute`/`AuthContext` reindirizzano automaticamente a una
       nuova pagina `/2fa-setup` (`TwoFactorSetupPage.tsx`) finché il setup
       non è completato.
@@ -35,8 +35,8 @@ implementativi in `docs/SICUREZZA.md`.
       azzera `totp_secret_encrypted`/`totp_enabled`/`backup_codes_hash`,
       aggiorna `security_stamp_at` (revoca ogni token residuo dell'utente),
       audit log `reset_2fa`. Nessun servizio email nel progetto: la
-      recovery è admin-driven, l'utente rifà il setup obbligatorio al
-      prossimo login (stesso enforcement del punto precedente).
+      recovery è admin-driven; con policy globale attiva l'utente rifà il
+      setup al prossimo login (stesso enforcement del punto precedente).
 - [x] Definire e implementare la **rotazione/scadenza dei backup codes**
       (quanti codici generare, se rigenerarli automaticamente dopo
       l'uso dell'ultimo).
@@ -623,8 +623,8 @@ diversi bug che nessuna verifica statica poteva intercettare:
   Verificato: `docker compose exec api alembic upgrade head` crea ora
   tutte le 12 tabelle correttamente su un Postgres reale.
 - **Nessun modo di creare il primo utente Admin**: `POST /admin/users`
-  richiede già un Admin autenticato con 2FA attiva (corretto come modello
-  di sicurezza, ma è un problema di bootstrap). Aggiunto
+  richiede già un Admin autenticato (la nota originaria prevedeva anche 2FA;
+  oggi segue la policy globale), quindi resta un problema di bootstrap. Aggiunto
   `backend/app/scripts/create_admin.py`, script one-shot da eseguire con
   `docker compose exec api python -m app.scripts.create_admin --email
   ... --password ...`, documentato in `README.md` e `docs/SVILUPPO.md`.

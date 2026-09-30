@@ -14,6 +14,7 @@ import AISettingsPage from "@/routes/AISettingsPage";
 import ProxySettingsPage from "@/routes/ProxySettingsPage";
 import IngestionSettingsPage from "@/routes/IngestionSettingsPage";
 import WebhookSettingsPage from "@/routes/WebhookSettingsPage";
+import SecuritySettingsPage from "@/routes/SecuritySettingsPage";
 import AccountPage from "@/routes/AccountPage";
 import RecordDetailLayout from "@/routes/records/RecordDetailLayout";
 import RecordOverviewTab from "@/routes/records/RecordOverviewTab";
@@ -31,8 +32,8 @@ export default function App() {
 
       {/* Everything below requires an authenticated session */}
       <Route element={<ProtectedRoute />}>
-        {/* Standalone (no sidebar): mandatory for Admin/Operator accounts
-            without 2FA enrolled yet — ProtectedRoute redirects here from
+        {/* Standalone (no sidebar): mandatory for accounts without 2FA when
+            the global policy is enabled — ProtectedRoute redirects here from
             every other route until setup is completed. */}
         <Route path="/2fa-setup" element={<TwoFactorSetupPage />} />
         <Route element={<AppShell />}>
@@ -54,6 +55,7 @@ export default function App() {
           <Route path="/exports" element={<ExportsPage />} />
           <Route path="/admin" element={<AdminPage />} />
           <Route path="/settings/ai" element={<AISettingsPage />} />
+          <Route path="/settings/security" element={<SecuritySettingsPage />} />
           <Route path="/settings/proxies" element={<ProxySettingsPage />} />
           <Route path="/settings/ingestion" element={<IngestionSettingsPage />} />
           <Route path="/settings/webhooks" element={<WebhookSettingsPage />} />

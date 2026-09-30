@@ -21,6 +21,7 @@ const ACTION_LABELS: Record<string, string> = {
   retry_export: "Nuovo tentativo esportazione",
   download_export: "Download esportazione",
   update_ai_settings: "Modifica impostazioni AI",
+  update_global_mfa_policy: "Modifica policy OTP globale",
   update_ai_provider: "Modifica provider AI",
   test_ai_provider: "Test provider AI",
   remove_watermark: "Rimozione filigrana",

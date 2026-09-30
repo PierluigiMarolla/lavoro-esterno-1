@@ -50,9 +50,10 @@ registrazione pubblica, tutti gli utenti sono creati da un Admin.
 
 ## 2. 2FA TOTP
 
-- **Obbligatoria dal login per i ruoli Admin e Operator** (decisione di
-  prodotto: nessun periodo di grazia). Un account con questi ruoli ma
-  privo di 2FA riceve token validi solo per completare il setup: qualunque
+- **Disattivata per default e configurata globalmente**. Un Admin può
+  abilitarla per tutti i ruoli da Impostazioni > Sicurezza. Le sessioni già
+  aperte restano valide; la policy si applica dal login successivo. Un
+  account privo di 2FA riceve token validi solo per completare il setup: qualunque
   altro endpoint applicativo risponde `403`
   (`{"error_code": "mfa_setup_required"}`, enforcement in
   `app/security/deps.py:get_current_user`) finché non viene attivata.
@@ -90,16 +91,16 @@ registrazione pubblica, tutti gli utenti sono creati da un Admin.
   (azione `reset_2fa`) che aggiorna anche `security_stamp_at` (revoca di
   ogni token residuo dell'utente). Non esiste un servizio email nel
   progetto: la recovery è deliberatamente admin-driven, non self-service.
-  Dopo il reset l'utente rifà il setup obbligatorio al prossimo login
-  (stesso enforcement del punto precedente).
+  Se la policy globale è attiva, dopo il reset l'utente rifà il setup al
+  prossimo login (stesso enforcement del punto precedente).
 
 ## 3. RBAC - 3 ruoli
 
 | Ruolo | Permessi |
 |---|---|
-| **Admin** | Accesso completo: gestione utenti, gestione fonti (`sources`), configurazione, consultazione audit log, tutte le operazioni di Operator/Viewer. 2FA obbligatoria dal login. |
-| **Operator** | Ricerca/consultazione record, avvio manuale di run di scraping, richiesta export, riclassificazione media/riepiloghi. Nessun accesso a gestione utenti o configurazione di sistema. 2FA obbligatoria dal login (stessa policy di Admin). |
-| **Viewer** | Solo lettura: ricerca e consultazione record/media/riepiloghi. Nessun avvio di operazioni (scraping, export, riclassificazione). 2FA facoltativa. |
+| **Admin** | Accesso completo: gestione utenti, fonti, configurazione e audit log. Può gestire la policy 2FA globale. |
+| **Operator** | Ricerca/consultazione record, scraping, export e operazioni quotidiane. Segue la policy 2FA globale. |
+| **Viewer** | Solo lettura. Segue la policy 2FA globale. |
 
 L'applicazione dei permessi avviene lato backend (dependency FastAPI che
 verifica `role` dal JWT ad ogni richiesta), mai solo lato frontend

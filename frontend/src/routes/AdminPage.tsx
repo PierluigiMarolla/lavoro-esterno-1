@@ -60,7 +60,7 @@ const STATUS_TONE: Record<AdminUser["status"], BadgeTone> = {
 };
 
 // True when the mutation failed specifically because the requesting admin
-// hasn't enabled 2FA yet (server-side `require_admin_with_2fa`) — see
+// must complete 2FA under the global policy (server-side enforcement) — see
 // src/api/admin.ts:createAdminUser. Worth a dedicated message instead of the
 // generic "Access denied" describeError() would otherwise show for a 403.
 function isMfaSetupRequiredError(error: unknown): boolean {
@@ -325,7 +325,7 @@ function CreateUserDialog({ open, onClose }: { open: boolean; onClose: () => voi
         {createUser.isError && (
           <p className="text-body-md text-error">
             {mfaSetupRequired
-              ? "Devi avere la 2FA attiva per creare utenti."
+              ? "La policy globale richiede di completare la configurazione OTP."
               : describeError(createUser.error).description}
           </p>
         )}

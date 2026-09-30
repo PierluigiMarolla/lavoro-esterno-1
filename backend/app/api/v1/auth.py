@@ -28,7 +28,12 @@ from app.schemas.auth import (
     TOTPVerifyRequest,
     UserPublic,
 )
-from app.security.deps import get_current_user, get_current_user_allow_unenrolled
+from app.security.deps import (
+    AuthenticatedSession,
+    get_current_session_allow_unenrolled,
+    get_current_user,
+    get_current_user_allow_unenrolled,
+)
 from app.security.jwt import (
     TokenError,
     TokenType,
@@ -64,6 +69,7 @@ from app.security.totp import (
     verify_totp_code,
 )
 from app.services.audit import log_action
+from app.services.mfa_policy import get_mfa_policy, session_requires_mfa_setup
 
 router = APIRouter()
 
@@ -85,13 +91,14 @@ def _too_many_attempts(retry_after_seconds: int) -> HTTPException:
 async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)) -> LoginResponse:
     """Prima fase del login: verifica email+password.
 
-    Se l'utente ha la 2FA attiva, NON emette token pienamente operativi:
+    Se la policy globale è attiva e l'utente ha la 2FA configurata, NON
+    emette token pienamente operativi:
     restituisce invece un `mfa_token` effimero (internamente è un "login
     ticket" JWT di breve durata) che il client deve inviare, insieme a un
     codice TOTP o a un backup code, a `POST /auth/login-2fa`.
 
-    Se l'utente ha un ruolo per cui la 2FA è obbligatoria (admin/operator) e
-    non l'ha ancora attivata, i token vengono comunque emessi (servono per
+    Se la policy è attiva ma l'utente non ha ancora configurato la 2FA, i
+    token vengono comunque emessi (servono per
     completare il setup) ma con `status="mfa_setup_required"`:
     `get_current_user` blocca ogni altro endpoint finché il setup non è
     completato (vedi app/security/deps.py).
@@ -124,18 +131,31 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)) -> Lo
 
     await clear_attempts(lockout_key)
 
-    if user.totp_enabled:
+    policy = await get_mfa_policy(db)
+    mfa_policy_enabled = bool(policy and policy.mfa_required)
+    if mfa_policy_enabled and user.totp_enabled:
         ticket = create_login_ticket(user.id, user.role)
         return LoginResponse(status="mfa_required", mfa_token=ticket)
 
-    access = create_access_token(user.id, user.role, user.security_stamp_at)
-    refresh = create_refresh_token(user.id, user.role, user.security_stamp_at)
-    mfa_enrollment_required = user.role in ("admin", "operator")
+    # Con policy spenta anche gli account che avevano gia configurato TOTP
+    # entrano con la sola password. Il claim preserva questa sessione se un
+    # Admin abilita la policy mentre e ancora aperta.
+    mfa_exempt = not mfa_policy_enabled
+    access = create_access_token(
+        user.id, user.role, user.security_stamp_at, mfa_exempt=mfa_exempt
+    )
+    refresh = create_refresh_token(
+        user.id, user.role, user.security_stamp_at, mfa_exempt=mfa_exempt
+    )
     return LoginResponse(
-        status="mfa_setup_required" if mfa_enrollment_required else "authenticated",
+        status="mfa_setup_required" if mfa_policy_enabled else "authenticated",
         access_token=access,
         refresh_token=refresh,
-        user=UserPublic.from_user(user),
+        user=UserPublic.from_user(
+            user,
+            mfa_policy_enabled=mfa_policy_enabled,
+            mfa_setup_required=mfa_policy_enabled,
+        ),
     )
 
 
@@ -160,6 +180,20 @@ async def login_2fa(
         ) from exc
 
     user = await db.get(User, uuid.UUID(ticket_payload["sub"]))
+    policy = await get_mfa_policy(db)
+    mfa_policy_enabled = bool(policy and policy.mfa_required)
+    if user is not None and user.is_active and not mfa_policy_enabled:
+        access = create_access_token(
+            user.id, user.role, user.security_stamp_at, mfa_exempt=True
+        )
+        refresh = create_refresh_token(
+            user.id, user.role, user.security_stamp_at, mfa_exempt=True
+        )
+        return TokenPairResponse(
+            access_token=access,
+            refresh_token=refresh,
+            user=UserPublic.from_user(user),
+        )
     mfa_ready = user is not None and user.totp_enabled and user.totp_secret_encrypted
     if user is None or not user.is_active or not mfa_ready:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Login non valido.")
@@ -217,7 +251,7 @@ async def login_2fa(
     return TokenPairResponse(
         access_token=access,
         refresh_token=refresh,
-        user=UserPublic.from_user(user),
+        user=UserPublic.from_user(user, mfa_policy_enabled=True),
         new_backup_codes=new_backup_codes,
     )
 
@@ -251,15 +285,37 @@ async def refresh_token(
     if token_sst is None or int(token_sst) != int(user.security_stamp_at.timestamp()):
         raise invalid_refresh
 
-    access = create_access_token(user.id, user.role, user.security_stamp_at)
-    refresh = create_refresh_token(user.id, user.role, user.security_stamp_at)
+    policy = await get_mfa_policy(db)
+    requires_setup = session_requires_mfa_setup(policy, user, token_payload)
+    mfa_exempt = bool(
+        not policy
+        or not policy.mfa_required
+        or token_payload.get("mfa_exempt") is True
+        or (not user.totp_enabled and not requires_setup)
+    )
+    access = create_access_token(
+        user.id, user.role, user.security_stamp_at, mfa_exempt=mfa_exempt
+    )
+    refresh = create_refresh_token(
+        user.id, user.role, user.security_stamp_at, mfa_exempt=mfa_exempt
+    )
     return TokenPairResponse(access_token=access, refresh_token=refresh)
 
 
 @router.get("/me", response_model=UserPublic)
-async def read_current_user(user: User = Depends(get_current_user_allow_unenrolled)) -> UserPublic:
+async def read_current_user(
+    session: AuthenticatedSession = Depends(get_current_session_allow_unenrolled),
+    db: AsyncSession = Depends(get_db),
+) -> UserPublic:
     """Restituisce il profilo anche durante il flusso obbligatorio di enrollment MFA."""
-    return UserPublic.from_user(user)
+    policy = await get_mfa_policy(db)
+    return UserPublic.from_user(
+        session.user,
+        mfa_policy_enabled=bool(policy and policy.mfa_required),
+        mfa_setup_required=session_requires_mfa_setup(
+            policy, session.user, session.token_payload
+        ),
+    )
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
@@ -308,6 +364,13 @@ async def setup_2fa(
     authenticator tramite `POST /auth/verify-2fa`: evita di "attivare" una
     2FA che l'utente non è di fatto in grado di usare.
     """
+    policy = await get_mfa_policy(db)
+    if policy is None or not policy.mfa_required:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="L'OTP non è attivo nelle impostazioni dell'applicazione.",
+        )
+
     secret = generate_totp_secret()
     provisioning_uri = build_provisioning_uri(secret, account_email=user.email)
     qr_code = generate_qr_code_base64(provisioning_uri)
@@ -332,6 +395,13 @@ async def verify_2fa(
     """Conferma il setup 2FA: se il codice è valido, attiva definitivamente
     `totp_enabled`. Stesso rate limiting delle altre verifiche 2FA, per non
     lasciare un canale di brute-force sul codice iniziale."""
+    policy = await get_mfa_policy(db)
+    if policy is None or not policy.mfa_required:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="L'OTP non è attivo nelle impostazioni dell'applicazione.",
+        )
+
     lockout_key = f"mfa_setup:{user.id}"
     locked_seconds = await is_locked_out(lockout_key)
     if locked_seconds is not None:
@@ -362,7 +432,7 @@ async def verify_2fa(
     )
     await db.commit()
 
-    return UserPublic.from_user(user)
+    return UserPublic.from_user(user, mfa_policy_enabled=True)
 
 
 @router.post("/2fa/backup-codes/regenerate", response_model=BackupCodesRegenerateResponse)

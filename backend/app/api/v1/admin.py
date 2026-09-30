@@ -3,11 +3,9 @@
 Nota RBAC: le operazioni di sola lettura (`GET /admin/users`,
 `GET /admin/audit-log`) richiedono il ruolo "admin"; le operazioni che
 creano account o ne cambiano i permessi (`POST /admin/users`) restano
-protette con `require_admin_with_2fa` (vedi app/security/deps.py) per
-impedire che un account admin compromesso, privo di 2FA, possa da solo
-alterare la base utenti. Il cambio ruolo/sospensione (`PATCH`, `.../suspend`)
-usa lo stesso vincolo per lo stesso motivo: sono modifiche dirette ai
-permessi di un altro utente.
+protette con `require_admin_with_2fa` (vedi app/security/deps.py). La
+dependency richiede sempre il ruolo Admin e, quando la policy globale è
+attiva, applica anche il vincolo OTP alla nuova sessione.
 """
 
 from __future__ import annotations
@@ -84,8 +82,8 @@ async def create_user(
     """Crea un nuovo utente operatore.
 
     Operazione sensibile (crea account con potenzialmente ampi permessi):
-    richiede non solo il ruolo admin ma anche la 2FA attiva sull'account
-    admin richiedente (vedi require_admin_with_2fa).
+    richiede il ruolo Admin e segue la policy OTP globale
+    (vedi require_admin_with_2fa).
 
     Risponde con `AdminUserRead` (camelCase), non `UserRead` (bug corretto:
     ogni altro endpoint di quest'area — `GET /users`, `PATCH /users/{id}`,
@@ -123,7 +121,7 @@ async def update_user(
 ) -> AdminUserRead:
     """Cambia il ruolo di un utente (`frontend/src/api/admin.ts:updateAdminUserRole`).
 
-    Riservato ad admin con 2FA attiva: cambiare il ruolo di un altro utente
+    Riservato agli Admin secondo la policy OTP globale: cambiare il ruolo di un altro utente
     (in particolare promuoverlo ad admin) è un'operazione ad alto impatto
     sui permessi del sistema, stesso criterio già applicato a
     `POST /admin/users`.
@@ -227,10 +225,9 @@ async def reset_user_2fa(
     """Procedura di recovery account: disattiva la 2FA di un utente che ha
     perso sia il dispositivo TOTP sia i backup codes, senza alcun
     meccanismo di reset via email (non esiste un servizio email nel
-    progetto). Dopo il reset l'utente rifà il setup 2FA obbligatorio al
-    prossimo login (stesso enforcement di `get_current_user`, vedi
-    app/security/deps.py), quindi non è mai realmente "senza 2FA" per più
-    di una sessione di login.
+    progetto). Se la policy globale è attiva, dopo il reset l'utente rifà il
+    setup 2FA al prossimo login (stesso enforcement di `get_current_user`,
+    vedi app/security/deps.py).
 
     Aggiorna anche `security_stamp_at`, revocando in blocco ogni token
     residuo dell'utente colpito: se l'account è stato compromesso insieme

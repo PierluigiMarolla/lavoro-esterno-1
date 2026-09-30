@@ -34,10 +34,17 @@ class UserPublic(BaseModel):
     name: str
     role: str
     mfa_enabled: bool
+    mfa_policy_enabled: bool = False
+    mfa_setup_required: bool = False
     status: str
 
     @staticmethod
-    def from_user(user) -> UserPublic:  # noqa: ANN001 - evita import ciclico su app.models.users.User
+    def from_user(
+        user,  # noqa: ANN001 - evita import ciclico su app.models.users.User
+        *,
+        mfa_policy_enabled: bool = False,
+        mfa_setup_required: bool = False,
+    ) -> UserPublic:
         return UserPublic(
             id=user.id,
             email=user.email,
@@ -47,6 +54,8 @@ class UserPublic(BaseModel):
             name=user.email.split("@", 1)[0],
             role=user.role,
             mfa_enabled=user.totp_enabled,
+            mfa_policy_enabled=mfa_policy_enabled,
+            mfa_setup_required=mfa_setup_required,
             # Nessun tracking di stato "invited": un utente esiste solo dopo
             # essere stato creato attivo da un Admin, quindi il solo stato
             # derivabile da is_active è active/suspended.
@@ -62,8 +71,8 @@ class LoginResponse(BaseModel):
     stesso `mfa_token` e un codice TOTP (o backup code) per completare
     l'accesso.
 
-    Se `status == "mfa_setup_required"`, l'utente ha un ruolo (admin/
-    operator) per cui la 2FA è obbligatoria ma non l'ha ancora attivata:
+    Se `status == "mfa_setup_required"`, la policy globale è attiva e
+    l'utente non ha ancora configurato la 2FA:
     `access_token`/`refresh_token`/`user` sono presenti (servono per
     chiamare `POST /auth/setup-2fa` e `POST /auth/verify-2fa`), ma
     `get_current_user` (vedi app/security/deps.py) rifiuterà con 403

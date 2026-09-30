@@ -8,8 +8,8 @@ interface AuthContextValue {
   // True while we're checking for an existing session on first load, so
   // ProtectedRoute can avoid a flash-redirect to /login before we know.
   isInitializing: boolean;
-  // Derived from `user`: roles for which 2FA is mandatory (admin/operator)
-  // but who haven't completed setup yet. ProtectedRoute uses this to force
+  // Stato effettivo calcolato dal backend: se la policy globale è attiva
+  // e il setup manca, ProtectedRoute forza
   // every route except /2fa-setup to redirect there — mirrors the same
   // enforcement the backend applies server-side (app/security/deps.py).
   requiresTwoFactorSetup: boolean;
@@ -21,8 +21,6 @@ interface AuthContextValue {
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
-
-const ROLES_REQUIRING_MFA: User["role"][] = ["admin", "operator"];
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -105,7 +103,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const requiresTwoFactorSetup = useMemo(
-    () => !!user && ROLES_REQUIRING_MFA.includes(user.role) && !user.mfaEnabled,
+    () => !!user?.mfaSetupRequired,
     [user],
   );
 

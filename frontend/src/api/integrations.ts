@@ -1,9 +1,11 @@
 import { apiRequest } from "./client";
-import type { IngestionSettings, WebhookEndpoint } from "@/types";
+import type { IngestionSettings, SecuritySettings, WebhookEndpoint } from "@/types";
 
 export const fetchIngestionSettings = () => apiRequest<IngestionSettings>("/admin/ingestion-settings");
 export const updateIngestionSettings = (input: { publishBatchSize: number; expectedRevision: number }) => apiRequest<IngestionSettings>("/admin/ingestion-settings", { method: "PATCH", body: input });
 export const sanitizeExisting = () => apiRequest<{ taskId: string; queued: boolean }>("/admin/ingestion-settings/sanitize-existing", { method: "POST" });
+export const fetchSecuritySettings = () => apiRequest<SecuritySettings>("/admin/security-settings");
+export const updateSecuritySettings = (input: { mfaRequired: boolean; expectedRevision: number }) => apiRequest<SecuritySettings>("/admin/security-settings", { method: "PATCH", body: input });
 export const fetchWebhookEndpoints = () => apiRequest<WebhookEndpoint[]>("/admin/webhook-endpoints");
 export type WebhookInput = { name: string; url: string; enabled: boolean; allSources: boolean; sourceIds: string[]; phonePolicy: "clear" | "masked" | "excluded"; secret?: string; clearSecret?: boolean };
 export const createWebhookEndpoint = (input: WebhookInput) => apiRequest<WebhookEndpoint>("/admin/webhook-endpoints", { method: "POST", body: input });

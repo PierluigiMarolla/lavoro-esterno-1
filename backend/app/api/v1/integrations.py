@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import delete, select
@@ -10,13 +11,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.models.ai_settings import AIProviderConfig
-from app.models.integrations import IngestionSettings, WebhookEndpoint, WebhookEndpointSource
+from app.models.integrations import (
+    ApplicationSecuritySettings,
+    IngestionSettings,
+    WebhookEndpoint,
+    WebhookEndpointSource,
+)
 from app.models.sources import Source
 from app.models.users import User
 from app.schemas.integrations import (
     IngestionSettingsRead,
     IngestionSettingsUpdate,
     SanitizationBackfillRead,
+    SecuritySettingsRead,
+    SecuritySettingsUpdate,
     WebhookEndpointInput,
     WebhookEndpointRead,
     WebhookEndpointUpdate,
@@ -26,6 +34,60 @@ from app.services.audit import log_action
 from app.services.integration_crypto import encrypt_json
 
 router = APIRouter()
+
+
+def _security_read(row: ApplicationSecuritySettings) -> SecuritySettingsRead:
+    return SecuritySettingsRead(
+        mfa_required=row.mfa_required,
+        revision=row.revision,
+        mfa_required_since=row.mfa_required_since,
+    )
+
+
+@router.get("/security-settings", response_model=SecuritySettingsRead)
+async def get_security_settings(
+    db: AsyncSession = Depends(get_db), _admin: User = Depends(require_role("admin"))
+) -> SecuritySettingsRead:
+    row = await db.get(ApplicationSecuritySettings, 1)
+    if row is None:
+        raise HTTPException(503, "Impostazioni di sicurezza non inizializzate.")
+    return _security_read(row)
+
+
+@router.patch("/security-settings", response_model=SecuritySettingsRead)
+async def update_security_settings(
+    payload: SecuritySettingsUpdate,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin_with_2fa),
+) -> SecuritySettingsRead:
+    """Abilita o disabilita OTP globalmente dal successivo login completo."""
+
+    row = (
+        await db.execute(
+            select(ApplicationSecuritySettings)
+            .where(ApplicationSecuritySettings.id == 1)
+            .with_for_update()
+        )
+    ).scalar_one()
+    if row.revision != payload.expected_revision:
+        raise HTTPException(409, "Impostazioni modificate da un altro Admin.")
+
+    changed = row.mfa_required != payload.mfa_required
+    if changed:
+        row.mfa_required = payload.mfa_required
+        row.mfa_required_since = datetime.now(UTC) if payload.mfa_required else None
+        row.revision += 1
+        await log_action(
+            db,
+            user_id=admin.id,
+            action="update_global_mfa_policy",
+            entity_type="application_security_settings",
+            entity_id="1",
+            details={"mfa_required": row.mfa_required, "effective": "next_login"},
+        )
+        await db.commit()
+        await db.refresh(row)
+    return _security_read(row)
 
 
 async def _ingestion_read(db: AsyncSession) -> IngestionSettingsRead:

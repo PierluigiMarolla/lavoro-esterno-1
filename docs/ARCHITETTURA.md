@@ -224,8 +224,8 @@ verificato dal vivo, è più preciso su questi punti (vedi PROGETTO.md § 4):
 
 ## 4. Note architetturali specifiche
 
-- **Autenticazione**: JWT (access + refresh token) con 2FA TOTP
-  obbligatoria per il ruolo Admin, gestita interamente lato applicativo
+- **Autenticazione**: JWT (access + refresh token) con policy 2FA TOTP
+  globale, disattivata per default e gestita dall'Admin
   (nessun Keycloak/IdP esterno). Vedi `docs/SICUREZZA.md`.
 - **Deduplicazione per telefono**: il numero di telefono non è mai
   salvato/interrogato in chiaro come chiave; si usa un hash HMAC-SHA256

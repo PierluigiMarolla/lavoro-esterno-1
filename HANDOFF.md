@@ -2359,3 +2359,27 @@ Trivy sono puliti.
   CPU, Ruff pulito, suite backend completa `320 passed`, successivi 60 test
   mirati scraper/pausa/lifecycle superati e Playwright sul click Pausa
   `1 passed`. Lint e build CSP del frontend sono riusciti.
+
+# Aggiornamento 2026-09-30 - policy OTP globale opt-in
+
+- L'OTP TOTP è ora disattivato per default tramite il singleton revisionato
+  `application_security_settings`. La migrazione additiva
+  `20260930090000_global_mfa_policy.py` inizializza `mfa_required=false`.
+- Gli Admin dispongono della nuova tab **Impostazioni > Sicurezza** e degli
+  endpoint `GET/PATCH /api/v1/admin/security-settings`. La modifica è
+  auditata come `update_global_mfa_policy` e usa optimistic locking.
+- Quando la policy è attiva si applica a Admin, Operator e Viewer. Gli utenti
+  già configurati inseriscono TOTP/backup code; gli altri ricevono
+  `mfa_setup_required` e completano il QR. Con policy spenta il login usa
+  soltanto la password e gli endpoint di setup OTP rispondono `409`.
+- L'attivazione vale dal login successivo: i JWT emessi a policy spenta
+  portano `mfa_exempt` e il timestamp `mfa_required_since` preserva anche i
+  token legacy già aperti. Il refresh mantiene l'esenzione della sessione.
+  Disabilitare la policy non cancella segreti o backup code già configurati.
+- Verifiche: 5 test mirati policy/login, suite backend completa `326 passed`,
+  Ruff pulito, lint frontend senza errori, build frontend/CSP riuscita,
+  `docker compose config` valido. Migrazione applicata su PostgreSQL reale,
+  downgrade e successivo upgrade riusciti; head `20260930090000` e valore
+  iniziale `false` verificati. Lo smoke HTTP completo non è stato avviato
+  perché il pull esterno `quay.io/minio/minio:latest` ha risposto `401`;
+  nessun volume è stato eliminato o ricreato.

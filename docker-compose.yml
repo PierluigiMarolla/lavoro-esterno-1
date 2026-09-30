@@ -102,7 +102,13 @@ services:
   # pubblicazione della porta 9001 in ambienti esposti pubblicamente.
   # ---------------------------------------------------------------------
   minio:
-    image: quay.io/minio/minio:latest
+    # Le immagini Community storiche su quay.io non sono piu scaricabili.
+    # Costruiamo quindi localmente l'ultima release AGPL ufficiale, verificata
+    # tramite checksum, senza introdurre la licenza richiesta da AIStor.
+    build:
+      context: ./infra/minio
+      dockerfile: server.Dockerfile
+    image: lavoro-esterno-minio:RELEASE.2025-09-07T16-13-09Z
     restart: unless-stopped
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
@@ -154,7 +160,10 @@ services:
   # ora, da adattare a un target S3-compatible remoto in produzione.
   # ---------------------------------------------------------------------
   backup-minio:
-    image: quay.io/minio/mc:latest
+    build:
+      context: ./infra/minio
+      dockerfile: client.Dockerfile
+    image: lavoro-esterno-minio-mc:RELEASE.2025-08-13T08-35-41Z
     restart: unless-stopped
     entrypoint: ["/bin/sh", "/scripts/backup-minio.sh"]
     environment:

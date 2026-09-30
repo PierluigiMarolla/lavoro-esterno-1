@@ -18,6 +18,7 @@ from app.models.base import Base
 from app.models.canonical_history import CanonicalHistory
 from app.models.export_jobs import ExportJob, ExportJobRecord
 from app.models.integrations import (
+    ApplicationSecuritySettings,
     IngestionSettings,
     ScrapeRunPayload,
     WebhookDelivery,
@@ -71,6 +72,7 @@ __all__ = [
     "ExportJob",
     "ExportJobRecord",
     "IngestionSettings",
+    "ApplicationSecuritySettings",
     "WebhookEndpoint",
     "WebhookEndpointSource",
     "ScrapeRunPayload",

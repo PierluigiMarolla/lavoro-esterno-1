@@ -12,6 +12,8 @@ export interface User {
   name: string;
   role: UserRole;
   mfaEnabled: boolean;
+  mfaPolicyEnabled: boolean;
+  mfaSetupRequired: boolean;
   status: "active" | "suspended" | "invited";
 }
 
@@ -433,6 +435,12 @@ export interface IngestionSettings {
   revision: number;
   sanitizationProvider: "ollama";
   sanitizationModel: string;
+}
+
+export interface SecuritySettings {
+  mfaRequired: boolean;
+  revision: number;
+  mfaRequiredSince: string | null;
 }
 
 export interface WebhookEndpoint {

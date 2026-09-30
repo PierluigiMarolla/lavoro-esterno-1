@@ -24,6 +24,17 @@ class IngestionSettingsUpdate(CamelModel):
     expected_revision: int = Field(ge=1)
 
 
+class SecuritySettingsRead(CamelModel):
+    mfa_required: bool
+    revision: int
+    mfa_required_since: datetime | None
+
+
+class SecuritySettingsUpdate(CamelModel):
+    mfa_required: bool
+    expected_revision: int = Field(ge=1)
+
+
 class WebhookEndpointInput(CamelModel):
     name: str = Field(min_length=1, max_length=120)
     url: str = Field(max_length=2000)

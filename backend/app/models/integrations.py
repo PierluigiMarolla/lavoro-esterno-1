@@ -33,6 +33,28 @@ class IngestionSettings(Base):
     )
 
 
+class ApplicationSecuritySettings(Base):
+    """Policy di autenticazione unica per tutta l'applicazione.
+
+    La riga singleton nasce con OTP disattivato. ``mfa_required_since``
+    permette di applicare un'attivazione soltanto ai login successivi,
+    senza interrompere le sessioni che erano gia aperte.
+    """
+
+    __tablename__ = "application_security_settings"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_application_security_settings_singleton"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    mfa_required: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    mfa_required_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
 class WebhookEndpoint(UUIDPKMixin, TimestampMixin, Base):
     __tablename__ = "webhook_endpoints"
 

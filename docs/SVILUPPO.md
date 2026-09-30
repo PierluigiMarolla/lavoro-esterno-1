@@ -33,11 +33,14 @@ docker compose ps -a migrate
 docker compose logs migrate
 
 # 5. Creare il primo utente Admin: nessun endpoint API può farlo (la
-#    creazione utenti via API richiede già un Admin con 2FA attiva), quindi
+#    creazione utenti via API richiede già un Admin autenticato), quindi
 #    va fatto con questo script una tantum, fuori dal perimetro HTTP/RBAC
 #    (vedi backend/app/scripts/create_admin.py per i dettagli):
 docker compose exec api python -m app.scripts.create_admin \
     --email admin@lavoro.internal --password "una-password-forte"
+
+#    La policy OTP nasce disattivata e si abilita per tutti dalla tab
+#    Impostazioni > Sicurezza; avrà effetto dal login successivo.
 
 # 6. Creare le fonti da scrapare: nessun seed automatico, si usa il CRUD
 #    completo via API/UI (POST /sources, form "Aggiungi fonte" nella pagina

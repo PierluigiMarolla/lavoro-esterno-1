@@ -16,10 +16,10 @@ proxy nginx (`http(s)://<host>/api/v1/...`).
 
 | Metodo | Path | Scopo |
 |---|---|---|
-| POST | `/api/v1/auth/login` | Prima fase: verifica email + password. Se l'utente NON ha 2FA attiva emette subito `access_token`/`refresh_token`/`user` con `status: "authenticated"`; se ce l'ha, risponde `status: "mfa_required"` e un `mfa_token` effimero (nessun token di accesso). |
+| POST | `/api/v1/auth/login` | Verifica email + password. Con policy globale OTP spenta autentica subito; con policy attiva richiede il codice agli utenti configurati o restituisce `mfa_setup_required` agli altri. |
 | POST | `/api/v1/auth/login-2fa` | Seconda fase (solo utenti con 2FA attiva): scambia `mfa_token` + codice TOTP a 6 cifre (o un backup code) con `access_token`/`refresh_token`/`user`. |
 | POST | `/api/v1/auth/refresh` | Scambia un refresh token valido con una nuova coppia access/refresh token. |
-| GET | `/api/v1/auth/me` | Restituisce profilo, ruolo (Admin/Operator/Viewer) e stato 2FA dell'utente autenticato (richiede `Authorization: Bearer`). |
+| GET | `/api/v1/auth/me` | Restituisce profilo, ruolo, stato 2FA, policy globale e necessità effettiva di setup per la sessione. |
 | POST | `/api/v1/auth/setup-2fa` | Avvia l'attivazione della 2FA per l'utente corrente: genera segreto TOTP, QR code (base64) e i backup codes monouso, mostrati una sola volta. |
 | POST | `/api/v1/auth/verify-2fa` | Conferma l'attivazione 2FA fornendo un primo codice TOTP valido generato dall'app authenticator; solo dopo questa chiamata `totp_enabled` diventa `true`. |
 | POST | `/api/v1/auth/2fa/backup-codes/regenerate` | Rigenera i backup code dopo verifica TOTP; i codici precedenti diventano inutilizzabili. |
@@ -30,6 +30,10 @@ I JWT mantengono firma e scadenza stateless, ma la revoca puntuale usa una
 blacklist Redis con TTL pari alla vita residua del token. Cambio password,
 sospensione e reset 2FA aggiornano invece il security stamp per invalidare in
 blocco tutte le sessioni dell'utente.
+
+La policy OTP è amministrata tramite `GET/PATCH /api/v1/admin/security-settings`.
+Il `PATCH` usa `expectedRevision`; un'attivazione vale dal login successivo e
+non revoca le sessioni già aperte.
 
 ## Area `dashboard` - viste aggregate per la home
 
@@ -43,7 +47,7 @@ blocco tutte le sessioni dell'utente.
 ### Esempio di flusso login + 2FA
 
 1. `POST /api/v1/auth/login` con `{ "email": ..., "password": ... }`.
-2. Se l'utente ha la 2FA attiva, la risposta ha `status: "mfa_required"` e un
+2. Se la policy globale è attiva e l'utente ha la 2FA configurata, la risposta ha `status: "mfa_required"` e un
    campo `mfa_token` (token effimero, non utilizzabile come access token).
 3. Il client chiede all'utente il codice a 6 cifre dell'app authenticator e
    chiama `POST /api/v1/auth/login-2fa` con
@@ -316,11 +320,11 @@ devono essere presentati dalla UI come sensibili.
 | Metodo | Path | Scopo |
 |---|---|---|
 | GET | `/api/v1/admin/users` | Elenco utenti (solo Admin). `name`/`lastLoginAt` sono approssimati (nessuna colonna dedicata nel modello `User`, vedi `app/schemas/admin.py:AdminUserRead`). |
-| POST | `/api/v1/admin/users` | Creazione utente con ruolo (Admin/Operator/Viewer). Richiede Admin con 2FA attiva. Risponde con `AdminUserRead` (camelCase, coerente col resto dell'area — bug corretto: prima rispondeva con `UserRead` snake_case, forma diversa da `GET`/`PATCH`/`.../suspend`). |
-| PATCH | `/api/v1/admin/users/{user_id}` | Modifica il ruolo di un utente. Richiede Admin con 2FA attiva. |
-| POST | `/api/v1/admin/users/{user_id}/suspend` | Sospende un utente (`is_active=false`), impedendo nuovi login. Richiede Admin con 2FA attiva. |
-| POST | `/api/v1/admin/users/{user_id}/activate` | Riattiva un utente e revoca definitivamente le sessioni precedenti aggiornando il security stamp. Richiede Admin con 2FA attiva. |
-| POST | `/api/v1/admin/users/{user_id}/reset-2fa` | Recovery account: disattiva la 2FA dell'utente (nessun servizio email nel progetto per un reset self-service), che dovrà rifare il setup obbligatorio al prossimo login. Risponde `{ id, mfa_enabled }` (snake_case, NON CamelModel — mappato esplicitamente in `frontend/src/api/admin.ts:resetAdminUserTwoFactor`, stesso stile di `auth.ts`). Richiede Admin con 2FA attiva. |
+| POST | `/api/v1/admin/users` | Creazione utente con ruolo (Admin/Operator/Viewer). Richiede Admin e segue la policy OTP globale. |
+| PATCH | `/api/v1/admin/users/{user_id}` | Modifica il ruolo di un utente. Richiede Admin e segue la policy OTP globale. |
+| POST | `/api/v1/admin/users/{user_id}/suspend` | Sospende un utente (`is_active=false`), impedendo nuovi login. Richiede Admin e segue la policy OTP globale. |
+| POST | `/api/v1/admin/users/{user_id}/activate` | Riattiva un utente e revoca le sessioni precedenti aggiornando il security stamp. Richiede Admin e segue la policy OTP globale. |
+| POST | `/api/v1/admin/users/{user_id}/reset-2fa` | Recovery account: disattiva la 2FA dell'utente; con policy globale attiva dovrà rifare il setup al prossimo login. Risponde `{ id, mfa_enabled }`. Richiede Admin secondo la policy OTP globale. |
 | GET | `/api/v1/admin/audit-log` | Consultazione dell'audit log (azioni sensibili: login/logout, export, modifiche utenti/fonti, rigenerazione riepilogo AI...). Solo Admin. |
 | GET | `/api/v1/admin/ai-settings` | Configurazione globale e provider AI; non restituisce mai le API key. Solo Admin. |
 | PATCH | `/api/v1/admin/ai-settings` | Modifica provider attivo e limiti con revisione ottimistica. Admin con 2FA. |

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -13,6 +15,7 @@ from app.db import get_db
 from app.models.users import User
 from app.security.jwt import TokenError, TokenType, decode_token
 from app.security.redis_client import is_jti_blacklisted
+from app.services.mfa_policy import get_mfa_policy, session_requires_mfa_setup
 
 _bearer_scheme = HTTPBearer(auto_error=True)
 
@@ -23,9 +26,17 @@ _INVALID_CREDENTIALS = HTTPException(
 )
 
 
+@dataclass(frozen=True)
+class AuthenticatedSession:
+    """Utente autenticato e claim della sessione JWT corrente."""
+
+    user: User
+    token_payload: dict[str, Any]
+
+
 async def _resolve_user_from_access_token(
     credentials: HTTPAuthorizationCredentials, db: AsyncSession
-) -> User:
+) -> AuthenticatedSession:
     """Decodifica l'access token, verifica che non sia stato revocato
     (blacklist del `jti` su logout, mismatch del `sst` su cambio password o
     reset 2FA) e carica l'utente corrispondente. Solleva 401 per qualsiasi
@@ -52,41 +63,48 @@ async def _resolve_user_from_access_token(
         # scaduta o invalida.
         raise _INVALID_CREDENTIALS
 
-    return user
+    return AuthenticatedSession(user=user, token_payload=payload)
 
 
-async def get_current_user_allow_unenrolled(
+async def get_current_session_allow_unenrolled(
     credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme),
     db: AsyncSession = Depends(get_db),
-) -> User:
-    """Come `get_current_user`, ma SENZA il controllo di enrollment 2FA
-    obbligatoria: riservata agli endpoint che un utente Admin/Operator
-    ancora privo di 2FA deve poter comunque chiamare per completare il
-    setup (`/auth/me`, `/auth/logout`, `/auth/setup-2fa`, `/auth/verify-2fa`,
-    `/auth/2fa/backup-codes/regenerate`, `/auth/change-password`)."""
+) -> AuthenticatedSession:
+    """Risolve la sessione senza imporre l'enrollment OTP."""
+
     return await _resolve_user_from_access_token(credentials, db)
 
 
+async def get_current_user_allow_unenrolled(
+    session: AuthenticatedSession = Depends(get_current_session_allow_unenrolled),
+) -> User:
+    """Come `get_current_user`, ma SENZA il controllo di enrollment 2FA
+    obbligatoria: riservata agli endpoint che un utente ancora privo di 2FA
+    deve poter comunque chiamare per completare il
+    setup (`/auth/me`, `/auth/logout`, `/auth/setup-2fa`, `/auth/verify-2fa`,
+    `/auth/2fa/backup-codes/regenerate`, `/auth/change-password`)."""
+    return session.user
+
+
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme),
+    session: AuthenticatedSession = Depends(get_current_session_allow_unenrolled),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    """Risolve l'utente autenticato E impone l'iscrizione 2FA obbligatoria
-    per i ruoli Admin/Operator: un account con questi ruoli ma senza 2FA
-    attiva non può usare NESSUN endpoint applicativo (eccetto quelli sopra
-    elencati) finché non completa il setup. Questa dependency è quella usata
-    da tutti i router applicativi esistenti (sources, records, media,
-    dashboard, search) e da `require_role`/`require_admin_with_2fa` qui
-    sotto: nessuna modifica è richiesta in quei file, l'enforcement si
-    applica automaticamente."""
-    user = await _resolve_user_from_access_token(credentials, db)
-    if user.role in ("admin", "operator") and not user.totp_enabled:
+    """Applica la policy OTP globale alla sessione corrente.
+
+    La policy riguarda tutti i ruoli ed è disattivata per default. Le
+    sessioni nate prima dell'attivazione restano valide fino al successivo
+    login completo.
+    """
+    user = session.user
+    policy = await get_mfa_policy(db)
+    if session_requires_mfa_setup(policy, user, session.token_payload):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={
                 "error_code": "mfa_setup_required",
                 "message": (
-                    "Il tuo ruolo richiede l'autenticazione a due fattori: completa il "
+                    "L'applicazione richiede l'autenticazione a due fattori: completa il "
                     "setup 2FA (POST /auth/setup-2fa, poi /auth/verify-2fa) prima di "
                     "continuare."
                 ),
@@ -117,26 +135,14 @@ def require_role(*roles: str) -> Callable:
 
 
 async def require_admin_with_2fa(user: User = Depends(get_current_user)) -> User:
-    """Dependency per operazioni sensibili riservate agli admin.
+    """Riserva l'operazione agli Admin e rispetta la policy OTP globale.
 
-    Da quando la 2FA è obbligatoria per il ruolo admin fin dal login (vedi
-    `get_current_user`), il controllo `totp_enabled` qui sotto è ridondante
-    in pratica (un admin senza 2FA non supererebbe già `get_current_user`),
-    ma viene mantenuto esplicito per documentare l'invariante e restare
-    corretto anche se in futuro l'enforcement in `get_current_user` dovesse
-    cambiare.
+    Il nome storico resta stabile per i router esistenti; il secondo fattore
+    è imposto da ``get_current_user`` solo quando la policy è abilitata.
     """
     if user.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Questa operazione richiede il ruolo 'admin'.",
-        )
-    if not user.totp_enabled:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                "Operazione sensibile bloccata: attiva l'autenticazione a due fattori (2FA) "
-                "sul tuo account admin prima di procedere."
-            ),
         )
     return user

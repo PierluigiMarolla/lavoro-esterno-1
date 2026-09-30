@@ -12,8 +12,8 @@ interface FormError {
   retryAfterSeconds?: number;
 }
 
-// Mandatory 2FA enrollment screen: shown whenever an Admin/Operator account
-// hasn't activated TOTP yet (ProtectedRoute redirects here for any other
+// Mandatory 2FA enrollment screen: shown when the application-wide policy
+// is enabled and the account has not activated TOTP yet.
 // route, mirroring the backend's own enforcement in
 // app/security/deps.py:get_current_user). No mockup exists for this screen
 // (it's a new, previously-missing flow) — styled consistently with
@@ -76,7 +76,7 @@ export default function TwoFactorSetupPage() {
           <Icon name="verified_user" className="text-primary mb-2" size={28} />
           <h1 className="text-headline-lg text-primary tracking-tight mb-2">Configurazione a due fattori obbligatoria</h1>
           <p className="text-body-md text-on-surface-variant">
-            Il tuo ruolo richiede l’autenticazione a due fattori prima di poter continuare.
+            L&apos;applicazione richiede l&apos;autenticazione a due fattori prima di poter continuare.
           </p>
         </div>
 

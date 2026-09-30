@@ -422,6 +422,9 @@ marcato non corrente e rimane storico fino alla retention.
   la provenienza; `original_content_encrypted` e i metadata di sanitizzazione
   conservano l'originale senza esporlo.
 - `ingestion_settings` è un singleton revisionato con dimensione del batch.
+- `application_security_settings` è il singleton revisionato della policy OTP:
+  nasce disattivato e conserva il timestamp di attivazione per non interrompere
+  le sessioni già aperte.
 - `proxy_feeds` conserva configurazione, stato e header cifrati; gli endpoint
   importati fanno riferimento al feed senza perdere lo storico.
 - `webhook_endpoints` e la tabella di associazione fonti definiscono lo scope;

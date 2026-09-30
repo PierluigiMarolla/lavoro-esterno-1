@@ -66,8 +66,10 @@ export default function AccountPage() {
         </form>
         <section className="bg-surface-container-lowest border border-border rounded-lg p-5 space-y-3">
           <div className="flex items-center gap-2"><Icon name="verified_user" /><h3 className="text-headline-sm">Autenticazione a due fattori</h3></div>
-          {!user?.mfaEnabled ? (
-            <><p className="text-on-surface-variant">La 2FA non è attiva.</p><Link to="/2fa-setup" className="inline-flex rounded bg-primary text-on-primary px-4 py-2">Attiva 2FA</Link></>
+          {!user?.mfaPolicyEnabled ? (
+            <p className="text-on-surface-variant">L&apos;OTP è disattivato nelle impostazioni dell&apos;applicazione.</p>
+          ) : !user.mfaEnabled ? (
+            <><p className="text-on-surface-variant">L&apos;OTP è richiesto. Completa la configurazione per il prossimo accesso.</p><Link to="/2fa-setup" className="inline-flex rounded bg-primary text-on-primary px-4 py-2">Configura OTP</Link></>
           ) : (
             <form onSubmit={regenerateCodes} className="space-y-3">
               <p className="text-success">2FA attiva</p>
